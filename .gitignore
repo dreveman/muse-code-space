@@ -1,0 +1,36 @@
+node_modules/
+dist/
+client/dist/
+server/dist/
+*.tsbuildinfo
+.env
+.env.*
+app.db
+app.db-shm
+app.db-wal
+.DS_Store
+
+# local caches / generated
+.bun-cache/
+.space-build/
+audits/
+/output/
+/client/src/assets.bak/
+
+# Legacy local publish markers: never commit them; only the artifact builder publishes.
+.publish-request
+.publish-request.sent
+
+# local dev server (dev/server.ts): build output + throwaway DB
+.dev/
+dev/.tsbuildinfo.dev
+.tsbuildinfo*
+**/.tsbuildinfo*
+
+# python bytecode (pilot/pty_bridge.py)
+__pycache__/
+
+# Generated artifact descriptor: created from space.json.template during install.
+# Never commit; the installer regenerates it from the template with the
+# platform-assigned slug.
+space.json

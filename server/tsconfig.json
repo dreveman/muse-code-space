@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "outDir": "./dist",
+    "rootDir": ".",
+    "resolveJsonModule": true,
+    "tsBuildInfoFile": "./.tsbuildinfo.server",
+    "paths": {
+      "@space/privileged": ["./.generated/privileged.contract"]
+    }
+  },
+  "include": ["src/**/*", ".generated/**/*"]
+}

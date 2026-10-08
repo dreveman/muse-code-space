@@ -1,0 +1,23 @@
+[Unit]
+Description=Muse Code Space pilot (muse serve bridge on 127.0.0.1:@PILOT_PORT@)
+After=network.target muse-code-space-relay.service
+Wants=muse-code-space-relay.service
+
+[Service]
+Type=simple
+User=@PILOT_USER@
+WorkingDirectory=@PILOT_DIR@
+ExecStart=/usr/bin/node @PILOT_DIR@/pilot.mjs
+Restart=always
+RestartSec=3
+Environment=HOME=@PILOT_HOME@
+# The installer checks this binary; use the same one at runtime.
+Environment=MUSE_CODE_SPACE_MUSE_BIN=@MUSE_BIN@
+Environment=MUSE_CODE_SPACE_PILOT_PORT=@PILOT_PORT@
+Environment=MUSE_CODE_SPACE_RELAY_URL=http://127.0.0.1:@RELAY_PORT@
+Environment=MUSE_CODE_SPACE_PILOT_STATE_DIR=@PILOT_DIR@/state
+StandardOutput=append:@PILOT_DIR@/pilot.log
+StandardError=append:@PILOT_DIR@/pilot.log
+
+[Install]
+WantedBy=multi-user.target

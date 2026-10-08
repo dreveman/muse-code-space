@@ -1,0 +1,20 @@
+{
+  "files": [
+    {
+      "path": "test.rs",
+      "hunks": [
+        {
+          "oldStart": 1,
+          "oldLines": 1,
+          "newStart": 1,
+          "newLines": 2,
+          "lines": [
+            "-fn main() { println!(\"ORIGINAL\"); }",
+            "+TEST",
+            "+"
+          ]
+        }
+      ]
+    }
+  ]
+}

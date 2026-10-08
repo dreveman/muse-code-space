@@ -1,0 +1,22 @@
+[Unit]
+Description=Muse Code Space credential relay (127.0.0.1:@RELAY_PORT@)
+After=network.target
+
+[Service]
+Type=simple
+User=@PILOT_USER@
+WorkingDirectory=@PILOT_DIR@
+ExecStart=/usr/bin/python3 @PILOT_DIR@/muse_relay.py
+Restart=always
+RestartSec=3
+Environment=HOME=@PILOT_HOME@
+Environment=MUSE_CODE_SPACE_RELAY_PORT=@RELAY_PORT@
+# Proxy vars captured at install time (see install.sh): systemd units don't
+# inherit the shell's proxy environment, and the relay's urllib needs it to
+# reach api.meta.ai. The leading '-' keeps the unit startable without it.
+EnvironmentFile=-@PILOT_DIR@/proxy.env
+StandardOutput=append:@PILOT_DIR@/relay.log
+StandardError=append:@PILOT_DIR@/relay.log
+
+[Install]
+WantedBy=multi-user.target

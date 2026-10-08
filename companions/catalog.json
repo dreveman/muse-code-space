@@ -1,0 +1,626 @@
+{
+  "version": 1,
+  "description": "Editable starting companions. Ratings describe relative strengths across the roster, informed by model, effort, and working style; they are not measured benchmarks.",
+  "companions": [
+    {
+      "id": "pip",
+      "name": "Pip",
+      "character": "Rabbit",
+      "role": "The dependable all-rounder",
+      "description": "Keeps everyday work moving with a thoughtful, practical approach.",
+      "skills": [
+        "Everyday coding",
+        "Debugging",
+        "Getting unstuck"
+      ],
+      "tradeOff": "Balances speed and depth, so difficult problems may need a more exhaustive specialist.",
+      "stats": {
+        "speed": 3,
+        "thoughtfulness": 2,
+        "creativity": 2,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "medium",
+      "soulPath": "pip/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/pip/idle.webp",
+        "portraitIdle": "client/src/assets/companions/pip/portrait-idle.webp",
+        "working": "client/src/assets/companions/pip/working.webp",
+        "waking": "client/src/assets/companions/pip/waking.webp"
+      }
+    },
+    {
+      "id": "juno",
+      "name": "Juno",
+      "character": "Gray bird",
+      "role": "The clear communicator",
+      "description": "Makes complicated ideas easier to understand and act on.",
+      "skills": [
+        "Explaining code",
+        "Documentation",
+        "Clear requirements"
+      ],
+      "tradeOff": "Spends more time shaping explanations and examples than a terse implementer.",
+      "stats": {
+        "speed": 3,
+        "thoughtfulness": 2,
+        "creativity": 3,
+        "initiative": 2
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "medium",
+      "soulPath": "juno/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/juno/idle.webp",
+        "portraitIdle": "client/src/assets/companions/juno/portrait-idle.webp",
+        "working": "client/src/assets/companions/juno/working.webp",
+        "waking": "client/src/assets/companions/juno/waking.webp"
+      }
+    },
+    {
+      "id": "milo",
+      "name": "Milo",
+      "character": "Puppy",
+      "role": "The encouraging guide",
+      "description": "Helps you make progress one approachable step at a time.",
+      "skills": [
+        "First projects",
+        "Guided fixes",
+        "Learning by doing"
+      ],
+      "tradeOff": "Keeps guidance quick and approachable; difficult problems need a deeper investigation.",
+      "stats": {
+        "speed": 4,
+        "thoughtfulness": 1,
+        "creativity": 2,
+        "initiative": 1
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "low",
+      "soulPath": "milo/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/milo/idle.webp",
+        "portraitIdle": "client/src/assets/companions/milo/portrait-idle.webp",
+        "working": "client/src/assets/companions/milo/working.webp",
+        "waking": "client/src/assets/companions/milo/waking.webp"
+      }
+    },
+    {
+      "id": "nova",
+      "name": "Nova",
+      "character": "Cool cat",
+      "role": "The inventive explorer",
+      "description": "Finds fresh approaches when the obvious answer feels limiting.",
+      "skills": [
+        "Brainstorming",
+        "Prototypes",
+        "Alternative approaches"
+      ],
+      "tradeOff": "Explores more possibilities and may need a scope check before polishing one.",
+      "stats": {
+        "speed": 2,
+        "thoughtfulness": 4,
+        "creativity": 5,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-wonder-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "high",
+      "soulPath": "nova/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/nova/idle.webp",
+        "portraitIdle": "client/src/assets/companions/nova/portrait-idle.webp",
+        "working": "client/src/assets/companions/nova/working.webp",
+        "waking": "client/src/assets/companions/nova/waking.webp"
+      }
+    },
+    {
+      "id": "ziggy",
+      "name": "Ziggy",
+      "character": "Zebra",
+      "role": "The quick fixer",
+      "description": "Gets small, well-defined changes over the finish line quickly.",
+      "skills": [
+        "Small fixes",
+        "Routine edits",
+        "Fast iteration"
+      ],
+      "tradeOff": "Optimizes for tiny, obvious fixes with very little deliberation; complex work needs a deeper pass.",
+      "stats": {
+        "speed": 5,
+        "thoughtfulness": 1,
+        "creativity": 1,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "minimal",
+      "soulPath": "ziggy/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/ziggy/idle.webp",
+        "portraitIdle": "client/src/assets/companions/ziggy/portrait-idle.webp",
+        "working": "client/src/assets/companions/ziggy/working.webp",
+        "waking": "client/src/assets/companions/ziggy/waking.webp"
+      }
+    },
+    {
+      "id": "bea",
+      "name": "Bea",
+      "character": "Beaver",
+      "role": "The practical builder",
+      "description": "Turns a clear plan into sturdy, maintainable code.",
+      "skills": [
+        "Feature implementation",
+        "Integration",
+        "Finishing work"
+      ],
+      "tradeOff": "Prefers established patterns over adventurous designs.",
+      "stats": {
+        "speed": 3,
+        "thoughtfulness": 4,
+        "creativity": 2,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-wonder-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "high",
+      "soulPath": "bea/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/bea/idle.webp",
+        "portraitIdle": "client/src/assets/companions/bea/portrait-idle.webp",
+        "working": "client/src/assets/companions/bea/working.webp",
+        "waking": "client/src/assets/companions/bea/waking.webp"
+      }
+    },
+    {
+      "id": "kit",
+      "name": "Kit",
+      "character": "Raccoon",
+      "role": "The resourceful detective",
+      "description": "Follows clues through unfamiliar code to find what went wrong.",
+      "skills": [
+        "Bug investigation",
+        "Unfamiliar codebases",
+        "Root causes"
+      ],
+      "tradeOff": "Invests in tracing and reproduction before attempting a fix.",
+      "stats": {
+        "speed": 2,
+        "thoughtfulness": 5,
+        "creativity": 4,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-wonder-full-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "xhigh",
+      "soulPath": "kit/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/kit/idle.webp",
+        "portraitIdle": "client/src/assets/companions/kit/portrait-idle.webp",
+        "working": "client/src/assets/companions/kit/working.webp",
+        "waking": "client/src/assets/companions/kit/waking.webp"
+      }
+    },
+    {
+      "id": "remy",
+      "name": "Remy",
+      "character": "Chipmunk",
+      "role": "The tidy organizer",
+      "description": "Makes tangled code and loose ends easier to work with.",
+      "skills": [
+        "Refactoring",
+        "Consistency",
+        "Code cleanup"
+      ],
+      "tradeOff": "Moves quickly on familiar cleanup patterns, with little exploration of alternatives.",
+      "stats": {
+        "speed": 4,
+        "thoughtfulness": 1,
+        "creativity": 1,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "low",
+      "soulPath": "remy/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/remy/idle.webp",
+        "portraitIdle": "client/src/assets/companions/remy/portrait-idle.webp",
+        "working": "client/src/assets/companions/remy/working.webp",
+        "waking": "client/src/assets/companions/remy/waking.webp"
+      }
+    },
+    {
+      "id": "luna",
+      "name": "Luna",
+      "character": "Owl",
+      "role": "The careful reviewer",
+      "description": "Looks for subtle mistakes, missing cases, and shaky assumptions.",
+      "skills": [
+        "Code review",
+        "Edge cases",
+        "Validation"
+      ],
+      "tradeOff": "Takes longer and may surface more issues than a quick implementation pass.",
+      "stats": {
+        "speed": 1,
+        "thoughtfulness": 5,
+        "creativity": 3,
+        "initiative": 2
+      },
+      "model": {
+        "preferredId": "muse-wonder-full-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "xhigh",
+      "soulPath": "luna/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/luna/idle.webp",
+        "portraitIdle": "client/src/assets/companions/luna/portrait-idle.webp",
+        "working": "client/src/assets/companions/luna/working.webp",
+        "waking": "client/src/assets/companions/luna/waking.webp"
+      }
+    },
+    {
+      "id": "otto",
+      "name": "Otto",
+      "character": "Elephant",
+      "role": "The systems thinker",
+      "description": "Keeps the larger design and its moving parts in view.",
+      "skills": [
+        "Architecture",
+        "Cross-cutting changes",
+        "Technical planning"
+      ],
+      "tradeOff": "Uses maximum deliberation on system-wide decisions, trading speed for a thorough design pass.",
+      "stats": {
+        "speed": 1,
+        "thoughtfulness": 5,
+        "creativity": 5,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-wonder-full-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "max",
+      "soulPath": "otto/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/otto/idle.webp",
+        "portraitIdle": "client/src/assets/companions/otto/portrait-idle.webp",
+        "working": "client/src/assets/companions/otto/working.webp",
+        "waking": "client/src/assets/companions/otto/waking.webp"
+      }
+    },
+    {
+      "id": "iris",
+      "name": "Iris",
+      "character": "Fluffy bow helper",
+      "role": "The thoughtful designer",
+      "description": "Brings care to interfaces, wording, and the way a product feels.",
+      "skills": [
+        "UI polish",
+        "Interaction design",
+        "Accessible interfaces"
+      ],
+      "tradeOff": "Spends extra attention on presentation and interaction details.",
+      "stats": {
+        "speed": 3,
+        "thoughtfulness": 4,
+        "creativity": 5,
+        "initiative": 2
+      },
+      "model": {
+        "preferredId": "muse-wonder-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "medium",
+      "soulPath": "iris/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/iris/idle.webp",
+        "portraitIdle": "client/src/assets/companions/iris/portrait-idle.webp",
+        "working": "client/src/assets/companions/iris/working.webp",
+        "waking": "client/src/assets/companions/iris/waking.webp"
+      }
+    },
+    {
+      "id": "finn",
+      "name": "Finn",
+      "character": "Frog",
+      "role": "The playful experimenter",
+      "description": "Makes ideas tangible so you can discover what works.",
+      "skills": [
+        "Proofs of concept",
+        "Quick experiments",
+        "Hands-on exploration"
+      ],
+      "tradeOff": "Prioritizes learning quickly; successful experiments may need a finishing pass.",
+      "stats": {
+        "speed": 5,
+        "thoughtfulness": 1,
+        "creativity": 4,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "low",
+      "soulPath": "finn/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/finn/idle.webp",
+        "portraitIdle": "client/src/assets/companions/finn/portrait-idle.webp",
+        "working": "client/src/assets/companions/finn/working.webp",
+        "waking": "client/src/assets/companions/finn/waking.webp"
+      }
+    },
+    {
+      "id": "echo",
+      "name": "Echo",
+      "character": "Green parrot",
+      "role": "The cautious troubleshooter",
+      "description": "Checks the awkward failure paths before they surprise you.",
+      "skills": [
+        "Error handling",
+        "Reliability",
+        "Regression prevention"
+      ],
+      "tradeOff": "Examines failure scenarios that can slow down a straightforward happy-path change.",
+      "stats": {
+        "speed": 1,
+        "thoughtfulness": 3,
+        "creativity": 1,
+        "initiative": 3
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "xhigh",
+      "soulPath": "echo/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/echo/idle.webp",
+        "portraitIdle": "client/src/assets/companions/echo/portrait-idle.webp",
+        "working": "client/src/assets/companions/echo/working.webp",
+        "waking": "client/src/assets/companions/echo/waking.webp"
+      }
+    },
+    {
+      "id": "poppy",
+      "name": "Poppy",
+      "character": "Beach hedgehog",
+      "role": "The friendly finisher",
+      "description": "Smooths the last rough edges so work feels ready to use.",
+      "skills": [
+        "UX copy",
+        "Small improvements",
+        "Finishing touches"
+      ],
+      "tradeOff": "Spends little time deliberating over small finishing touches; deeper logic and structural changes need a slower pass.",
+      "stats": {
+        "speed": 5,
+        "thoughtfulness": 1,
+        "creativity": 3,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "minimal",
+      "soulPath": "poppy/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/poppy/idle.webp",
+        "portraitIdle": "client/src/assets/companions/poppy/portrait-idle.webp",
+        "working": "client/src/assets/companions/poppy/working.webp",
+        "waking": "client/src/assets/companions/poppy/waking.webp"
+      }
+    },
+    {
+      "id": "sage",
+      "name": "Sage",
+      "character": "Scientist rabbit",
+      "role": "The patient researcher",
+      "description": "Investigates difficult questions and backs conclusions with evidence.",
+      "skills": [
+        "Deep investigation",
+        "Technical comparisons",
+        "Difficult debugging"
+      ],
+      "tradeOff": "Uses maximum deliberation for difficult investigations, making simple questions feel slow.",
+      "stats": {
+        "speed": 1,
+        "thoughtfulness": 5,
+        "creativity": 4,
+        "initiative": 2
+      },
+      "model": {
+        "preferredId": "muse-wonder-full-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "max",
+      "soulPath": "sage/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/sage/idle.webp",
+        "portraitIdle": "client/src/assets/companions/sage/portrait-idle.webp",
+        "working": "client/src/assets/companions/sage/working.webp",
+        "waking": "client/src/assets/companions/sage/waking.webp"
+      }
+    },
+    {
+      "id": "bo",
+      "name": "Bo",
+      "character": "Sloth",
+      "role": "The steady simplifier",
+      "description": "Takes a measured approach and finds ways to do less.",
+      "skills": [
+        "Simplifying designs",
+        "Removing complexity",
+        "Focused maintenance"
+      ],
+      "tradeOff": "Works deliberately and favors restraint over rapid experimentation.",
+      "stats": {
+        "speed": 2,
+        "thoughtfulness": 3,
+        "creativity": 2,
+        "initiative": 1
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "high",
+      "soulPath": "bo/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/bo/idle.webp",
+        "portraitIdle": "client/src/assets/companions/bo/portrait-idle.webp",
+        "working": "client/src/assets/companions/bo/working.webp",
+        "waking": "client/src/assets/companions/bo/waking.webp"
+      }
+    },
+    {
+      "id": "rio",
+      "name": "Rio",
+      "character": "Aviator dog",
+      "role": "The steady navigator",
+      "description": "Turns a complicated task into a clear route from start to finish.",
+      "skills": [
+        "Task planning",
+        "Coordinated changes",
+        "Release preparation"
+      ],
+      "tradeOff": "Spends time sequencing and checking dependencies before moving ahead; small isolated fixes may feel slower.",
+      "stats": {
+        "speed": 2,
+        "thoughtfulness": 3,
+        "creativity": 2,
+        "initiative": 5
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "high",
+      "soulPath": "rio/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/rio/idle.webp",
+        "portraitIdle": "client/src/assets/companions/rio/portrait-idle.webp",
+        "working": "client/src/assets/companions/rio/working.webp",
+        "waking": "client/src/assets/companions/rio/waking.webp"
+      }
+    },
+    {
+      "id": "mochi",
+      "name": "Mochi",
+      "character": "Plush monkey",
+      "role": "The nimble tinkerer",
+      "description": "Makes repetitive work easier with small tools and quick, useful experiments.",
+      "skills": [
+        "Small automations",
+        "Developer tools",
+        "Workflow shortcuts"
+      ],
+      "tradeOff": "Favors quick, focused solutions over exhaustive design; lasting infrastructure needs a more deliberate pass.",
+      "stats": {
+        "speed": 5,
+        "thoughtfulness": 1,
+        "creativity": 4,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "low",
+      "soulPath": "mochi/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/mochi/idle.webp",
+        "portraitIdle": "client/src/assets/companions/mochi/portrait-idle.webp",
+        "working": "client/src/assets/companions/mochi/working.webp",
+        "waking": "client/src/assets/companions/mochi/waking.webp"
+      }
+    },
+    {
+      "id": "tilly",
+      "name": "Tilly",
+      "character": "Pink detective bird",
+      "role": "The curious tester",
+      "description": "Tries realistic user journeys and unusual inputs to find the bugs that slip through.",
+      "skills": [
+        "Test design",
+        "Bug reproduction",
+        "User journeys"
+      ],
+      "tradeOff": "Explores extra scenarios and reproductions before calling work finished, trading speed for broader confidence.",
+      "stats": {
+        "speed": 1,
+        "thoughtfulness": 3,
+        "creativity": 3,
+        "initiative": 3
+      },
+      "model": {
+        "preferredId": "muse-spark-1.3",
+        "ifUnavailable": "use-catalog-default"
+      },
+      "effort": "xhigh",
+      "soulPath": "tilly/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/tilly/idle.webp",
+        "portraitIdle": "client/src/assets/companions/tilly/portrait-idle.webp",
+        "working": "client/src/assets/companions/tilly/working.webp",
+        "waking": "client/src/assets/companions/tilly/waking.webp"
+      }
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "character": "Orange fox",
+      "role": "The clever problem-solver",
+      "description": "Finds a clear, inventive route through tricky implementation problems.",
+      "skills": [
+        "Problem solving",
+        "Feature implementation",
+        "Practical alternatives"
+      ],
+      "tradeOff": "Spends time comparing approaches before choosing a practical solution; tiny routine fixes may feel slower.",
+      "stats": {
+        "speed": 2,
+        "thoughtfulness": 4,
+        "creativity": 4,
+        "initiative": 4
+      },
+      "model": {
+        "preferredId": "muse-wonder-1.0",
+        "ifUnavailable": "upgrade-required"
+      },
+      "effort": "high",
+      "soulPath": "ember/SOUL.md",
+      "animations": {
+        "cardIdle": "client/src/assets/companions/ember/idle.webp",
+        "portraitIdle": "client/src/assets/companions/ember/portrait-idle.webp",
+        "working": "client/src/assets/companions/ember/working.webp",
+        "waking": "client/src/assets/companions/ember/waking.webp"
+      }
+    }
+  ]
+}

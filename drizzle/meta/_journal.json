@@ -1,0 +1,167 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790688287765,
+      "tag": "0001_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790688287765,
+      "tag": "0002_create_code_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790691835581,
+      "tag": "0003_add_user_takeover_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790696539613,
+      "tag": "0004_archive_code_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790749053069,
+      "tag": "0005_add_coding_models",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790760783608,
+      "tag": "0006_add_pilot_session_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790764510142,
+      "tag": "0007_add_session_workspace_root",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790816400000,
+      "tag": "0008_add_tool_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790838000000,
+      "tag": "0009_add_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790901600000,
+      "tag": "0010_add_pilot_backend_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791120000000,
+      "tag": "0011_add_tool_timing",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791160000000,
+      "tag": "0012_add_agents_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791200000000,
+      "tag": "0013_add_message_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791300000000,
+      "tag": "0014_add_pilot_start_retry",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791400000000,
+      "tag": "0015_add_agent_attention_and_restore",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1791500000000,
+      "tag": "0016_add_agent_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1791600000000,
+      "tag": "0017_add_output_attention",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1791700000000,
+      "tag": "0018_add_tool_details",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1791800000000,
+      "tag": "0019_add_reasoning_summaries",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1791900000000,
+      "tag": "0020_add_agent_icons",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792000000000,
+      "tag": "0021_add_system_error_tone",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792100000000,
+      "tag": "0022_add_task_title",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792200000000,
+      "tag": "0023_unify_session_summary",
+      "breakpoints": true
+    }
+  ]
+}
