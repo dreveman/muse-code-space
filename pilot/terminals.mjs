@@ -38,8 +38,9 @@ const LOCALE_VARS = new Set(["LC_ALL", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", 
 // the same trust boundary as the agent shells that inherit them via the pilot.
 const PROXY_VARS = new Set(["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]);
 
-/** @param {NodeJS.ProcessEnv} [source] the pilot's environment (only a few values are carried over) */
-export function terminalEnv(source = process.env) {
+/** @param {NodeJS.ProcessEnv} [source] the pilot's environment (only a few values are carried over)
+ *  @param {Record<string, string>} [extras] session-scoped vars the pilot adds (e.g. GitHub broker wiring) */
+export function terminalEnv(source = process.env, extras = {}) {
   let user = { username: source.USER ?? "", homedir: source.HOME ?? "/", shell: null };
   try { user = userInfo(); } catch { /* no passwd entry: keep the env values */ }
   const env = {
@@ -63,6 +64,10 @@ export function terminalEnv(source = process.env) {
     const at = pair.indexOf("=");
     if (at > 0) env[pair.slice(0, at).trim()] = pair.slice(at + 1);
   }
+  // Pilot-supplied session wiring (GitHub broker gitconfig/gh config) wins.
+  for (const [key, value] of Object.entries(extras)) {
+    if (value) env[key] = value;
+  }
   return env;
 }
 
@@ -72,7 +77,7 @@ export function terminalEnv(source = process.env) {
  *   waiters: Set<() => void>, lastSeenAt: number, cols: number, rows: number, number: number, createdAt: number }} Terminal
  */
 
-export function createTerminalManager({ log = () => {}, python = process.env.MUSE_CODE_SPACE_PYTHON ?? "python3" } = {}) {
+export function createTerminalManager({ log = () => {}, python = process.env.MUSE_CODE_SPACE_PYTHON ?? "python3", envExtras = {} } = {}) {
   /** @type {Map<string, Terminal>} */
   const terminals = new Map();
   const byKey = new Map(); // app session id -> Set<terminal id>
@@ -100,7 +105,7 @@ export function createTerminalManager({ log = () => {}, python = process.env.MUS
     const proc = spawn(python, [BRIDGE, cwd, String(cols), String(rows)], {
       cwd,
       stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: terminalEnv(),
+      env: terminalEnv(process.env, envExtras),
     });
     /** @type {Terminal} */
     const number = (counters.get(key) ?? 0) + 1;

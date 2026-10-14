@@ -13,9 +13,11 @@ the runtime dir only holds state, logs, and `node_modules`.
 | `pilot/terminals.mjs`, `pilot/pty_bridge.py` | `<runtime>/` | UI terminals: shells on a PTY in session workspaces (stdlib Python, no native deps) |
 | `pilot/files.mjs` | `<runtime>/` | Bounded read-only file tabs under a session workspace |
 | `pilot/muse_relay.py` | `<runtime>/muse_relay.py` | credential relay (vendored, see below) |
+| `pilot/github_broker.py` | `<runtime>/github_broker.py` | GitHub credential broker (see GitHub broker below) |
 | `pilot/watchdog.sh` | `<runtime>/watchdog.sh` | cron watchdog, single-supervisor rule |
 | `pilot/systemd/muse-code-space-pilot.service` | `/etc/systemd/system/` | project pilot unit (`@PILOT_DIR@` etc.) |
 | `pilot/systemd/muse-code-space-relay.service` | `/etc/systemd/system/` | project relay unit (configurable port) |
+| `pilot/systemd/muse-code-space-github-broker.service` | `/etc/systemd/system/` | GitHub broker unit (configurable port) |
 | `pilot/install.sh` | — | agent-run installer |
 | `pilot/recovery.test.mjs` | `<runtime>/` | `node --test` regression suite |
 
@@ -114,6 +116,43 @@ Prerequisites the installer will NOT create (human/owner steps):
 - Off the VM (e.g. a Mac on AI Gateway) there is no relay: run the pilot
   with `MUSE_CODE_SPACE_RELAY_URL=none` to disable startup, turn and health
   relay checks (`"relay": "disabled"`).
+
+## GitHub broker
+
+`pilot/github_broker.py` (stdlib-only, port `MUSE_CODE_SPACE_GITHUB_BROKER_PORT`,
+default 18792) gives spawned sessions GitHub access without any real
+credential in the session, mirroring the relay pattern. Sessions reach it two
+ways, both wired only into spawned-session environments by the pilot
+(`GIT_CONFIG_GLOBAL`, `GH_CONFIG_DIR`, `GIT_TERMINAL_PROMPT=0`, `SSL_CERT_FILE`
+in `museServeEnv` / terminal extras, only when install generated the files):
+
+- **git:** the generated `$RUNTIME/gitconfig` rewrites `https://github.com/`
+  to the broker (with broker-scoped `sslCAInfo` and a sentinel credential
+  helper). The host's `~/.gitconfig` is never touched.
+- **`gh`:** the generated `$RUNTIME/gh-config` sets `api_host` to the broker
+  with a sentinel token. `gh` forces https for `api_host`, so the broker
+  serves TLS with the install-generated loopback cert; sessions trust it via
+  the generated CA bundle (system roots + broker cert).
+
+The broker strips incoming `Authorization` and attaches its own credential
+per request (Basic `x-access-token:` for git paths, Bearer for API paths),
+forwards only to `github.com` / `api.github.com`, streams bodies in chunks,
+and keeps relay-style bounded diagnostics. Credential backing is selected
+by the host-local `~/.config/muse-code-space-pilot/github-broker.json`
+(chmod 600): on this platform, a `dynamic_credentials` surrogate from the
+custom Secure Vault entry `custom.github-broker` (Secure Vault has no
+read-back, so the config holds only the entry name, never a secret;
+surrogates attach as Bearer on every surface, since the egress exchange
+only rewrites Bearer placements; note GitHub rejects Bearer for git
+transport, so surrogate mode covers `gh`/API only and the broker refuses
+git paths in that mode with an explicit message). GitHub App (RS256 JWT via the `openssl`
+CLI, in-memory installation-token cache) and fine-grained PAT file modes
+remain for hosts where an operator can write that file securely out of
+band. Pilot `/health`
+reports `github_broker` beside `relay` (informational; never flips `ok`),
+and the watchdog recovers the broker unit like the other two. With the
+broker down, git/gh fail fast against loopback — the sentinel is never sent
+to real GitHub. Verify with `python3 -m unittest pilot/test_github_broker.py`.
 
 ## Vendored file
 

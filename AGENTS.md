@@ -42,7 +42,9 @@ are sourced from `pilot/` in this repo and installed with
 `pilot/install.sh` — see [docs/PILOT.md](docs/PILOT.md) for installation
 and restart recovery. Never edit the live
 copies under `~/workspace/muse-code-space-pilot` directly; change the repo
-and reinstall.
+and reinstall. Sessions' GitHub access goes through the loopback broker in
+`pilot/github_broker.py` (sentinel in sessions, real credential only at the
+broker) — see the GitHub broker section of `docs/PILOT.md`.
 
 ## This artifact's data
 

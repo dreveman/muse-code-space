@@ -124,6 +124,19 @@ test("proxy vars reach the shell so git/curl need no manual setup", () => {
   assert.equal(env.SECRET_TOKEN, undefined, "non-network secrets still stay out");
 });
 
+test("pilot-supplied session wiring (GitHub broker) reaches the shell", async () => {
+  const m = createTerminalManager({ envExtras: { GIT_CONFIG_GLOBAL: "/runtime/gitconfig", GH_CONFIG_DIR: "/runtime/gh-config", GIT_TERMINAL_PROMPT: "0" } });
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "term-gh-"));
+  try {
+    const { terminalId } = m.open({ key: "gh", cwd });
+    m.input(terminalId, 'echo "GC=${GIT_CONFIG_GLOBAL:-unset} GH=${GH_CONFIG_DIR:-unset} TP=${GIT_TERMINAL_PROMPT:-unset}"\r');
+    const r = await readUntil(m, terminalId, 0, /GC=\/runtime\/gitconfig GH=\/runtime\/gh-config TP=0/);
+    assert.match(r.out, /GC=\/runtime\/gitconfig GH=\/runtime\/gh-config TP=0/);
+  } finally {
+    m.closeAll();
+  }
+});
+
 test("no idle reaping by default; a session's shell can be killed by its key", async () => {
   const m = createTerminalManager();
   const cwd = mkdtempSync(path.join(os.tmpdir(), "term-key-"));
