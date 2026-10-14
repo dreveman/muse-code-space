@@ -51,11 +51,12 @@ if [ -z "$MUSE_BIN" ]; then
 fi
 PILOT_PORT="${MUSE_CODE_SPACE_PILOT_PORT:-18791}"
 RELAY_PORT="${MUSE_CODE_SPACE_RELAY_PORT:-18790}"
-for port in "$PILOT_PORT" "$RELAY_PORT"; do
+BROKER_PORT="${MUSE_CODE_SPACE_GITHUB_BROKER_PORT:-18792}"
+for port in "$PILOT_PORT" "$RELAY_PORT" "$BROKER_PORT"; do
   case "$port" in ''|*[!0-9]*) fail "invalid port: $port" ;; esac
   [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || fail "port out of range: $port"
 done
-[ "$PILOT_PORT" != "$RELAY_PORT" ] || fail "pilot and relay ports must differ"
+[ "$PILOT_PORT" != "$RELAY_PORT" ] && [ "$PILOT_PORT" != "$BROKER_PORT" ] && [ "$RELAY_PORT" != "$BROKER_PORT" ] || fail "pilot, relay, and broker ports must differ"
 # Ports are host-global. Reinstalls may use this project's active units, but
 # never adopt another service (including the old generic Muse pilot/relay).
 check_port_owner() {
@@ -76,6 +77,7 @@ JS
 }
 check_port_owner "$RELAY_PORT" muse-code-space-relay.service
 check_port_owner "$PILOT_PORT" muse-code-space-pilot.service
+check_port_owner "$BROKER_PORT" muse-code-space-github-broker.service
 [ -x "$MUSE_BIN" ] || fail "muse binary missing: $MUSE_BIN (see docs/PILOT.md)"
 log "Muse binary: $MUSE_BIN (must grant sessionMcp for built-in messaging)"
 # Write sentinel auth.json: the CLI's startup check needs the file to exist,
@@ -91,7 +93,7 @@ fi
 
 # ---- deploy files (code only; state/ and logs stay untouched) ----
 mkdir -p "$RUNTIME/state"
-for f in pilot.mjs terminals.mjs files.mjs mcp.mjs pty_bridge.py package.json package-lock.json muse_relay.py watchdog.sh recovery.test.mjs files.test.mjs; do
+for f in pilot.mjs terminals.mjs files.mjs mcp.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
   cp "$REPO_DIR/$f" "$RUNTIME/$f" || fail "copy $f"
 done
 cp "$REPO_DIR/../server/src/assistantAvatar.mjs" "$RUNTIME/assistant-avatar.mjs" || fail "copy shared avatar validator"
@@ -116,6 +118,61 @@ for v in http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_pr
   printf '%s=%s\n' "$v" "$val" >> "$RUNTIME/proxy.env"
 done
 log "wrote $RUNTIME/proxy.env"
+
+# ---- GitHub broker session wiring (sentinel only; never a real credential) ----
+# The broker's loopback TLS cert: gh forces https for its api_host override,
+# so sessions trust this cert via the generated CA bundle (system roots +
+# broker cert). Cert is public material; the key stays 600 in the runtime.
+# Generated once and kept stable across reinstalls so trust doesn't churn.
+if [ ! -f "$RUNTIME/github-broker-cert.pem" ] || [ ! -f "$RUNTIME/github-broker-key.pem" ]; then
+  command -v openssl >/dev/null || fail "openssl not found (needed for the broker loopback cert)"
+  openssl req -x509 -newkey rsa:2048 -keyout "$RUNTIME/github-broker-key.pem" \
+    -out "$RUNTIME/github-broker-cert.pem" -days 3650 -nodes -subj "/CN=localhost" \
+    -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" >/dev/null 2>&1 \
+    || fail "failed to generate the broker loopback cert"
+  chmod 600 "$RUNTIME/github-broker-key.pem"
+  log "generated broker loopback cert"
+fi
+SYSTEM_CA=""
+for candidate in "${SSL_CERT_FILE:-}" /etc/ssl/certs/ca-certificates.crt /run/hatch/egress-tls/ca-bundle.pem; do
+  if [ -n "$candidate" ] && [ -f "$candidate" ]; then SYSTEM_CA="$candidate"; break; fi
+done
+{ [ -n "$SYSTEM_CA" ] && cat "$SYSTEM_CA"; cat "$RUNTIME/github-broker-cert.pem"; } > "$RUNTIME/github-broker-ca.pem"
+chmod 644 "$RUNTIME/github-broker-ca.pem"
+# Session gitconfig (pilot sets GIT_CONFIG_GLOBAL to this for sessions only;
+# ~/.gitconfig is never read or written here).
+cat > "$RUNTIME/gitconfig" <<EOF
+[url "https://127.0.0.1:$BROKER_PORT/"]
+	insteadOf = https://github.com/
+[http "https://127.0.0.1:$BROKER_PORT"]
+	sslCAInfo = $RUNTIME/github-broker-cert.pem
+[credential "https://127.0.0.1:$BROKER_PORT"]
+	username = x-access-token
+	helper = "!f() { test \\"\$1\\" = get && printf 'username=x-access-token\\npassword=broker-provided-sentinel\\n'; }; f"
+EOF
+chmod 644 "$RUNTIME/gitconfig"
+# Session gh config (pilot sets GH_CONFIG_DIR to this for sessions only).
+mkdir -p "$RUNTIME/gh-config"
+cat > "$RUNTIME/gh-config/hosts.yml" <<EOF
+github.com:
+    user: x-access-token
+    oauth_token: broker-provided-sentinel
+    git_protocol: https
+    api_host: 127.0.0.1:$BROKER_PORT
+EOF
+printf 'git_protocol: https\n' > "$RUNTIME/gh-config/config.yml"
+chmod 644 "$RUNTIME/gh-config/hosts.yml" "$RUNTIME/gh-config/config.yml"
+# Interactive App provisioning entry point (prompts, validates, restarts).
+printf '#!/bin/sh\nexec python3 "%s/setup_github_broker.py" "$@"\n' "$RUNTIME" > "$RUNTIME/setup-github-broker"
+chmod +x "$RUNTIME/setup-github-broker"
+log "wrote session gitconfig + gh config (sentinel only)"
+# The real credential is host-local and provisioned separately via Secure
+# Vault (see docs); install never creates or overwrites it.
+if [ -f "${HOME}/.config/muse-code-space-pilot/github-broker.json" ]; then
+  log "found host-local GitHub credential file (left untouched)"
+else
+  log "no GitHub credential file yet — sessions will fail with a clear broker credential error until one is provisioned (see docs/INSTALL_GUIDE_FOR_MUSE_ASSISTENT.md)"
+fi
 
 # Package files have just been copied into the runtime, so comparing them
 # now always says "equal". Verify the installed SDK version itself instead:
@@ -192,10 +249,12 @@ render_unit() {
       -e "s|@MUSE_BIN@|${MUSE_BIN}|g" \
       -e "s|@PILOT_PORT@|${PILOT_PORT}|g" \
       -e "s|@RELAY_PORT@|${RELAY_PORT}|g" \
+      -e "s|@BROKER_PORT@|${BROKER_PORT}|g" \
       "$REPO_DIR/systemd/$1" > "$RUNTIME/$1"
 }
 render_unit muse-code-space-pilot.service
 render_unit muse-code-space-relay.service
+render_unit muse-code-space-github-broker.service
 
 if [ "$ENABLE" = "1" ]; then
   command -v systemctl >/dev/null || fail "no systemctl; re-run with --no-enable and supervise via watchdog/cron"
@@ -203,10 +262,12 @@ if [ "$ENABLE" = "1" ]; then
   [ "$(id -u)" = "0" ] || fail "unit install needs root; re-run as root or with sudo"
   cp "$RUNTIME/muse-code-space-pilot.service" /etc/systemd/system/muse-code-space-pilot.service
   cp "$RUNTIME/muse-code-space-relay.service" /etc/systemd/system/muse-code-space-relay.service
+  cp "$RUNTIME/muse-code-space-github-broker.service" /etc/systemd/system/muse-code-space-github-broker.service
   systemctl daemon-reload
-  systemctl enable muse-code-space-relay.service muse-code-space-pilot.service || fail "unit enable failed"
+  systemctl enable muse-code-space-relay.service muse-code-space-github-broker.service muse-code-space-pilot.service || fail "unit enable failed"
   # --now does not reload an already-running process after copying new code.
   systemctl restart muse-code-space-relay.service || fail "relay unit failed to restart"
+  systemctl restart muse-code-space-github-broker.service || fail "broker unit failed to restart"
   systemctl restart muse-code-space-pilot.service || fail "pilot unit failed to restart"
   log "units enabled and restarted"
 fi
@@ -216,7 +277,7 @@ if [ "$CRON" = "1" ] && command -v crontab >/dev/null; then
   if crontab -l 2>/dev/null | grep -Fq "$RUNTIME/watchdog.sh"; then
     log "watchdog cron already present"
   else
-    (crontab -l 2>/dev/null; echo "*/2 * * * * MUSE_CODE_SPACE_PILOT_DIR=$RUNTIME MUSE_CODE_SPACE_PILOT_PORT=$PILOT_PORT MUSE_CODE_SPACE_RELAY_PORT=$RELAY_PORT $RUNTIME/watchdog.sh") | crontab -
+    (crontab -l 2>/dev/null; echo "*/2 * * * * MUSE_CODE_SPACE_PILOT_DIR=$RUNTIME MUSE_CODE_SPACE_PILOT_PORT=$PILOT_PORT MUSE_CODE_SPACE_RELAY_PORT=$RELAY_PORT MUSE_CODE_SPACE_GITHUB_BROKER_PORT=$BROKER_PORT $RUNTIME/watchdog.sh") | crontab -
     log "watchdog cron installed"
   fi
 fi
@@ -225,18 +286,20 @@ fi
 # HTTP starts before session recovery (required MCP servers need it), but
 # /health stays unhealthy until all registered sessions are reconciled.
 # Wait for readiness instead of treating a still-booting service as failed.
-RELAY_OK=0; PILOT_OK=0
+RELAY_OK=0; PILOT_OK=0; BROKER_OK=0
 ATTEMPTS=1
 [ "$ENABLE" = "1" ] && ATTEMPTS=60
 for ((i=1; i<=ATTEMPTS; i++)); do
   curl -fsS -m 5 "http://127.0.0.1:$RELAY_PORT/__code_space/health" | grep -q '"ok": *true' && RELAY_OK=1
+  curl -fsS -m 5 --cacert "$RUNTIME/github-broker-cert.pem" "https://127.0.0.1:$BROKER_PORT/__code_space/health" | grep -q '"ok": *true' && BROKER_OK=1
   curl -s -m 5 "http://127.0.0.1:$PILOT_PORT/health" | grep -q '"ok":true' && PILOT_OK=1
-  [ "$RELAY_OK" = "1" ] && [ "$PILOT_OK" = "1" ] && break
+  [ "$RELAY_OK" = "1" ] && [ "$PILOT_OK" = "1" ] && [ "$BROKER_OK" = "1" ] && break
   [ "$i" -lt "$ATTEMPTS" ] && sleep 1
 done
 [ "$RELAY_OK" = "1" ] && log "relay $RELAY_PORT: UP" || log "relay $RELAY_PORT: DOWN"
+[ "$BROKER_OK" = "1" ] && log "github broker $BROKER_PORT: UP" || log "github broker $BROKER_PORT: DOWN"
 [ "$PILOT_OK" = "1" ] && log "pilot $PILOT_PORT: UP" || log "pilot $PILOT_PORT: DOWN"
-if [ "$ENABLE" = "1" ] && { [ "$RELAY_OK" != "1" ] || [ "$PILOT_OK" != "1" ]; }; then
-  fail "a service is down — check $RUNTIME/relay.log and $RUNTIME/pilot.log (the Muse binary must grant sessionMcp)"
+if [ "$ENABLE" = "1" ] && { [ "$RELAY_OK" != "1" ] || [ "$PILOT_OK" != "1" ] || [ "$BROKER_OK" != "1" ]; }; then
+  fail "a service is down — check $RUNTIME/relay.log, $RUNTIME/github-broker.log and $RUNTIME/pilot.log (the Muse binary must grant sessionMcp)"
 fi
 log "done"

@@ -30,7 +30,18 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-sys.path.insert(0, "/opt/hatch/skills/skill-creator/bin")
+# The platform moved the credential helper (skill-creator -> custom-
+# connector-setup, under two roots on different hosts). Resolve the first
+# candidate that actually contains the module; the legacy path is kept last.
+_CREDENTIAL_HELPER_DIRS = (
+    "/opt/muse/skills/custom-connector-setup/bin",
+    "/opt/hatch/workflow-skills/custom-connector-setup/bin",
+    "/opt/hatch/skills/skill-creator/bin",
+)
+for _helper_dir in _CREDENTIAL_HELPER_DIRS:
+    if os.path.exists(os.path.join(_helper_dir, "dynamic_credentials.py")):
+        sys.path.insert(0, _helper_dir)
+        break
 from dynamic_credentials import dynamic_credential_entry  # noqa: E402
 
 TARGET_BASE = "https://api.meta.ai"

@@ -39,6 +39,7 @@ for (const v of ["LOCAL_SESSION_MESSAGING", "EXTERNAL_AGENT_INGRESS"]) {
 
 import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-code/sdk";
 import { createServer } from "node:http";
+import { get as httpsGet } from "node:https";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync } from "node:fs";
 import { createHash, getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -314,6 +315,29 @@ function writableDirs(source = process.env) {
   return dirs;
 }
 
+// GitHub broker wiring for spawned sessions only (install.sh generates the
+// files in the runtime dir; the host's own ~/.gitconfig is never touched).
+// Sessions get the broker gitconfig (insteadOf rewrite + sentinel), a scoped
+// gh config (api_host -> broker), and a CA bundle that trusts the broker's
+// loopback cert alongside the system roots. Absent files (broker not
+// installed) mean no wiring — sessions behave exactly as before.
+function githubSessionEnv() {
+  const runtime = dirname(STATE_DIR);
+  const gitconfig = join(runtime, "gitconfig");
+  if (!existsSync(gitconfig)) return {};
+  const env = { GIT_CONFIG_GLOBAL: gitconfig, GIT_TERMINAL_PROMPT: "0" };
+  const ghConfig = join(runtime, "gh-config");
+  if (existsSync(ghConfig)) env.GH_CONFIG_DIR = ghConfig;
+  const caBundle = join(runtime, "github-broker-ca.pem");
+  if (existsSync(caBundle)) env.SSL_CERT_FILE = caBundle;
+  // GIT_SSL_CAINFO overrides the gitconfig's broker-scoped sslCAInfo, and
+  // login profiles on this host set it to the egress bundle (which lacks
+  // the broker cert) — pin it to the broker cert for sessions.
+  const brokerCert = join(runtime, "github-broker-cert.pem");
+  if (existsSync(brokerCert)) env.GIT_SSL_CAINFO = brokerCert;
+  return env;
+}
+
 function museServeEnv(source = process.env) {
   const extra = [
     ...(source.META_3PAI_ADDITIONAL_WRITABLE_DIRS ?? "").split("\n").map((d) => d.trim()).filter(Boolean),
@@ -324,6 +348,7 @@ function museServeEnv(source = process.env) {
     XDG_CONFIG_HOME: `${HOME}/.config/muse-code-space-pilot`,
     MUSE_AUTH_PATH: `${HOME}/.config/muse-code-space-pilot/muse/auth.json`,
     META_3PAI_ADDITIONAL_WRITABLE_DIRS: [...new Set(extra)].join("\n"),
+    ...githubSessionEnv(),
   };
 }
 
@@ -971,6 +996,31 @@ function turnReadiness() {
   };
 }
 
+// GitHub broker liveness (loopback TLS with the install-generated cert;
+// verification is skipped for this local health probe only — no credential
+// ever travels over it, mirroring the relay's local-liveness check).
+const BROKER_PORT = Number(process.env.MUSE_CODE_SPACE_GITHUB_BROKER_PORT ?? 18792);
+let brokerUpSyncCache = null;
+async function brokerUp() {
+  return new Promise((resolve) => {
+    const req = httpsGet({ host: "127.0.0.1", port: BROKER_PORT, path: "/__code_space/health",
+                      rejectUnauthorized: false, timeout: 2000 }, (res) => {
+      let body = "";
+      res.on("data", (c) => { body += c; });
+      res.on("end", () => {
+        try { resolve(res.statusCode === 200 && JSON.parse(body).ok === true); }
+        catch { resolve(false); }
+      });
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => { req.destroy(); resolve(false); });
+  });
+}
+const brokerProber = setInterval(async () => {
+  try { brokerUpSyncCache = await brokerUp(); } catch { brokerUpSyncCache = false; }
+}, 15000);
+if (typeof brokerProber.unref === "function") brokerProber.unref();
+
 function healthPayload() {
   const relay = relayUpSyncCache;
   const turns = turnReadiness();
@@ -983,6 +1033,8 @@ function healthPayload() {
     home: HOME,
     terminals: terminals.size(),
     relay: !RELAY_ENABLED ? "disabled" : relay === false ? "down" : relay === true ? "up" : "unknown",
+    // Informational only: GitHub is optional, so a down broker never flips ok.
+    github_broker: brokerUpSyncCache === false ? "down" : brokerUpSyncCache === true ? "up" : "unknown",
     unrecovered: [...unrecovered],
     turns,
   };
@@ -1408,7 +1460,7 @@ function readBody(req) {
   });
 }
 // Terminals for the UI (shells in session workspaces on this host).
-const terminals = createTerminalManager({ log });
+const terminals = createTerminalManager({ log, envExtras: githubSessionEnv() });
 
 const json = (res, code, obj) => {
   res.writeHead(code, { "content-type": "application/json" });
@@ -2061,6 +2113,8 @@ export const __test__ = {
   readMuseInbox,
   museServeEnv,
   withProxyFallback,
+  githubSessionEnv,
+  brokerUp,
   parseProxyAssignments,
   onHostNotification,
   followedTurns,

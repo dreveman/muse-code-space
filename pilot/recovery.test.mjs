@@ -485,6 +485,28 @@ test("proxy fallback fills only missing vars and explicit env wins", () => {
   assert.equal(serve.https_proxy, "http://from-file:3128");
 });
 
+test("pilot health reports the GitHub broker state beside relay", async () => {
+  assert.ok(["up", "down", "unknown"].includes(t.healthPayload().github_broker));
+  assert.equal(typeof (await t.brokerUp()), "boolean", "broker probe resolves, never hangs");
+});
+
+test("sessions get GitHub broker wiring only when install generated it", () => {
+  const runtime = path.join(process.env.HOME, "workspace", "muse-code-space-pilot");
+  assert.deepEqual(t.githubSessionEnv(), {}, "no generated gitconfig: no wiring");
+  writeFileSync(path.join(runtime, "gitconfig"), "[url]\n");
+  mkdirSync(path.join(runtime, "gh-config"), { recursive: true });
+  writeFileSync(path.join(runtime, "github-broker-ca.pem"), "cert");
+  writeFileSync(path.join(runtime, "github-broker-cert.pem"), "cert");
+  const env = t.githubSessionEnv();
+  assert.ok(env.GIT_CONFIG_GLOBAL.endsWith("/gitconfig"));
+  assert.ok(env.GH_CONFIG_DIR.endsWith("/gh-config"));
+  assert.equal(env.GIT_TERMINAL_PROMPT, "0");
+  assert.ok(env.SSL_CERT_FILE.endsWith("/github-broker-ca.pem"));
+  assert.ok(env.GIT_SSL_CAINFO.endsWith("/github-broker-cert.pem"), "git CA pinned to broker cert, overriding login-profile GIT_SSL_CAINFO");
+  const serve = t.museServeEnv({ PATH: "/usr/bin" });
+  assert.equal(serve.GIT_CONFIG_GLOBAL, env.GIT_CONFIG_GLOBAL, "muse serve sessions inherit the wiring");
+});
+
 // ---- agent-to-agent messages ----
 
 function messagingAgent(backendId, name, workspaceRoot) {

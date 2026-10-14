@@ -10,6 +10,7 @@ set -u
 PILOT_DIR="${MUSE_CODE_SPACE_PILOT_DIR:-${HOME}/workspace/muse-code-space-pilot}"
 PILOT_PORT="${MUSE_CODE_SPACE_PILOT_PORT:-18791}"
 RELAY_PORT="${MUSE_CODE_SPACE_RELAY_PORT:-18790}"
+BROKER_PORT="${MUSE_CODE_SPACE_GITHUB_BROKER_PORT:-18792}"
 LOG="$PILOT_DIR/watchdog.log"
 
 pilot_healthy() {
@@ -24,6 +25,11 @@ pilot_healthy() {
 relay_healthy() {
   # Local liveness: never send watchdog probes to api.meta.ai.
   curl -fsS -m 5 "http://127.0.0.1:$RELAY_PORT/__code_space/health" 2>/dev/null | grep -q '"ok": *true'
+}
+broker_healthy() {
+  # Local liveness only: -k is fine here (loopback health, no credential is
+  # ever sent by a health probe); never probe github.com directly.
+  curl -fsSk -m 5 "https://127.0.0.1:$BROKER_PORT/__code_space/health" 2>/dev/null | grep -q '"ok": *true'
 }
 has_systemd() {
   systemctl --version >/dev/null 2>&1 && [ -d /run/systemd/system ]
@@ -85,5 +91,6 @@ recover_service() {
 
 failed=0
 recover_service "muse-code-space-relay.service" relay_healthy "$PILOT_DIR/muse_relay.py" "MUSE_CODE_SPACE_RELAY_PORT=$RELAY_PORT /usr/bin/python3 $PILOT_DIR/muse_relay.py" || failed=1
+recover_service "muse-code-space-github-broker.service" broker_healthy "$PILOT_DIR/github_broker.py" "MUSE_CODE_SPACE_GITHUB_BROKER_PORT=$BROKER_PORT MUSE_CODE_SPACE_GITHUB_BROKER_RUNTIME=$PILOT_DIR /usr/bin/python3 $PILOT_DIR/github_broker.py" || failed=1
 recover_service "muse-code-space-pilot.service" pilot_healthy "$PILOT_DIR/pilot.mjs" "MUSE_CODE_SPACE_PILOT_PORT=$PILOT_PORT MUSE_CODE_SPACE_RELAY_URL=http://127.0.0.1:$RELAY_PORT MUSE_CODE_SPACE_PILOT_STATE_DIR=$PILOT_DIR/state /usr/bin/node $PILOT_DIR/pilot.mjs" || failed=1
 exit "$failed"

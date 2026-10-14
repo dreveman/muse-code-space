@@ -1,0 +1,23 @@
+[Unit]
+Description=Muse Code Space GitHub broker (127.0.0.1:@BROKER_PORT@)
+After=network.target
+
+[Service]
+Type=simple
+User=@PILOT_USER@
+WorkingDirectory=@PILOT_DIR@
+ExecStart=/usr/bin/python3 @PILOT_DIR@/github_broker.py
+Restart=always
+RestartSec=3
+Environment=HOME=@PILOT_HOME@
+Environment=MUSE_CODE_SPACE_GITHUB_BROKER_PORT=@BROKER_PORT@
+Environment=MUSE_CODE_SPACE_GITHUB_BROKER_RUNTIME=@PILOT_DIR@
+# Same captured proxy env as the relay: the broker's urllib needs it to
+# reach github.com / api.github.com. The leading '-' keeps the unit
+# startable without it.
+EnvironmentFile=-@PILOT_DIR@/proxy.env
+StandardOutput=append:@PILOT_DIR@/github-broker.log
+StandardError=append:@PILOT_DIR@/github-broker.log
+
+[Install]
+WantedBy=multi-user.target

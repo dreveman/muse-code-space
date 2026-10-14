@@ -87,6 +87,46 @@ revoked — have the user reconnect it via Secure Vault.
 Never commit `auth.json` to the repo, copy it between hosts, or include it
 in snapshots. It is host-local, not source.
 
+### GitHub broker credential
+
+Code Space sessions get GitHub access through the loopback broker
+(`pilot/github_broker.py`, port 18792); sessions only ever hold a sentinel.
+On this platform **Secure Vault has no read-back** — no tool can retrieve a
+stored secret value — so the vault cannot supply the contents of a
+credential file. The platform-native pattern is the same one the muse relay
+uses: a custom credential entry plus per-request surrogates.
+
+1. **Surrogate via custom entry (platform-native, preferred):** have the
+   user create a fine-grained GitHub PAT (Contents + Pull requests
+   read/write, **selected repositories only**) and store it through Secure
+   Vault as a custom API credential entry named `custom.github-broker`.
+   The credential service then issues `hsurr:*` surrogates for that entry.
+   Write the host-local broker config (it contains no secret):
+   `~/.config/muse-code-space-pilot/github-broker.json` (chmod 600) with
+   `{"mode": "surrogate", "credential_name": "custom.github-broker"}`,
+   then restart `muse-code-space-github-broker.service`. The broker
+   attaches fresh surrogates as Bearer. **Scope limit (verified live):**
+   surrogate mode covers the `gh`/API surface only — GitHub requires
+   Basic-with-token-password for git transport and rejects Bearer there,
+   while surrogates can only travel as Bearer, so `git clone/pull/push`
+   in surrogate mode fails with an explicit broker message. Full git
+   access needs App or PAT file mode below (broker holds a real token).
+2. **GitHub App (full git + gh, recommended for landing code):** run
+   `~/workspace/muse-code-space-pilot/setup-github-broker` in a Code Space
+   terminal. It prompts for the App ID and installation ID, reads the App
+   private key with terminal echo off (never paste the key to any agent in
+   chat; Secure Vault cannot be the source for this file), validates the
+   trio against GitHub, writes `github-broker.json` + the key (both 600),
+   restarts the broker, and verifies it. PAT file mode
+   (`{"mode": "pat", "token": …}` in the same JSON) works the same way for
+   operators who write the file securely out of band.
+
+`install.sh` never creates or overwrites this file; it only reports whether
+one is present. Without it the broker stays up and session git/gh calls fail
+with a clear `github broker credential error` until one is provisioned.
+The broker reads the file at startup; restart the broker service after
+provisioning or changing it.
+
 The VM installer requires the Muse binary path chosen for this host. Before
 running it, check the selected binary against the installed SDK and verify its
 `sessionMcp` handshake grant. Choose the correct credentials and egress proxy
