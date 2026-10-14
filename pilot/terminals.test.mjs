@@ -108,6 +108,22 @@ test("the shell's environment is an allowlist, not the pilot's", async () => {
   }
 });
 
+test("proxy vars reach the shell so git/curl need no manual setup", () => {
+  const env = terminalEnv({
+    HOME: "/home/x", USER: "x",
+    http_proxy: "http://proxy:3128", https_proxy: "http://proxy:3128",
+    HTTP_PROXY: "http://proxy:3128", HTTPS_PROXY: "http://proxy:3128",
+    all_proxy: "http://proxy:3128", ALL_PROXY: "http://proxy:3128",
+    no_proxy: "localhost,127.0.0.1", NO_PROXY: "localhost,127.0.0.1",
+    SECRET_TOKEN: "s3cret",
+  });
+  assert.equal(env.HTTPS_PROXY, "http://proxy:3128");
+  assert.equal(env.https_proxy, "http://proxy:3128");
+  assert.equal(env.HTTP_PROXY, "http://proxy:3128");
+  assert.equal(env.NO_PROXY, "localhost,127.0.0.1");
+  assert.equal(env.SECRET_TOKEN, undefined, "non-network secrets still stay out");
+});
+
 test("no idle reaping by default; a session's shell can be killed by its key", async () => {
   const m = createTerminalManager();
   const cwd = mkdtempSync(path.join(os.tmpdir(), "term-key-"));

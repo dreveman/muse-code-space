@@ -41,6 +41,7 @@ import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-cod
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync } from "node:fs";
 import { createHash, getRandomValues } from "node:crypto";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
 import { readWorkspaceFile } from "./files.mjs";
@@ -70,6 +71,58 @@ const RELAY_URL = RELAY_ENABLED ? RELAY_SETTING.replace(/\/+$/, "") : null;
 
 mkdirSync(STATE_DIR, { recursive: true });
 mkdirSync(WORKSPACES, { recursive: true });
+
+// ---- egress proxy fallback ----
+// Agent shells need the VM's egress proxy for git/curl (direct egress fails
+// with TLS errors), but the pilot's own environment often lacks it: systemd
+// units don't inherit the login shell, and watchdog/direct starts bypass the
+// unit's EnvironmentFile. Fill only missing vars — explicit env always wins,
+// and hosts without a proxy (e.g. a Mac) simply find no file. Sources in
+// priority order: the install-time capture next to the state dir (it carries
+// the proxy credentials the relay uses), then the system environment file.
+// Values are never logged: proxy URLs may embed credentials.
+const PROXY_VARS = ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"];
+const PROXY_VAR_SET = new Set(PROXY_VARS);
+
+function parseProxyAssignments(text) {
+  const out = {};
+  for (const line of String(text ?? "").split("\n")) {
+    const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (!m || !PROXY_VAR_SET.has(m[1])) continue;
+    let value = m[2].trim();
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1);
+    }
+    if (value) out[m[1]] = value;
+  }
+  return out;
+}
+
+// Pure merge: `env` plus any proxy vars it lacks, taken from `fileTexts` in
+// order (first source wins). Non-proxy vars are never adopted.
+function withProxyFallback(env, fileTexts) {
+  const out = { ...env };
+  for (const text of fileTexts) {
+    for (const [key, value] of Object.entries(parseProxyAssignments(text))) {
+      if (!out[key]) out[key] = value;
+    }
+  }
+  return out;
+}
+
+function applyProxyFallback(target = process.env) {
+  const paths = [join(dirname(STATE_DIR), "proxy.env"), "/etc/environment"];
+  const texts = [];
+  for (const p of paths) {
+    try { texts.push(readFileSync(p, "utf8")); } catch { /* no proxy file on this host */ }
+  }
+  const filled = withProxyFallback(target, texts);
+  for (const key of PROXY_VARS) {
+    if (filled[key] && !target[key]) target[key] = filled[key];
+  }
+  return target;
+}
+applyProxyFallback();
 
 const log = (m, ...a) => console.log(new Date().toISOString(), "[pilot]", m, ...a);
 
@@ -2007,6 +2060,8 @@ export const __test__ = {
   deliverAgentMessage,
   readMuseInbox,
   museServeEnv,
+  withProxyFallback,
+  parseProxyAssignments,
   onHostNotification,
   followedTurns,
   deleteSession,

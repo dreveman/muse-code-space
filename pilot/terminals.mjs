@@ -32,6 +32,11 @@ const BASE_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 // LC_TERMINAL / LC_TERMINAL_VERSION (so ssh's `SendEnv LC_*` forwards them),
 // and shell configs use LC_TERMINAL=iTerm2 to detect a real iTerm.
 const LOCALE_VARS = new Set(["LC_ALL", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME"]);
+// Egress proxy: without it git/curl in the shell fail with TLS errors on
+// proxied hosts (the VM's direct egress is blocked). The values may carry
+// proxy credentials, but this is the user's own shell on their own host —
+// the same trust boundary as the agent shells that inherit them via the pilot.
+const PROXY_VARS = new Set(["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]);
 
 /** @param {NodeJS.ProcessEnv} [source] the pilot's environment (only a few values are carried over) */
 export function terminalEnv(source = process.env) {
@@ -48,9 +53,10 @@ export function terminalEnv(source = process.env) {
     COLORTERM: "truecolor",
     TERM_PROGRAM: "wterm",
   };
-  // Carried over only when set: locale categories, and macOS's per-user temp dir.
+  // Carried over only when set: locale categories, the egress proxy, and
+  // macOS's per-user temp dir.
   for (const [key, value] of Object.entries(source)) {
-    if (value && (LOCALE_VARS.has(key) || key === "TMPDIR")) env[key] = value;
+    if (value && (LOCALE_VARS.has(key) || PROXY_VARS.has(key) || key === "TMPDIR")) env[key] = value;
   }
   // Explicit extras: MUSE_CODE_SPACE_TERMINAL_ENV="KEY=value;OTHER=value"
   for (const pair of (source.MUSE_CODE_SPACE_TERMINAL_ENV ?? "").split(";")) {

@@ -32,6 +32,13 @@ It renders and enables both units, installs the 2-minute watchdog cron, and
 verifies both ports. Re-runnable. Needs root
 for the unit step (or pass `--no-enable` and supervise via cron).
 
+Both units load the install-time proxy capture (`proxy.env`, mode 600) so the
+relay *and* `muse serve` sessions inherit the VM's egress proxy — without it,
+`git`/`curl` in agent shells and UI terminals fail with TLS errors. The pilot
+also fills any missing proxy vars at startup from that file (then
+`/etc/environment`), so watchdog/direct starts work too; explicit environment
+always wins and proxy-less hosts are unaffected.
+
 New sessions with no explicit workspace use `~/workspace/code/<short-token>`.
 `MUSE_CODE_SPACE_WORKSPACES` overrides the parent. Existing sessions stay in
 their saved `workspaceRoot`; the installer does not move workspaces.

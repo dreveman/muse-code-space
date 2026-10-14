@@ -27,6 +27,7 @@ test("VM installer deploys the file viewer dependency while preserving pilot sta
   const pilotUnit = readFileSync(new URL('./systemd/muse-code-space-pilot.service', import.meta.url), 'utf8');
   const relayUnit = readFileSync(new URL('./systemd/muse-code-space-relay.service', import.meta.url), 'utf8');
   assert.ok(pilotUnit.includes('Wants=muse-code-space-relay.service') && pilotUnit.includes('MUSE_CODE_SPACE_PILOT_STATE_DIR=@PILOT_DIR@/state'));
+  assert.ok(pilotUnit.includes('EnvironmentFile=-@PILOT_DIR@/proxy.env'), "pilot unit loads the captured proxy env so muse serve sessions inherit it");
   assert.ok(relayUnit.includes('MUSE_CODE_SPACE_RELAY_PORT=@RELAY_PORT@'));
   for (const template of [pilotUnit, relayUnit]) {
     const rendered = template.replaceAll('@PILOT_DIR@', '/home/test/workspace/muse-code-space-pilot')
