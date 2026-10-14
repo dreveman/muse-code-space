@@ -16,6 +16,10 @@ Environment=MUSE_CODE_SPACE_MUSE_BIN=@MUSE_BIN@
 Environment=MUSE_CODE_SPACE_PILOT_PORT=@PILOT_PORT@
 Environment=MUSE_CODE_SPACE_RELAY_URL=http://127.0.0.1:@RELAY_PORT@
 Environment=MUSE_CODE_SPACE_PILOT_STATE_DIR=@PILOT_DIR@/state
+# Same captured proxy env as the relay (see install.sh): `muse serve` and the
+# agent shells it spawns need it for git/curl egress. The leading '-' keeps
+# the unit startable on hosts without a proxy.
+EnvironmentFile=-@PILOT_DIR@/proxy.env
 StandardOutput=append:@PILOT_DIR@/pilot.log
 StandardError=append:@PILOT_DIR@/pilot.log
 

@@ -469,6 +469,22 @@ test("muse serve gets ~/workspace as a writable root (launcher sandbox)", () => 
   assert.equal(custom, `${process.env.HOME}/a\n${process.env.HOME}/b`, "MUSE_CODE_SPACE_WRITABLE_DIRS overrides the default");
 });
 
+// ---- egress proxy: sessions must inherit it without manual setup ----
+
+test("proxy fallback fills only missing vars and explicit env wins", () => {
+  const filled = t.withProxyFallback(
+    { HTTPS_PROXY: "http://explicit:3128", PATH: "/usr/bin" },
+    ["HTTPS_PROXY=http://from-file:3128\nhttps_proxy=http://from-file:3128\nSECRET_TOKEN=nope\n# comment\n\nNO_PROXY=localhost\n"],
+  );
+  assert.equal(filled.HTTPS_PROXY, "http://explicit:3128", "explicit env is never overwritten");
+  assert.equal(filled.https_proxy, "http://from-file:3128", "missing vars are filled from the file");
+  assert.equal(filled.NO_PROXY, "localhost");
+  assert.equal(filled.SECRET_TOKEN, undefined, "only proxy vars are adopted");
+  const serve = t.museServeEnv(filled);
+  assert.equal(serve.HTTPS_PROXY, "http://explicit:3128", "muse serve (and its agent shells) inherit the proxy");
+  assert.equal(serve.https_proxy, "http://from-file:3128");
+});
+
 // ---- agent-to-agent messages ----
 
 function messagingAgent(backendId, name, workspaceRoot) {
