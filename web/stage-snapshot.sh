@@ -30,6 +30,15 @@
 # The checkout is never modified: the snapshot comes from `git archive
 # HEAD`, so a dirty working tree would silently stage committed state
 # instead of what is on disk — the script refuses to run in that case.
+#
+# App data guard: the snapshot directory also holds the artifact's managed
+# app.db, which `rm -rf` would destroy (2026-10-15: a routine re-stage
+# silently reset the app to first-run state). Before clearing, an existing
+# app.db is backed up with SQLite's online backup (WAL-safe) to
+# ~/workspace/ts-spaces/.data-backups/<slug>-<timestamp>/ and restored into
+# the fresh snapshot afterward. If the database exists but cannot be
+# backed up, the script aborts before touching anything. This whole-file
+# backup/restore is a host-level disaster guard only — never edit rows.
 set -euo pipefail
 
 slug="${1:-}"
@@ -49,6 +58,34 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   echo "error: checkout at $repo_root has uncommitted changes." >&2
   echo "Commit or stash first: the snapshot is taken from HEAD and must match the tree." >&2
   exit 1
+fi
+
+# 0. Preserve the artifact's database across the wipe (updates only).
+BACKUP_DIR=""
+if [[ -f "$dest/app.db" ]]; then
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  BACKUP_DIR="$HOME/workspace/ts-spaces/.data-backups/${slug}-${stamp}"
+  mkdir -p "$BACKUP_DIR"
+  if ! python3 - "$dest/app.db" "$BACKUP_DIR/app.db" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+dst = sqlite3.connect(sys.argv[2])
+try:
+    src.backup(dst)
+finally:
+    dst.close()
+    src.close()
+PY
+  then
+    echo "error: could not back up $dest/app.db — aborting before clearing the snapshot." >&2
+    echo "Your existing data is untouched at $dest/app.db. Resolve the backup failure and re-run." >&2
+    exit 1
+  fi
+  if [[ ! -s "$BACKUP_DIR/app.db" ]]; then
+    echo "error: backup of $dest/app.db produced an empty file — aborting before clearing the snapshot." >&2
+    exit 1
+  fi
+  echo "backed up existing app database to $BACKUP_DIR/app.db"
 fi
 
 # 1. Clear bootstrap files (retry once; abort unless really gone).
@@ -72,6 +109,13 @@ git -C "$repo_root" archive HEAD -- \
 
 # 3. Generate space.json from the template.
 sed "s/__ARTIFACT_SLUG__/$slug/g" "$dest/space.json.template" > "$dest/space.json"
+
+# 4. Restore the preserved database into the fresh snapshot (updates only).
+# The backup directory is retained for manual rollback; prune it by hand.
+if [[ -n "$BACKUP_DIR" ]]; then
+  cp "$BACKUP_DIR/app.db" "$dest/app.db"
+  echo "restored app database from $BACKUP_DIR/app.db (backup retained at $BACKUP_DIR)"
+fi
 
 # Verify the snapshot is complete, self-consistent, and the checkout
 # was not touched.

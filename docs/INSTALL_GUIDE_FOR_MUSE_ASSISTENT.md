@@ -212,6 +212,11 @@ repository there for `pilot/install.sh`; never transfer pilot state,
    catalog. If so, use the edit workflow with that slug to update it from
    a fresh snapshot (re-copy from the git checkout first). Do not
    delete/recreate an existing artifact just to update it.
+   **Before staging any update, record the current data counts** through
+   the artifact's own actions/inspect views (never sqlite against
+   `app.db`): the `listSessions` total (Active + Past) and the
+   `listProjects` count. Write both numbers down; step 5 compares against
+   them, and a drop means the update failed (see below).
 2. If no snapshot exists (first install, or the old artifact was deleted):
    a. Create a **fullstack TypeScript web Space** with display name
       "Code Space". The platform will generate the slug; **capture it from
@@ -230,6 +235,15 @@ repository there for `pilot/install.sh`; never transfer pilot state,
       The script clears the bootstrap files the artifact system created
       (retrying once if the system is still writing), extracts a git archive
       of the web-build files, and generates `space.json` from the template.
+      On updates it first backs up the existing `app.db` (SQLite online
+      backup, WAL-safe) to `~/workspace/ts-spaces/.data-backups/` and
+      restores it into the fresh snapshot, printing both lines
+      (`backed up existing app database to …`, `restored app database
+      from …`). **Verify both lines appear in its output.** If the
+      database exists but cannot be backed up, the script aborts before
+      clearing anything — resolve that failure; never work around it by
+      clearing the directory manually. Keep the printed backup path with
+      your step-1 counts for the step-5 comparison and any rollback.
       Note: `icon.webp` is intentionally excluded from the snapshot. The
       runtime owns the icon file on builder-created artifacts and restores
       its own generated icon before and after each build, deleting any
@@ -255,6 +269,14 @@ repository there for `pilot/install.sh`; never transfer pilot state,
    `list_agents` / `send_message`, transcript persistence across restart, and
    an agent-written file opened in its tab. Do not interpret an absent old
    app DB as an instruction to import or delete pilot orphans automatically.
+   **Then compare the data counts against step 1:** `listSessions` total
+   and `listProjects` count must be at least what you recorded (they may
+   legitimately grow while you worked). Any drop means the update lost
+   data — treat the update as failed even if every health check is green
+   (they exercise the pilot, whose state lives elsewhere): copy the
+   backup printed by `stage-snapshot.sh` over the snapshot's `app.db`
+   (whole-file restore only, never row edits), rebuild through the edit
+   workflow, reload, and compare again before reporting success.
 6. The watchdog hook (step 3 in "Code Space watchdog hook" below) automatically
    keeps the artifact's icon in sync with the repo's `icon.webp`. The sidebar
    icon comes from `~/workspace/ts-spaces/<slug>/icon.webp` (checked by
