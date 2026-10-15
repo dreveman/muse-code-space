@@ -44,7 +44,11 @@ export function terminalEnv(source = process.env, extras = {}) {
   let user = { username: source.USER ?? "", homedir: source.HOME ?? "/", shell: null };
   try { user = userInfo(); } catch { /* no passwd entry: keep the env values */ }
   const env = {
-    HOME: user.homedir || source.HOME || "/",
+    // The process HOME wins over the passwd entry: the pilot unit sets
+    // HOME to the workspace home (/home/hatch) while running as root,
+    // whose passwd homedir is /root. Terminals must agree with agent
+    // shells (and ~ expansion) about where home is.
+    HOME: source.HOME || user.homedir || "/",
     USER: user.username || source.USER || "",
     LOGNAME: user.username || source.LOGNAME || source.USER || "",
     SHELL: source.MUSE_CODE_SPACE_TERMINAL_SHELL || user.shell || "/bin/bash",

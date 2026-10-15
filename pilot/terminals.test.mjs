@@ -108,6 +108,11 @@ test("the shell's environment is an allowlist, not the pilot's", async () => {
   }
 });
 
+test("process HOME wins over the passwd homedir (root pilot, /home/hatch home)", () => {
+  const env = terminalEnv({ HOME: "/home/hatch", USER: "root" });
+  assert.equal(env.HOME, "/home/hatch", "terminals agree with agent shells about ~");
+});
+
 test("proxy vars reach the shell so git/curl need no manual setup", () => {
   const env = terminalEnv({
     HOME: "/home/x", USER: "x",
