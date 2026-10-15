@@ -1,7 +1,7 @@
 // Session side panel: file tabs share the space beside the transcript with
 // terminal tabs. Closing a terminal ends its shell; closing a file discards
 // its local view.
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { TerminalView } from "./TerminalPanel";
 import { FileTab } from "./FileTab";
 
@@ -11,7 +11,7 @@ export type SideTab =
 
 export type SidePanelState = { tabs: SideTab[]; activeKey: string | null };
 
-export function OwnedArtifactMenu({ paths, onOpen }: { paths: readonly string[]; onOpen: (path: string) => void }) {
+export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen }: { paths: readonly string[]; onOpen: (path: string) => void }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => { if (paths.length === 0) setOpen(false); }, [paths.length]);
@@ -32,7 +32,7 @@ export function OwnedArtifactMenu({ paths, onOpen }: { paths: readonly string[];
       {paths.map((path) => <button key={path} type="button" role="menuitem" title={path} onClick={() => { setOpen(false); onOpen(path); }}>{path}</button>)}
     </div>}
   </div>;
-}
+});
 
 export function sideTabLabel(tab: SideTab): string {
   if (tab.kind === "file") return tab.path.split("/").at(-1) || tab.path;

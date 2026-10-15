@@ -1,6 +1,6 @@
 import { SafeAreaTopScrim } from "@hatch/space-sdk/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { api, type ApiResponse } from "./api";
 import { getWorkingLabel } from "./workingLabel";
 import { shouldSnapToBottom, shouldFollowTranscript } from "./scrollSnap";
@@ -86,6 +86,7 @@ const EFFORT_OPTIONS: Array<{ value: Effort; label: string }> = [
 ];
 
 const CONTEXT_WINDOW_TOKENS = 128_000;
+const NO_OWNED_FILES: readonly string[] = [];
 const SHOW_REASONING_KEY = "muse-code-space:show-reasoning";
 const EXPAND_TOOLS_KEY = "muse-code-space:expand-tools";
 const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
@@ -413,7 +414,12 @@ function WorkingIndicator({ label, elapsedSeconds, detailed }: { label: string; 
 // Keep the compact existing tool row; its inner button exposes a transcript.
 // The first expansion is bounded, and fetching stored full output only occurs
 // behind the second, explicit "Show all" action.
-function ToolEvent({ sessionId, workspaceRoot, eventId, text, details, startedAt, finishedAt, nowMs, expandedByDefault, showRawToolOutput, onOpenFile }: {
+// Memoized: a finished tool row's inputs are stable across the transcript's
+// 1s clock ticks and 1.5s refetches (react-query structural sharing keeps
+// unchanged event objects referentially equal), so finished rows must not
+// recompute presentations/previews on every App render. Only a running row
+// ticks, and it does so with its own local clock.
+const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, text, details, startedAt, finishedAt, expandedByDefault, showRawToolOutput, onOpenFile }: {
   sessionId: string;
   workspaceRoot: string;
   eventId: number;
@@ -421,7 +427,6 @@ function ToolEvent({ sessionId, workspaceRoot, eventId, text, details, startedAt
   details: ApiResponse<typeof api, "getSession">["events"][number]["tool_details"];
   startedAt: string | null;
   finishedAt: string | null;
-  nowMs: number;
   expandedByDefault: boolean;
   showRawToolOutput: boolean;
   onOpenFile: (path: string) => void;
@@ -439,8 +444,16 @@ function ToolEvent({ sessionId, workspaceRoot, eventId, text, details, startedAt
   const manuallyOpenedRef = useRef(false);
   const patchRequest = useRef(0);
   const outputRequest = useRef(0);
-  const elapsed = toolElapsedMs(startedAt, finishedAt, nowMs);
   const running = finishedAt === null && (details?.status === "inProgress" || startedAt !== null);
+  // Only running rows need a clock; finished rows render a fixed duration.
+  const [tickMs, setTickMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setTickMs(Date.now());
+    const interval = window.setInterval(() => setTickMs(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [running]);
+  const elapsed = toolElapsedMs(startedAt, finishedAt, tickMs);
   const displayDetails = fullOutput !== null && details ? { ...details, output: fullOutput } : details;
   const presentation = toolPresentation({ label: text, details: displayDetails, running, workspaceRoot });
   const filePreview = presentation.view === "file" && !showRawToolOutput ? filePreviewForTool(displayDetails) : null;
@@ -625,7 +638,7 @@ function ToolEvent({ sessionId, workspaceRoot, eventId, text, details, startedAt
       )}
     </div>
   );
-}
+});
 
 // A message between agents, or from/to the user's Muse assistant. Incoming
 // messages from Muse are unmistakable (Muse logo + "your assistant");
@@ -1450,13 +1463,28 @@ export function App() {
   });
   // Read the whole durable write history, not just the transcript's last
   // 1000 displayed events. No file button appears until ownership is known.
+  // The key must NOT include output_revision: it bumps on every streamed
+  // event, and rekeying reset data to undefined, unmounting the button
+  // until the refetch landed — the visible flicker during tool use (plus
+  // a full server-side history scan per event). Poll while live instead,
+  // keep showing the previous files during a refetch, and refresh once
+  // more when the turn ends so late writes are not missed.
   const ownedArtifactsQuery = useQuery({
-    queryKey: ["owned-artifacts", selectedId, detailQuery.data?.session?.output_revision ?? 0],
+    queryKey: ["owned-artifacts", selectedId],
     queryFn: () => api.listOwnedArtifacts({ session_id: selectedId ?? "" }),
     enabled: selectedSession !== null && selectedId !== draft?.id,
+    placeholderData: keepPreviousData,
     refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 5000 : false,
   });
-  const ownedFiles = ownedArtifactsQuery.data?.ok ? ownedArtifactsQuery.data.files : [];
+  const ownedFiles = ownedArtifactsQuery.data?.ok ? ownedArtifactsQuery.data.files : NO_OWNED_FILES;
+  const ownedWasLiveRef = useRef(false);
+  const selectedTurnLive = selectedSession !== null && isTurnLive(selectedSession.status);
+  useEffect(() => {
+    if (ownedWasLiveRef.current && !selectedTurnLive && selectedId) {
+      void queryClient.invalidateQueries({ queryKey: ["owned-artifacts", selectedId] });
+    }
+    ownedWasLiveRef.current = selectedTurnLive;
+  }, [selectedTurnLive, selectedId, queryClient]);
 
   // Agent questions for the user (`request_user_input` transport): polled
   // live so the answer UI appears even before the transcript marker syncs.
@@ -2451,14 +2479,20 @@ export function App() {
     const tab: SideTab = { key: crypto.randomUUID(), kind: "terminal", terminalId: null, number: null };
     updateSidePanel(sessionId, (state) => ({ ...state, tabs: [...state.tabs, tab], activeKey: tab.key }));
   };
-  const openFileTab = (sessionId: string, path: string) => {
+  const openFileTab = useCallback((sessionId: string, path: string) => {
     updateSidePanel(sessionId, (state) => {
       const existing = state.tabs.find((tab) => tab.kind === "file" && tab.path === path);
       if (existing) return { ...state, activeKey: existing.key };
       const tab: SideTab = { key: crypto.randomUUID(), kind: "file", path };
       return { ...state, tabs: [...state.tabs, tab], activeKey: tab.key };
     });
-  };
+  }, []);
+  // Stable per-detail-session file opener so memoized tool rows keep an
+  // identical onOpenFile prop across renders.
+  const detailSessionIdForFiles = detailSession?.id ?? null;
+  const openFileTabForDetail = useCallback((path: string) => {
+    if (detailSessionIdForFiles) openFileTab(detailSessionIdForFiles, path);
+  }, [openFileTab, detailSessionIdForFiles]);
   // Closing a tab ends what it shows: for a terminal, its shell.
   const closeSideTab = (sessionId: string, tab: SideTab) => {
     if (tab.kind === "terminal" && tab.terminalId) void api.closeTerminal({ terminal_id: tab.terminalId }).catch(() => undefined);
@@ -2849,7 +2883,7 @@ export function App() {
                         activity={agentsRunning && !sessionActive ? "Running helpers" : workingLabel}
                         visible={!isNarrow || !mobileListOpen} />
                       <div className="chat-floating-actions">
-                        <OwnedArtifactMenu paths={ownedFiles} onOpen={(path) => openFileTab(detailSession.id, path)} />
+                        <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
                         <SessionMenu actions={sessionMenuActions(selectedSession ?? detailSession)} colorMode={colorMode}
                           onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
@@ -2898,7 +2932,7 @@ export function App() {
                                 ) : event.kind === "agents" ? (
                                   <AgentsEvent sessionId={detailSession.id} content={event.content} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} />
                                 ) : event.kind === "tool" ? (
-                                  <ToolEvent sessionId={detailSession.id} workspaceRoot={detailSession.workspace_root} eventId={event.id} text={content} details={event.tool_details} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} expandedByDefault={expandTools} showRawToolOutput={showRawToolOutput} onOpenFile={(path) => openFileTab(detailSession.id, path)} />
+                                  <ToolEvent sessionId={detailSession.id} workspaceRoot={detailSession.workspace_root} eventId={event.id} text={content} details={event.tool_details} startedAt={event.started_at} finishedAt={event.finished_at} expandedByDefault={expandTools} showRawToolOutput={showRawToolOutput} onOpenFile={openFileTabForDetail} />
                                 ) : event.kind === "thinking" ? (
                                   <>
                                     <Markdown text={content} />
