@@ -122,8 +122,13 @@ button { color: inherit; }
 /* Rename/archive float over the row's time on hover (or keyboard focus) and
    are hidden on touch devices, which use the transcript's session menu. */
 .session-row-actions { position: absolute; bottom: 6px; right: 8px; display: none; gap: 2px; padding-left: 6px; background: var(--row-bg); border-radius: 6px; }
-.session-row:hover .session-row-actions, .session-row:focus-within .session-row-actions { display: flex; }
-@media (hover: none) { .session-row-actions, .session-row:focus-within .session-row-actions { display: none; } }
+/* Reveal only where hover is the primary input. On touch devices a first
+   tap emulates :hover; revealing new buttons then makes the browser
+   swallow that tap (a second tap is needed to navigate), so row actions
+   stay hidden there and are reached from the transcript's session menu. */
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover .session-row-actions, .session-row:focus-within .session-row-actions { display: flex; }
+}
 .session-row-archive { flex: 0 0 auto; align-self: center; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--dim); cursor: pointer; }
 .session-row-archive:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
 .session-row-delete:hover { background: color-mix(in srgb, var(--error) 12%, transparent); color: var(--error); }

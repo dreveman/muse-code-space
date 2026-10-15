@@ -34,7 +34,8 @@ test("row rename/archive buttons are hover-only and hidden on touch", () => {
   assert.ok(base && /display:\s*none/.test(base[0]), "hidden by default");
   assert.ok(/\.session-row:hover \.session-row-actions/.test(css), "shown on hover");
   assert.ok(/\.session-row:focus-within \.session-row-actions/.test(css), "shown for keyboard focus");
-  assert.ok(/@media \(hover: none\)\s*\{[^}]*\.session-row-actions/.test(css), "hidden on touch devices");
+  assert.ok(/@media \(hover: hover\) and \(pointer: fine\)\s*\{[^}]*\.session-row:hover \.session-row-actions/.test(css),
+    "revealed only where hover is primary — a touch tap must navigate on first press, not reveal actions");
 });
 
 test("hamburger menu remains available on cards, during startup, with no agent, and in chats", () => {
