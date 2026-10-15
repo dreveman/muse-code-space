@@ -1543,7 +1543,10 @@ export function App() {
   // can clear a selection without opening the next task. An empty workspace
   // returns to picking a companion, just like its initial state.
   const initialPickDoneRef = useRef(false);
-  useEffect(() => {
+  // Layout effect on purpose: the initial pick must land before the
+  // browser paints the just-loaded list, or one frame of the wrong UI
+  // (companion roster / "select a task") flashes on every entry.
+  useLayoutEffect(() => {
     if (!sessionsQuery.data) return; // never judge a selection against a list that hasn't loaded
     const autoPickFirst = !initialPickDoneRef.current;
     initialPickDoneRef.current = true;
@@ -2759,7 +2762,12 @@ export function App() {
                   ))
                 )}
               </div>
-              {filter === "active" && <section className="available-companions" aria-label="Available companions">
+              {/* Availability is derived from the session list, so before it
+                  first loads every companion would wrongly appear available.
+                  Gate the roster on that first load (the session list above
+                  already shows "Loading companions…") so the app never
+                  paints a state it is about to replace. */}
+              {filter === "active" && sessionsQuery.data && <section className="available-companions" aria-label="Available companions">
                 {hasActiveTasks && <button type="button" className="session-group-header available-companions-toggle"
                   aria-expanded={availableOpen} aria-controls="available-companion-list"
                   onClick={() => setAvailableExpanded((value) => !value)}>
