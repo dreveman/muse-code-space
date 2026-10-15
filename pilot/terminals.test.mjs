@@ -142,6 +142,26 @@ test("pilot-supplied session wiring (GitHub broker) reaches the shell", async ()
   }
 });
 
+test("function envExtras are re-read at open time (broker wiring generated after boot)", async () => {
+  let wiring = {};
+  const m = createTerminalManager({ envExtras: () => wiring });
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "term-lazy-"));
+  try {
+    const first = m.open({ key: "lazy", cwd });
+    m.input(first.terminalId, 'echo "CA1=${GIT_SSL_CAINFO:-unset}"\r');
+    const r1 = await readUntil(m, first.terminalId, 0, /CA1=(unset|\/)/);
+    assert.match(r1.out, /CA1=unset/);
+    m.kill("lazy");
+    wiring = { GIT_SSL_CAINFO: "/home/hatch/workspace/muse-code-space-pilot/github-broker-cert.pem" };
+    const second = m.open({ key: "lazy", cwd });
+    m.input(second.terminalId, 'echo "CA2=${GIT_SSL_CAINFO:-unset}"\r');
+    const r2 = await readUntil(m, second.terminalId, 0, /CA2=\/home/);
+    assert.match(r2.out, /CA2=\/home\/hatch\/workspace\/muse-code-space-pilot\/github-broker-cert\.pem/);
+  } finally {
+    m.closeAll();
+  }
+});
+
 test("no idle reaping by default; a session's shell can be killed by its key", async () => {
   const m = createTerminalManager();
   const cwd = mkdtempSync(path.join(os.tmpdir(), "term-key-"));
