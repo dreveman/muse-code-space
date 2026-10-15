@@ -1870,7 +1870,24 @@ export function App() {
     // The first-prompt draft has its own textarea; sizing only the existing
     // agent's composer left draft messages clipped after the first line.
     const input = draftSelected ? draftInputRef.current : takeoverInputRef.current;
-    if (input) resizeComposerTextarea(input);
+    if (!input) return;
+    // Growing the composer shrinks the transcript viewport. If the reader
+    // was following the bottom, re-pin after the resize layout settles —
+    // otherwise the last lines slide under the composer and a spurious
+    // "Scroll to bottom" appears even though the user never scrolled.
+    const body = terminalBodyRef.current;
+    const wasFollowing = body !== null && followTranscriptRef.current && transcriptAtBottom(body);
+    resizeComposerTextarea(input);
+    if (!body || !wasFollowing) return;
+    const frame = requestAnimationFrame(() => {
+      // Layout-induced scroll events from the shrink itself may have
+      // cleared the follow flag in between; the pre-resize snapshot is
+      // the authority here, not the flag's current value.
+      followTranscriptRef.current = true;
+      body.scrollTop = body.scrollHeight;
+      setShowScrollToBottom(false);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [direction, selectedId, draftSelected, viewportWidth, paneSizes.sidebarWidth, paneSizes.chatShare, hasSidePanel, selectedCompanionId]);
 
   useEffect(() => {
