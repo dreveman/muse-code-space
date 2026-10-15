@@ -151,7 +151,7 @@ def restart_broker(run=subprocess.run) -> bool:
     return False
 
 
-def broker_health(port: int = 18792, attempts: int = 15) -> bool:
+def broker_health(port: int = 443, attempts: int = 15) -> bool:
     import ssl
     import urllib.request
     runtime = pathlib.Path.home() / "workspace" / "muse-code-space-pilot"
@@ -205,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Could not restart the broker automatically. Run:")
         print("  systemctl restart muse-code-space-github-broker.service   (sudo if needed)")
         return 1
-    port = int(os.environ.get("MUSE_CODE_SPACE_GITHUB_BROKER_PORT", "18792") or 18792)
+    port = int(os.environ.get("MUSE_CODE_SPACE_GITHUB_BROKER_PORT", "443") or 443)
     if broker_health(port):
         print(f"Broker is healthy on 127.0.0.1:{port}. Sessions now have full git + gh access")
         print("for the repositories this App is installed on. Try: git ls-remote https://github.com/<owner>/<repo>.git")

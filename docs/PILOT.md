@@ -120,7 +120,7 @@ Prerequisites the installer will NOT create (human/owner steps):
 ## GitHub broker
 
 `pilot/github_broker.py` (stdlib-only, port `MUSE_CODE_SPACE_GITHUB_BROKER_PORT`,
-default 18792) gives spawned sessions GitHub access without any real
+default 443 on loopback) gives spawned sessions GitHub access without any real
 credential in the session, mirroring the relay pattern. Sessions reach it two
 ways, both wired only into spawned-session environments by the pilot
 (`GIT_CONFIG_GLOBAL`, `GH_CONFIG_DIR`, `GIT_TERMINAL_PROMPT=0`, `SSL_CERT_FILE`
@@ -132,7 +132,10 @@ in `museServeEnv` / terminal extras, only when install generated the files):
 - **`gh`:** the generated `$RUNTIME/gh-config` sets `api_host` to the broker
   with a sentinel token. `gh` forces https for `api_host`, so the broker
   serves TLS with the install-generated loopback cert; sessions trust it via
-  the generated CA bundle (system roots + broker cert).
+  the generated CA bundle (system roots + broker cert). The broker listens
+  on 443 by default because some `gh` commands (`gh pr create`) reject an
+  `api_host` containing a port; an unprivileged `MUSE_CODE_SPACE_GITHUB_BROKER_PORT`
+  override still works for git and `gh api`, with that one caveat.
 
 The broker strips incoming `Authorization` and attaches its own credential
 per request (Basic `x-access-token:` for git paths, Bearer for API paths),
