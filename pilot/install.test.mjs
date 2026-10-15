@@ -81,8 +81,8 @@ test("install generates broker session files and leaves ~/.gitconfig byte-identi
   assert.ok(existsSync(join(runtime, "github-broker-cert.pem")) && existsSync(join(runtime, "github_broker.py")));
   assert.ok(existsSync(join(runtime, "setup_github_broker.py")) && existsSync(join(runtime, "setup-github-broker")), "setup script installed");
   const profile = readFileSync(join(home, ".profile"), "utf8");
-  assert.equal(profile.split("muse-code-space github broker >>>").length - 1, 1, "one managed CA block in ~/.profile");
-  assert.ok(profile.includes("GIT_SSL_CAINFO=") && profile.includes("github-broker-ca.pem"), "login terminals get the broker CA");
+  assert.equal(profile.split("muse-code-space github broker >>>").length - 1, 0,
+    "no CA block without a provisioned GitHub credential (behavior is scoped to GitHub support)");
   assert.equal(readFileSync(join(home, ".gitconfig"), "utf8"), hostGitconfig, "host gitconfig untouched");
   // The generated gitconfig must actually parse and serve the sentinel.
   const genv = { ...process.env, GIT_CONFIG_GLOBAL: join(runtime, "gitconfig"), GIT_TERMINAL_PROMPT: "0" };

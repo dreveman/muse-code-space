@@ -111,6 +111,34 @@ def validate(app_id: str, installation_id: str, pem: str, provider_factory=GitHu
     return token
 
 
+PROFILE_BEGIN = "# >>> muse-code-space github broker >>>"
+PROFILE_END = "# <<< muse-code-space github broker <<<"
+
+
+def ensure_profile_block(profile_path: pathlib.Path | None = None,
+                         ca_path: pathlib.Path | None = None) -> None:
+    """Pin the broker CA for login terminals (they re-export the egress CA
+    after spawn). Only called after a credential is successfully set up,
+    so hosts without GitHub support keep a stock profile."""
+    profile = profile_path or (pathlib.Path.home() / ".profile")
+    ca = ca_path or (pathlib.Path.home() / "workspace" / "muse-code-space-pilot" / "github-broker-ca.pem")
+    lines = profile.read_text().splitlines() if profile.exists() else []
+    kept, skipping = [], False
+    for line in lines:
+        if line.strip() == PROFILE_BEGIN:
+            skipping = True
+        if not skipping:
+            kept.append(line)
+        if line.strip() == PROFILE_END:
+            skipping = False
+    block = [PROFILE_BEGIN,
+             f'export GIT_SSL_CAINFO="{ca}"',
+             f'export SSL_CERT_FILE="{ca}"',
+             PROFILE_END]
+    kept = kept + ([""] if kept and kept[-1] else []) + block
+    profile.write_text("\n".join(kept) + "\n")
+
+
 def restart_broker(run=subprocess.run) -> bool:
     for cmd in (["systemctl", "restart", "muse-code-space-github-broker.service"],
                 ["sudo", "systemctl", "restart", "muse-code-space-github-broker.service"]):
@@ -166,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     write_config(build_config(app_id, installation_id), pem)
     print(f"Wrote {KEY_PATH} and {CONFIG_PATH} (both mode 600).")
+    ensure_profile_block()
+    print("Pinned the broker CA for login terminals (~/.profile managed block).")
     if no_restart:
         print("Skipping broker restart (--no-restart). Restart it with:")
         print("  systemctl restart muse-code-space-github-broker.service")
