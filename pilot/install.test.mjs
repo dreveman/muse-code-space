@@ -67,7 +67,9 @@ test("install generates broker session files and leaves ~/.gitconfig byte-identi
     await new Promise((r) => s.close(r));
     return String(p);
   };
-  const env = { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`,
+  // Node's own directory must stay on PATH: the installer requires node,
+  // and CI runners keep it in a toolcache dir rather than /usr/bin.
+  const env = { ...process.env, HOME: home, PATH: `${bin}:${join(process.execPath, "..")}:/usr/bin:/bin`,
     MUSE_CODE_SPACE_RELAY_PORT: await freePort(), MUSE_CODE_SPACE_PILOT_PORT: await freePort(),
     MUSE_CODE_SPACE_GITHUB_BROKER_PORT: await freePort(), MUSE_CODE_SPACE_MUSE_BIN: "/bin/true" };
   const result = spawnSync("bash", [new URL("./install.sh", import.meta.url).pathname, "--no-enable", "--no-cron"],
