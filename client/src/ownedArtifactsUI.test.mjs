@@ -7,8 +7,9 @@ const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
 
 test("floating controls only offer durable agent-written files in a menu", () => {
   assert.ok(app.includes('api.listOwnedArtifacts({ session_id: selectedId ?? "" })'));
-  assert.ok(app.includes('detailQuery.data?.session?.output_revision ?? 0'), "updates as completed writes enter the transcript");
-  assert.ok(app.includes('<OwnedArtifactMenu paths={ownedFiles} onOpen={(path) => openFileTab(detailSession.id, path)} />'));
+  assert.ok(!app.includes("output_revision ?? 0"), "the query key must not churn per streamed event (that unmounted the button)");
+  assert.ok(app.includes('queryKey: ["owned-artifacts", selectedId]') && app.includes("placeholderData: keepPreviousData"), "previous files stay visible during refetch: no flicker");
+  assert.ok(app.includes('<OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />'));
   assert.ok(!app.includes('askToOpenFile('), "the arbitrary-path prompt was removed");
   assert.ok(side.includes('if (paths.length === 0) return null'), "the button is hidden without owned files");
   assert.ok(side.includes('role="menu" aria-label="Companion artifacts"') && side.includes('role="menuitem"'), "the button opens an artifact selector");
