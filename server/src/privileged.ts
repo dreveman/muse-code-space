@@ -3,27 +3,14 @@ definePrivilegedContracts,
 definePrivilegedHandlers,
 z,
 } from "@hatch/space-sdk";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
+import { safeTranscriptId, summarizeTranscript, type TranscriptSummary } from "./transcriptRestore.ts";
 
 // One transcript file (events-<pilotSessionId>.jsonl in the pilot's state
 // dir) is the durable record of a past conversation. The summaries returned
 // by listTranscripts are derived from the files themselves — never from the
 // pilot registry or the app database — so the past-conversation list can be
 // rebuilt after either store is wiped.
-type TranscriptSummary = {
-  pilot_session_id: string;
-  app_session_id: string | null;
-  title: string | null;
-  name: string | null;
-  model_id: string | null;
-  workspace_root: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  prompt: string | null;
-  latest_text: string | null;
-  latest_seq: number;
-  event_count: number;
-};
 
 export const privileged = definePrivilegedContracts({
   resolvePilotUrl: {
@@ -44,9 +31,6 @@ export const privileged = definePrivilegedContracts({
         created_at: z.string().nullable(),
         updated_at: z.string().nullable(),
         prompt: z.string().nullable(),
-        latest_text: z.string().nullable(),
-        latest_seq: z.number().int().nonnegative(),
-        event_count: z.number().int().nonnegative(),
       })),
     }),
     timeoutMs: 15_000,
@@ -90,83 +74,23 @@ function parseLine(line: string): LooseEvent | null {
   }
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
+// Summaries are cached by file identity: reconcile runs inside
+// listSessions (polled every few seconds), and an append-only transcript
+// only needs re-summarizing when its size or mtime changes. Unchanged
+// files cost one statSync per poll instead of a full read.
+const summaryCache = new Map<string, { mtimeMs: number; size: number; summary: TranscriptSummary | null }>();
+const HEAD_BYTES = 512 * 1024;
 
-function itemOf(event: LooseEvent): LooseEvent | null {
-  const item = event.item;
-  return item && typeof item === "object" && !Array.isArray(item) ? (item as LooseEvent) : null;
-}
-
-// The first user turn a pilot session receives is wrapped in a "[Code Space]
-// You are agent …" preamble ending in a --- separator. The conversation's
-// own prompt is what follows it.
-function cleanPrompt(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.startsWith("[Code Space] You are agent")) {
-    const marker = "\n---\n\n";
-    const at = trimmed.indexOf(marker);
-    if (at >= 0) return trimmed.slice(at + marker.length).trim();
+function readHead(path: string, size: number): string {
+  const bytes = Math.min(size, HEAD_BYTES);
+  const buffer = Buffer.alloc(bytes);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buffer, 0, bytes, 0);
+  } finally {
+    closeSync(fd);
   }
-  return trimmed;
-}
-
-function summarizeTranscript(pilotSessionId: string, raw: string, mtime: Date): TranscriptSummary | null {
-  const lines = raw.split("\n").filter((line) => line.trim());
-  let meta: LooseEvent | null = null;
-  let name: string | null = null;
-  let prompt: string | null = null;
-  let createdAt: string | null = null;
-  let latestSeq = 0;
-  // Head: session_started meta, name, and the first real user prompt.
-  for (const line of lines.slice(0, 60)) {
-    const event = parseLine(line);
-    if (!event) continue;
-    if (!createdAt) createdAt = asString(event.at);
-    if (typeof event.seq === "number" && event.seq > latestSeq) latestSeq = event.seq;
-    if (event.type === "session_started" && event.meta && typeof event.meta === "object") {
-      meta = event.meta as LooseEvent;
-    }
-    if (event.type === "name_changed") name = asString(event.name) ?? name;
-    const item = itemOf(event);
-    if (!prompt && item?.kind === "userMessage" && item.status !== "inProgress") {
-      const text = asString(item.text) ?? asString(item.fallbackText);
-      if (text) prompt = cleanPrompt(text).slice(0, 20000) || null;
-    }
-    if (meta && prompt) break;
-  }
-  // Tail: latest sequence and the last agent text, for the list preview.
-  let latestText: string | null = null;
-  let updatedAt: string | null = null;
-  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 400); i--) {
-    const event = parseLine(lines[i]!);
-    if (!event) continue;
-    if (typeof event.seq === "number" && event.seq > latestSeq) latestSeq = event.seq;
-    if (!updatedAt) updatedAt = asString(event.at);
-    const item = itemOf(event);
-    if (!latestText && item?.kind === "agentMessage" && item.status !== "inProgress") {
-      const text = asString(item.text);
-      if (text) latestText = text.slice(0, 500);
-    }
-    if (latestText && updatedAt) break;
-  }
-  // A transcript with no conversation in it is not a past conversation.
-  if (!prompt && !latestText) return null;
-  return {
-    pilot_session_id: pilotSessionId,
-    app_session_id: meta ? asString(meta.appSessionId) : null,
-    title: meta ? asString(meta.title) : null,
-    name: name ?? (meta ? asString(meta.name) : null),
-    model_id: meta ? asString(meta.modelId) : null,
-    workspace_root: meta ? asString(meta.workspaceRoot) : null,
-    created_at: (meta ? asString(meta.createdAt) : null) ?? createdAt,
-    updated_at: updatedAt ?? mtime.toISOString(),
-    prompt,
-    latest_text: latestText,
-    latest_seq: latestSeq,
-    event_count: lines.length,
-  };
+  return buffer.toString("utf8");
 }
 
 export const privilegedHandlers = definePrivilegedHandlers(privileged, {
@@ -191,6 +115,7 @@ export const privilegedHandlers = definePrivilegedHandlers(privileged, {
       const match = /^events-(.+)\.jsonl$/.exec(name);
       if (!match) continue;
       const pilotSessionId = match[1]!;
+      if (!safeTranscriptId(pilotSessionId)) continue;
       try {
         const path = transcriptPath(pilotSessionId);
         const stat = statSync(path);
@@ -198,7 +123,18 @@ export const privilegedHandlers = definePrivilegedHandlers(privileged, {
         // Transcripts are append logs; even a long one is a few MB. Skip
         // anything absurd rather than blowing the response budget.
         if (stat.size > 64 * 1024 * 1024) continue;
-        const summary = summarizeTranscript(pilotSessionId, readFileSync(path, "utf8"), stat.mtime);
+        const cached = summaryCache.get(path);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+          if (cached.summary) transcripts.push(cached.summary);
+          continue;
+        }
+        // Only the head is summarized; fall back to a full read when the
+        // first prompt lives beyond it (e.g. an oversized first line).
+        let summary = summarizeTranscript(pilotSessionId, readHead(path, stat.size), stat.mtime);
+        if (!summary && stat.size > HEAD_BYTES) {
+          summary = summarizeTranscript(pilotSessionId, readFileSync(path, "utf8"), stat.mtime);
+        }
+        summaryCache.set(path, { mtimeMs: stat.mtimeMs, size: stat.size, summary });
         if (summary) transcripts.push(summary);
       } catch {
         // One unreadable transcript must not hide the rest.
@@ -209,6 +145,9 @@ export const privilegedHandlers = definePrivilegedHandlers(privileged, {
   },
 
   readTranscript(args) {
+    // The id becomes a filename; reject anything that could escape the
+    // state dir before touching the filesystem.
+    if (!safeTranscriptId(args.pilot_session_id)) return { found: false, events: [] };
     const path = transcriptPath(args.pilot_session_id);
     if (!existsSync(path)) return { found: false, events: [] };
     let raw: string;
