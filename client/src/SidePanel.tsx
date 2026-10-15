@@ -34,9 +34,11 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
   </div>;
 });
 
-export function sideTabLabel(tab: SideTab): string {
+export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
   if (tab.kind === "file") return tab.path.split("/").at(-1) || tab.path;
-  return tab.number !== null ? `Terminal ${tab.number}` : "Terminal";
+  // A lone terminal is just "Terminal"; numbers only disambiguate when
+  // there is more than one terminal tab.
+  return terminalCount > 1 && tab.number !== null ? `Terminal ${tab.number}` : "Terminal";
 }
 
 export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpened, onBack }: {
@@ -47,6 +49,7 @@ export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpene
   onTerminalOpened: (key: string, terminalId: string, number: number) => void;
   onBack?: () => void;
 }) {
+  const terminalCount = state.tabs.filter((tab) => tab.kind === "terminal").length;
   return (
     <section id="agent-side-panel" className="side-panel" aria-label="Side panel">
       <div className="side-tabs" role="tablist" aria-label="Side panel tabs">
@@ -58,7 +61,7 @@ export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpene
           </button>
         )}
         {state.tabs.map((tab) => {
-          const label = sideTabLabel(tab);
+          const label = sideTabLabel(tab, terminalCount);
           const selected = tab.key === state.activeKey;
           return (
             <div key={tab.key} className={`side-tab${selected ? " active" : ""}`}>
