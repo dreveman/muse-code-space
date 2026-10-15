@@ -1460,7 +1460,7 @@ function readBody(req) {
   });
 }
 // Terminals for the UI (shells in session workspaces on this host).
-const terminals = createTerminalManager({ log, envExtras: githubSessionEnv() });
+const terminals = createTerminalManager({ log, envExtras: () => githubSessionEnv() });
 
 const json = (res, code, obj) => {
   res.writeHead(code, { "content-type": "application/json" });

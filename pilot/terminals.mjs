@@ -109,7 +109,10 @@ export function createTerminalManager({ log = () => {}, python = process.env.MUS
     const proc = spawn(python, [BRIDGE, cwd, String(cols), String(rows)], {
       cwd,
       stdio: ["pipe", "pipe", "pipe", "pipe"],
-      env: terminalEnv(process.env, envExtras),
+      // envExtras may be a provider function: session wiring (GitHub broker
+      // gitconfig, CA pin) is generated after the pilot boots, so it must be
+      // re-read at open time, not snapshotted when the manager was created.
+      env: terminalEnv(process.env, typeof envExtras === "function" ? envExtras() : envExtras),
     });
     /** @type {Terminal} */
     const number = (counters.get(key) ?? 0) + 1;
