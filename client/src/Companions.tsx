@@ -146,7 +146,9 @@ export function CompanionContact({ companion, selected, disabled, models, onSele
       aria-current={selected ? "true" : undefined}
       style={{ "--companion-hue": agentNameHue(companion.name) } as CSSProperties}
       onClick={onSelect} disabled={disabled}>
-      <CompanionAvatar artwork={companion.artwork} animate={access.status === "ready"} />
+      {/* Still in the Available list: motion is reserved for companions
+          with a task in the sidebar (their session rows animate). */}
+      <CompanionAvatar artwork={companion.artwork} animate={false} />
       <span><strong>{companion.name}{access.status !== "ready" && <span title={access.status === "upgrade-required" ? "Upgrade required" : "Unavailable"}><CompanionLock /></span>}</strong><small>{companionRoleTitle(companion.role)}</small></span>
     </button>
   );
