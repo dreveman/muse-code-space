@@ -16,8 +16,8 @@ pilotTurnOutcomeError,
 type AgentsRow,
 type PilotItem,
 type PilotStreamEvent,
-} from "./pilotEvents";
-import { toolDetailsFromItem } from "./toolDetails";
+} from "./pilotEvents.ts";
+import { toolDetailsFromItem } from "./toolDetails.ts";
 
 export type RestoredEventRow = {
   kind: "stdout" | "system" | "user" | "tool" | "agents" | "message" | "thinking";
@@ -53,6 +53,14 @@ type RawEvent = Record<string, unknown> & {
   error?: unknown;
 };
 
+// Pilot session ids are minted by the pilot/app (uuid-shaped). Anything
+// else must never reach a filesystem path: the privileged transcript
+// reader builds `events-<id>.jsonl` from this value, so slashes or dot
+// segments would turn it into a path-traversal read.
+export function safeTranscriptId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes("..");
+}
+
 // The first user turn a pilot session receives is wrapped in a "[Code Space]
 // You are agent …" preamble ending in a --- separator. The conversation's
 // own words are what follows it.
@@ -64,6 +72,77 @@ export function cleanTranscriptPrompt(text: string): string {
     if (at >= 0) return trimmed.slice(at + marker.length).trim();
   }
   return trimmed;
+}
+
+export type TranscriptSummary = {
+  pilot_session_id: string;
+  app_session_id: string | null;
+  title: string | null;
+  name: string | null;
+  model_id: string | null;
+  workspace_root: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  prompt: string | null;
+};
+
+type LooseEvent = Record<string, unknown>;
+
+function parseSummaryLine(line: string): LooseEvent | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as LooseEvent) : null;
+  } catch {
+    return null;
+  }
+}
+
+function looseString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+// Everything reconcile needs to re-register a conversation lives at the
+// head of its transcript: the session_started meta (app id, agent, model,
+// workspace) and the first user prompt. The DB prompt is that first prompt
+// verbatim (the assistant-authored session_summary is filled in later by
+// the assistant, exactly as for live sessions), and updated_at is the
+// file's mtime. Nothing from the tail is needed: list previews come from
+// the imported rows themselves.
+export function summarizeTranscript(pilotSessionId: string, raw: string, mtime: Date): TranscriptSummary | null {
+  const lines = raw.split("\n").filter((line) => line.trim());
+  let meta: LooseEvent | null = null;
+  let name: string | null = null;
+  let prompt: string | null = null;
+  let createdAt: string | null = null;
+  for (const line of lines.slice(0, 60)) {
+    const event = parseSummaryLine(line);
+    if (!event) continue;
+    if (!createdAt) createdAt = looseString(event.at);
+    if (event.type === "session_started" && event.meta && typeof event.meta === "object") {
+      meta = event.meta as LooseEvent;
+    }
+    if (event.type === "name_changed") name = looseString(event.name) ?? name;
+    const item = event.item && typeof event.item === "object" && !Array.isArray(event.item)
+      ? (event.item as LooseEvent) : null;
+    if (!prompt && item?.kind === "userMessage" && item.status !== "inProgress") {
+      const text = looseString(item.text) ?? looseString(item.fallbackText);
+      if (text) prompt = cleanTranscriptPrompt(text).slice(0, 20000) || null;
+    }
+    if (meta && prompt) break;
+  }
+  // A transcript with no user prompt in it is not a past conversation.
+  if (!prompt) return null;
+  return {
+    pilot_session_id: pilotSessionId,
+    app_session_id: meta ? looseString(meta.appSessionId) : null,
+    title: meta ? looseString(meta.title) : null,
+    name: name ?? (meta ? looseString(meta.name) : null),
+    model_id: meta ? looseString(meta.modelId) : null,
+    workspace_root: meta ? looseString(meta.workspaceRoot) : null,
+    created_at: (meta ? looseString(meta.createdAt) : null) ?? createdAt,
+    updated_at: mtime.toISOString(),
+    prompt,
+  };
 }
 
 function errorText(error: unknown): string {

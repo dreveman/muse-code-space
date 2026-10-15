@@ -664,9 +664,6 @@ type TranscriptSummary = {
   created_at: string | null;
   updated_at: string | null;
   prompt: string | null;
-  latest_text: string | null;
-  latest_seq: number;
-  event_count: number;
 };
 
 function transcriptDate(value: string | null, fallback: Date): Date {
