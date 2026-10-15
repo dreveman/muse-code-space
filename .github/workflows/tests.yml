@@ -1,0 +1,62 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fast:
+    # Zero-install suites: pure-logic Node tests (type stripping) and
+    # Python stdlib tests. These cover the broker, transcript restore,
+    # staging preservation, terminal/install behavior, and the app's
+    # session-list logic without needing the platform SDK.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax gates
+        run: |
+          node --check pilot/pilot.mjs
+          node --check pilot/terminals.mjs
+          bash -n pilot/install.sh pilot/watchdog.sh web/stage-snapshot.sh
+          python3 -m py_compile pilot/github_broker.py pilot/muse_relay.py pilot/setup_github_broker.py
+
+      - name: Python tests (broker, relay, setup, watchdog)
+        run: |
+          python3 -m unittest discover -s pilot -p "test_*.py"
+          python3 -m unittest discover -s hooks -p "test_*.py"
+
+      - name: Node tests (client, server, web, pilot shell/install)
+        run: |
+          # codeHighlight.test.mjs needs the shiki package at runtime;
+          # everything else runs on bare Node. It joins this job if the
+          # root dependencies ever become installable in CI.
+          files=()
+          for f in client/src/*.test.mjs server/src/*.test.mjs web/*.test.mjs \
+                   pilot/terminals.test.mjs pilot/files.test.mjs pilot/install.test.mjs; do
+            [[ "$f" == *codeHighlight* ]] || files+=("$f")
+          done
+          node --test "${files[@]}"
+
+  pilot:
+    # The pilot session-lifecycle suite needs @muse-code/sdk, which is a
+    # normal npm dependency of pilot/ (unlike the root space-sdk, a local
+    # platform tarball — that is why typecheck is not in CI).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install pilot dependencies
+        working-directory: pilot
+        run: npm ci --no-audit --no-fund
+      - name: Pilot recovery tests
+        run: node --test pilot/recovery.test.mjs
