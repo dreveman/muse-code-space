@@ -3051,7 +3051,10 @@ export function App() {
                         {companionBusyElsewhere && <p className="task-resume-notice" role="status">
                           {detailAgentName} is on another task. Pick another companion below to resume.
                         </p>}
-                        <CompanionAccessNotice access={detailModelAccess} modelName={displayModelLabel(detailModelId)} />
+                        {/* While connecting the catalog check has not completed, so an
+                            "unavailable" verdict would be a guess; the header already
+                            says the companion is connecting. */}
+                        {!promptConnectionLost && accessibleModels !== undefined && <CompanionAccessNotice access={detailModelAccess} modelName={displayModelLabel(detailModelId)} />}
                         <div className="terminal-composer">
                           <label className="sr-only" htmlFor="takeover-input">
                             Message Muse Code
