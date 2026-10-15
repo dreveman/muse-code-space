@@ -24,6 +24,7 @@ import { ownedArtifactPaths } from "./ownedArtifacts";
 import { validateAssistantAvatar } from "./assistantAvatar.mjs";
 import { pilotRequest, isPilotUnavailable, readPilotModels } from "./pilotRequest";
 import { companionModelAccess, modelUpgradeMessage, PAID_COMPANION_MODELS } from "./companionModels";
+import { transcriptToRows, type TranscriptImport } from "./transcriptRestore";
 import * as schema from "./schema";
 import companionCatalog from "../../companions/catalog.json" with { type: "json" };
 
@@ -644,6 +645,248 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
   }
 }
 
+// ---- transcript-driven restore of past conversations ----
+// The list of past conversations does not rely on app state. The pilot host
+// keeps one transcript file per session (events-<pilotSessionId>.jsonl); any
+// transcript with no app session row is re-registered in Past with its
+// transcript imported, so wiping app.db never orphans a conversation whose
+// transcript still exists. Deleting a session deletes its transcript too
+// (see deleteSession), so a restored row can never resurrect a conversation
+// the user actually deleted.
+
+type TranscriptSummary = {
+  pilot_session_id: string;
+  app_session_id: string | null;
+  title: string | null;
+  name: string | null;
+  model_id: string | null;
+  workspace_root: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  prompt: string | null;
+  latest_text: string | null;
+  latest_seq: number;
+  event_count: number;
+};
+
+function transcriptDate(value: string | null, fallback: Date): Date {
+  if (value) {
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) return parsed;
+  }
+  return fallback;
+}
+
+async function fetchTranscriptImport(ctx: Ctx, pilotSessionId: string, fallbackStart: Date): Promise<TranscriptImport | null> {
+  try {
+    const res = await ctx.executePrivileged(privileged.readTranscript, { pilot_session_id: pilotSessionId });
+    if (!res.found) return null;
+    return transcriptToRows(res.events, fallbackStart);
+  } catch {
+    return null;
+  }
+}
+
+async function insertImportedRows(ctx: Ctx, sessionId: string, imported: TranscriptImport): Promise<void> {
+  const db = ctx.db<typeof schema>();
+  for (const row of imported.rows) {
+    await db.insert(schema.outputEvents).values({
+      sessionId,
+      kind: row.kind,
+      content: row.content,
+      systemIsError: row.systemIsError,
+      createdAt: row.createdAt,
+      itemId: row.itemId,
+      toolDetails: row.toolDetails,
+      startedAt: row.startedAt,
+      finishedAt: row.finishedAt,
+    });
+  }
+}
+
+type ReconcileResult = {
+  available: boolean;
+  restored: number;
+  linked: number;
+  pruned: number;
+  kept: string[];
+  error: string | null;
+};
+
+async function reconcileTranscripts(ctx: Ctx, opts: { pruneExceptTitle?: string }): Promise<ReconcileResult> {
+  const db = ctx.db<typeof schema>();
+  let transcripts: TranscriptSummary[];
+  try {
+    const res = await ctx.executePrivileged(privileged.listTranscripts, {});
+    transcripts = res.transcripts;
+  } catch {
+    return { available: false, restored: 0, linked: 0, pruned: 0, kept: [], error: null };
+  }
+  const keepTitle = opts.pruneExceptTitle?.trim().toLowerCase() || null;
+  const matchesKeep = (t: TranscriptSummary) =>
+    !keepTitle || (t.name ?? "").trim().toLowerCase() === keepTitle || (t.title ?? "").trim().toLowerCase() === keepTitle;
+  if (keepTitle && !transcripts.some(matchesKeep)) {
+    // Refuse to prune everything when the conversation to keep has no
+    // transcript: that would delete every past conversation and restore none.
+    return {
+      available: true, restored: 0, linked: 0, pruned: 0, kept: [],
+      error: `No transcript found for "${opts.pruneExceptTitle}". Nothing was deleted or restored.`,
+    };
+  }
+
+  let restored = 0;
+  let linked = 0;
+  const keptIds = new Set<string>();
+  const existingRows = await db.select().from(schema.sessions);
+  const byPilot = new Map(existingRows.filter((r) => r.pilotSessionId).map((r) => [r.pilotSessionId!, r]));
+  const byId = new Map(existingRows.map((r) => [r.id, r]));
+
+  for (const t of transcripts) {
+    if (!matchesKeep(t)) continue;
+    const restoredId = `restored-${t.pilot_session_id}`;
+    const existing = byPilot.get(t.pilot_session_id)
+      ?? (t.app_session_id ? byId.get(t.app_session_id) : undefined)
+      ?? byId.get(restoredId);
+    if (existing) {
+      keptIds.add(existing.id);
+      if (existing.pilotSessionId !== t.pilot_session_id) {
+        await db.update(schema.sessions)
+          .set({ pilotSessionId: t.pilot_session_id, ...(existing.workspaceRoot ? {} : { workspaceRoot: t.workspace_root }) })
+          .where(eq(schema.sessions.id, existing.id));
+        linked += 1;
+      }
+      // Heal a husk row (session exists but its transcript rows are gone)
+      // from the surviving transcript file.
+      if (existing.status !== "queued" && existing.status !== "running") {
+        const anyEvent = await db.select({ id: schema.outputEvents.id })
+          .from(schema.outputEvents)
+          .where(eq(schema.outputEvents.sessionId, existing.id))
+          .limit(1);
+        if (anyEvent.length > 0 && existing.sessionSummary && /recorded no transcript/i.test(existing.sessionSummary)) {
+          // A summary written while the transcript was missing is false
+          // once transcript rows exist; clear it wherever the import
+          // happened (including by an older build).
+          await db.update(schema.sessions)
+            .set({ sessionSummary: null })
+            .where(eq(schema.sessions.id, existing.id));
+          linked += 1;
+        }
+        if (anyEvent.length === 0) {
+          const imported = await fetchTranscriptImport(ctx, t.pilot_session_id, existing.startedAt);
+          if (imported) {
+            await insertImportedRows(ctx, existing.id, imported);
+            await db.update(schema.sessions)
+              .set({
+                pilotSeq: imported.latestSeq,
+                outputRevision: imported.rows.length,
+                seenOutputRevision: imported.rows.length,
+                status: imported.status,
+                summary: imported.summary,
+                // A summary written while the transcript was missing (e.g.
+                // "no transcript recorded") is false once it is imported.
+                sessionSummary: null,
+                finishedAt: transcriptDate(t.updated_at, existing.updatedAt),
+              })
+              .where(eq(schema.sessions.id, existing.id));
+            linked += 1;
+          }
+        }
+      }
+      continue;
+    }
+
+    const id = t.app_session_id ?? restoredId;
+    if (byId.has(id)) continue; // id belongs to an unrelated session; never hijack it
+    const companion = companionCatalog.companions.find(
+      (c) => c.name.toLowerCase() === (t.name ?? t.title ?? "").trim().toLowerCase(),
+    );
+    const title = companion?.name ?? t.title
+      ?? (t.name ? t.name.charAt(0).toUpperCase() + t.name.slice(1) : "Restored session");
+    const createdAt = transcriptDate(t.created_at, new Date());
+    const updatedAt = transcriptDate(t.updated_at, createdAt);
+    const modelId = t.model_id ?? companion?.model.preferredId ?? FALLBACK_MODEL_ID;
+    let effort: ReasoningEffort = "high";
+    if (companion) {
+      const parsed = reasoningEffortSchema.safeParse(companion.effort);
+      if (parsed.success) effort = parsed.data;
+    }
+    await db.insert(schema.sessions).values({
+      id,
+      title,
+      prompt: t.prompt ?? "Restored from its session transcript.",
+      workspaceRoot: t.workspace_root,
+      status: "succeeded",
+      startedAt: createdAt,
+      updatedAt,
+      finishedAt: updatedAt,
+      archived: true,
+      archivedAt: updatedAt,
+      pilotSessionId: t.pilot_session_id,
+      pilotSeq: 0,
+      modelId,
+      requestedModelId: modelId,
+      reasoningEffort: effort,
+    });
+    const imported = await fetchTranscriptImport(ctx, t.pilot_session_id, createdAt);
+    if (imported) {
+      await insertImportedRows(ctx, id, imported);
+      await db.update(schema.sessions)
+        .set({
+          pilotSeq: imported.latestSeq,
+          outputRevision: imported.rows.length,
+          seenOutputRevision: imported.rows.length,
+          status: imported.status,
+          summary: imported.summary,
+        })
+        .where(eq(schema.sessions.id, id));
+    }
+    byId.set(id, (await db.select().from(schema.sessions).where(eq(schema.sessions.id, id)).limit(1))[0]!);
+    keptIds.add(id);
+    restored += 1;
+  }
+
+  let pruned = 0;
+  if (keepTitle) {
+    let baseUrl: string | null = null;
+    try {
+      ({ baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {}));
+    } catch {
+      baseUrl = null;
+    }
+    const allRows = await db.select().from(schema.sessions);
+    for (const row of allRows) {
+      if (keptIds.has(row.id)) continue;
+      if (row.status === "queued" || row.status === "running") continue;
+      if (row.pilotSessionId) {
+        if (!baseUrl) continue;
+        try {
+          await pilotRequest(baseUrl, `/sessions/${encodeURIComponent(row.pilotSessionId)}`, { method: "DELETE" }, z.object({ ok: z.boolean() }));
+        } catch {
+          continue; // pilot couldn't confirm the transcript is gone; keep the row
+        }
+      }
+      await killSessionTerminal(ctx, row.id);
+      await db.delete(schema.outputEvents).where(eq(schema.outputEvents.sessionId, row.id));
+      await db.delete(schema.sessions).where(eq(schema.sessions.id, row.id));
+      pruned += 1;
+    }
+    // Transcripts that never had an app row are deleted too, except the kept one.
+    if (baseUrl) {
+      for (const t of transcripts) {
+        if (matchesKeep(t)) continue;
+        try {
+          await pilotRequest(baseUrl, `/sessions/${encodeURIComponent(t.pilot_session_id)}`, { method: "DELETE" }, z.object({ ok: z.boolean() }));
+        } catch {
+          // Best effort: a running session's transcript refuses deletion.
+        }
+      }
+    }
+  }
+
+  if (restored > 0 || linked > 0 || pruned > 0) ctx.invalidateQueries();
+  return { available: true, restored, linked, pruned, kept: [...keptIds], error: null };
+}
+
 export const Actions = {
   // ---- agent-to-agent messages, for the user's Muse assistant ----
   // (artifact.invoke_action). Agents themselves use the session-scoped
@@ -1121,6 +1364,33 @@ export const Actions = {
     },
   }),
 
+  // Rebuild the past-conversation list from the pilot's transcript files.
+  // With keep_only_title, every other past conversation is deleted first
+  // (its pilot transcript and its app rows), and only the named agent's
+  // transcript is restored — the recovery path after an app-state wipe
+  // combined with a cleanup. Without it, this only adds what is missing.
+  restoreFromTranscripts: defineAction({
+    request: z.object({
+      keep_only_title: z.string().trim().min(1).max(200).optional(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      available: z.boolean(),
+      restored: z.number().int().nonnegative(),
+      linked: z.number().int().nonnegative(),
+      pruned: z.number().int().nonnegative(),
+      kept: z.array(z.string()),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl, privileged.listTranscripts, privileged.readTranscript],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, available: false, restored: 0, linked: 0, pruned: 0, kept: [], error: denied };
+      const result = await reconcileTranscripts(ctx, { pruneExceptTitle: args.keep_only_title });
+      return { ok: result.error === null, ...result };
+    },
+  }),
+
   listSessions: defineAction({
     request: z.object({
       limit: z.number().int().positive().max(100).default(50),
@@ -1129,7 +1399,13 @@ export const Actions = {
       sessions: z.array(sessionResponseSchema),
       active_count: z.number().int().nonnegative(),
     }),
+    privileged: [privileged.resolvePilotUrl, privileged.listTranscripts, privileged.readTranscript],
     async handler(ctx, args) {
+      // Transcript-driven list: re-register any pilot transcript that has
+      // no app row before reading the DB, so past conversations survive an
+      // app-state wipe. Best effort — if the pilot host is unreachable, the
+      // stored rows are served as-is.
+      await reconcileTranscripts(ctx, {}).catch(() => null);
       const db = ctx.db<typeof schema>();
       const activeRows = await db
         .select({ value: count() })

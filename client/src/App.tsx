@@ -2289,6 +2289,36 @@ export function App() {
     }
   };
 
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreNote, setRestoreNote] = useState<string | null>(null);
+
+  // Past conversations come from the pilot's transcript files, not app
+  // state: this re-registers any transcript that has no app row (e.g. after
+  // the app's data was wiped) and imports its transcript into Past.
+  const restoreFromTranscripts = async () => {
+    setRestoreBusy(true);
+    setRestoreNote(null);
+    try {
+      const response = await api.restoreFromTranscripts({});
+      if (!response.ok) {
+        setRestoreNote(response.error ?? "Restore failed. Try again.");
+        return;
+      }
+      if (!response.available) {
+        setRestoreNote("The session host is unreachable, so transcripts can't be checked right now.");
+        return;
+      }
+      await sessionsQuery.refetch();
+      setRestoreNote(response.restored > 0
+        ? `Restored ${response.restored} conversation${response.restored === 1 ? "" : "s"} from transcripts.`
+        : "No missing conversations found in the transcripts.");
+    } catch {
+      setRestoreNote("Restore failed. Try again.");
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
   const askToDelete = (session: Session) => {
     setDeleteError(null);
     const title = sessionTaskTitle(session);
@@ -2581,6 +2611,20 @@ export function App() {
               </div>}
               {archiveError && <div className="archive-error" role="alert">{archiveError}</div>}
               {renameError && <div className="archive-error" role="alert">{renameError}</div>}
+              {filter === "inactive" && (
+                <div className="transcript-restore">
+                  <button
+                    type="button"
+                    className="transcript-restore-button"
+                    onClick={() => void restoreFromTranscripts()}
+                    disabled={restoreBusy}
+                    aria-label="Restore past conversations from session transcripts"
+                  >
+                    {restoreBusy ? "Checking transcripts…" : "Restore from transcripts"}
+                  </button>
+                  {restoreNote && <p className="transcript-restore-note" aria-live="polite">{restoreNote}</p>}
+                </div>
+              )}
               {sessions.length > 1 && <div className="session-filter">
                 <FilterIcon />
                 <input
