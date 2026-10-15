@@ -39,16 +39,24 @@ export function sideTabLabel(tab: SideTab): string {
   return tab.number !== null ? `Terminal ${tab.number}` : "Terminal";
 }
 
-export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpened }: {
+export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpened, onBack }: {
   sessionId: string;
   state: SidePanelState;
   onSelect: (key: string) => void;
   onClose: (tab: SideTab) => void;
   onTerminalOpened: (key: string, terminalId: string, number: number) => void;
+  onBack?: () => void;
 }) {
   return (
     <section id="agent-side-panel" className="side-panel" aria-label="Side panel">
       <div className="side-tabs" role="tablist" aria-label="Side panel tabs">
+        {onBack && (
+          <button type="button" className="mobile-back-button side-panel-back" aria-label="Back to conversation" onClick={onBack}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 12H6M11 7l-5 5 5 5" />
+            </svg>
+          </button>
+        )}
         {state.tabs.map((tab) => {
           const label = sideTabLabel(tab);
           const selected = tab.key === state.activeKey;

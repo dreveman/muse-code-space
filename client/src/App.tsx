@@ -1113,6 +1113,10 @@ export function App() {
   selectedIdRef.current = selectedId;
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 779px)").matches);
   const [mobileListOpen, setMobileListOpen] = useState(() => window.matchMedia("(max-width: 779px)").matches);
+  // Narrow screens get a third full-screen view for the side panel
+  // (tab strip + active tab), reached from the conversation and left
+  // via its back button — same pattern as list <-> conversation.
+  const [mobileSideOpen, setMobileSideOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [paneSizes, setPaneSizes] = useState(() => loadPaneSizes(window.innerWidth));
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -1376,6 +1380,11 @@ export function App() {
     if (!isNarrow) setMobileListOpen(false);
   }, [isNarrow]);
 
+  // The side-panel full-screen view exists only at narrow widths and
+  // only for the conversation it was opened from.
+  useEffect(() => {
+    if (!isNarrow) setMobileSideOpen(false);
+  }, [isNarrow]);
   const draftSelected = draft !== null && selectedId === draft.id;
   const mentionSender = draftSelected ? null : sessions.find((session) => session.id === selectedId) ?? null;
   const availablePeerAgents: MentionAgent[] = mentionAgentsQuery.data?.ok
@@ -1730,6 +1739,9 @@ export function App() {
   }, []);
 
   const detailSessionId = detailSession?.id ?? null;
+  useEffect(() => {
+    setMobileSideOpen(false);
+  }, [detailSessionId]);
   const hasSidePanel = !!detailSessionId && (sidePanels[detailSessionId]?.tabs.length ?? 0) > 0;
   useEffect(() => {
     const element = detailSplitRef.current;
@@ -2499,6 +2511,7 @@ export function App() {
   const openTerminalTab = (sessionId: string) => {
     const tab: SideTab = { key: crypto.randomUUID(), kind: "terminal", terminalId: null, number: null };
     updateSidePanel(sessionId, (state) => ({ ...state, tabs: [...state.tabs, tab], activeKey: tab.key }));
+    if (isNarrow) setMobileSideOpen(true);
   };
   const openFileTab = useCallback((sessionId: string, path: string) => {
     updateSidePanel(sessionId, (state) => {
@@ -2507,7 +2520,8 @@ export function App() {
       const tab: SideTab = { key: crypto.randomUUID(), kind: "file", path };
       return { ...state, tabs: [...state.tabs, tab], activeKey: tab.key };
     });
-  }, []);
+    if (isNarrow) setMobileSideOpen(true);
+  }, [isNarrow]);
   // Stable per-detail-session file opener so memoized tool rows keep an
   // identical onOpenFile prop across renders.
   const detailSessionIdForFiles = detailSession?.id ?? null;
@@ -2639,7 +2653,7 @@ export function App() {
       <main className="workspace">
         <div
           ref={layoutRef}
-          className={`console-layout ${mobileListOpen ? "mobile-list-view" : "mobile-detail-view"}`}
+          className={`console-layout ${mobileListOpen ? "mobile-list-view" : isNarrow && hasSidePanel && mobileSideOpen ? "mobile-side-view" : "mobile-detail-view"}`}
           style={{ "--sidebar-width": `${paneSizes.sidebarWidth}px` } as CSSProperties}
         >
             <aside id="agent-sidebar" className="session-rail" aria-label="Code companions">
@@ -3178,6 +3192,7 @@ export function App() {
                       key={detailSession.id}
                       sessionId={detailSession.id}
                       state={sidePanels[detailSession.id]!}
+                      onBack={() => setMobileSideOpen(false)}
                       onSelect={(key) => updateSidePanel(detailSession.id, (state) => ({ ...state, activeKey: key }))}
                       onClose={(tab) => closeSideTab(detailSession.id, tab)}
                       onTerminalOpened={(key, terminalId, number) =>
