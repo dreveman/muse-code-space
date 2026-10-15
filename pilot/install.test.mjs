@@ -42,6 +42,7 @@ test("VM installer deploys the file viewer dependency while preserving pilot sta
   assert.ok(!watchdog.includes('pkill -f "muse_relay.py"'), "direct-start process matching is scoped to this runtime path");
   assert.ok(source.includes("github_broker.py"), "installer deploys the GitHub broker");
   assert.ok(source.includes("broker-provided-sentinel") && source.includes("insteadOf = https://github.com/"), "session gitconfig carries the rewrite and sentinel only");
+  assert.ok(source.includes('MUSE_CODE_SPACE_GITHUB_BROKER_PORT:-443') && source.includes('API_HOST="127.0.0.1"'), "broker defaults to 443 with a portless gh api_host");
   assert.ok(!source.includes('> "${HOME}/.gitconfig"') && !source.includes('>> "${HOME}/.gitconfig"'), "installer never writes the host gitconfig");
   const brokerUnit = readFileSync(new URL('./systemd/muse-code-space-github-broker.service', import.meta.url), 'utf8');
   assert.ok(brokerUnit.includes('EnvironmentFile=-@PILOT_DIR@/proxy.env') && brokerUnit.includes('MUSE_CODE_SPACE_GITHUB_BROKER_PORT=@BROKER_PORT@'));

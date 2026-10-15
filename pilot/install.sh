@@ -51,11 +51,17 @@ if [ -z "$MUSE_BIN" ]; then
 fi
 PILOT_PORT="${MUSE_CODE_SPACE_PILOT_PORT:-18791}"
 RELAY_PORT="${MUSE_CODE_SPACE_RELAY_PORT:-18790}"
-BROKER_PORT="${MUSE_CODE_SPACE_GITHUB_BROKER_PORT:-18792}"
-for port in "$PILOT_PORT" "$RELAY_PORT" "$BROKER_PORT"; do
+BROKER_PORT="${MUSE_CODE_SPACE_GITHUB_BROKER_PORT:-443}"
+for port in "$PILOT_PORT" "$RELAY_PORT"; do
   case "$port" in ''|*[!0-9]*) fail "invalid port: $port" ;; esac
   [ "$port" -ge 1024 ] && [ "$port" -le 65535 ] || fail "port out of range: $port"
 done
+# The broker defaults to 443 so gh's api_host (which rejects host:port
+# values) works with every gh command; 443 needs root, which the unit has.
+# An unprivileged override port keeps working for git/gh api, with the
+# gh pr-create caveat documented in docs/PILOT.md.
+case "$BROKER_PORT" in ''|*[!0-9]*) fail "invalid port: $BROKER_PORT" ;; esac
+{ [ "$BROKER_PORT" = "443" ] || { [ "$BROKER_PORT" -ge 1024 ] && [ "$BROKER_PORT" -le 65535 ]; }; } || fail "broker port out of range: $BROKER_PORT (443 or 1024-65535)"
 [ "$PILOT_PORT" != "$RELAY_PORT" ] && [ "$PILOT_PORT" != "$BROKER_PORT" ] && [ "$RELAY_PORT" != "$BROKER_PORT" ] || fail "pilot, relay, and broker ports must differ"
 # Ports are host-global. Reinstalls may use this project's active units, but
 # never adopt another service (including the old generic Muse pilot/relay).
@@ -152,13 +158,16 @@ cat > "$RUNTIME/gitconfig" <<EOF
 EOF
 chmod 644 "$RUNTIME/gitconfig"
 # Session gh config (pilot sets GH_CONFIG_DIR to this for sessions only).
+# gh validates api_host as a bare hostname in some commands (gh pr create
+# rejects host:port), so on the default port the port is omitted entirely.
 mkdir -p "$RUNTIME/gh-config"
+if [ "$BROKER_PORT" = "443" ]; then API_HOST="127.0.0.1"; else API_HOST="127.0.0.1:$BROKER_PORT"; fi
 cat > "$RUNTIME/gh-config/hosts.yml" <<EOF
 github.com:
     user: x-access-token
     oauth_token: broker-provided-sentinel
     git_protocol: https
-    api_host: 127.0.0.1:$BROKER_PORT
+    api_host: $API_HOST
 EOF
 printf 'git_protocol: https\n' > "$RUNTIME/gh-config/config.yml"
 chmod 644 "$RUNTIME/gh-config/hosts.yml" "$RUNTIME/gh-config/config.yml"

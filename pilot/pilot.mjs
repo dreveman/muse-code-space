@@ -999,7 +999,7 @@ function turnReadiness() {
 // GitHub broker liveness (loopback TLS with the install-generated cert;
 // verification is skipped for this local health probe only — no credential
 // ever travels over it, mirroring the relay's local-liveness check).
-const BROKER_PORT = Number(process.env.MUSE_CODE_SPACE_GITHUB_BROKER_PORT ?? 18792);
+const BROKER_PORT = Number(process.env.MUSE_CODE_SPACE_GITHUB_BROKER_PORT ?? 443);
 let brokerUpSyncCache = null;
 async function brokerUp() {
   return new Promise((resolve) => {

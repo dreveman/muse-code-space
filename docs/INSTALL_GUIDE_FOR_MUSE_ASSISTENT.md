@@ -90,7 +90,7 @@ in snapshots. It is host-local, not source.
 ### GitHub broker credential
 
 Code Space sessions get GitHub access through the loopback broker
-(`pilot/github_broker.py`, port 18792); sessions only ever hold a sentinel.
+(`pilot/github_broker.py`, port 443); sessions only ever hold a sentinel.
 On this platform **Secure Vault has no read-back** — no tool can retrieve a
 stored secret value — so the vault cannot supply the contents of a
 credential file. The platform-native pattern is the same one the muse relay

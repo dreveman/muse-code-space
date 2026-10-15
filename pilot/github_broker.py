@@ -322,7 +322,7 @@ def start_broker(host: str = "127.0.0.1", port: int = 0,
 
 
 def main() -> int:
-    port = int(os.environ.get("MUSE_CODE_SPACE_GITHUB_BROKER_PORT", "18792") or 18792)
+    port = int(os.environ.get("MUSE_CODE_SPACE_GITHUB_BROKER_PORT", "443") or 443)
     runtime = os.environ.get("MUSE_CODE_SPACE_GITHUB_BROKER_RUNTIME", "")
     certfile = os.path.join(runtime, "github-broker-cert.pem") if runtime else None
     keyfile = os.path.join(runtime, "github-broker-key.pem") if runtime else None
