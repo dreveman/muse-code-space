@@ -171,13 +171,20 @@ chmod +x "$RUNTIME/setup-github-broker"
 # own ~/.profile runs after the system profile; keep a small managed block
 # there that re-pins the combined CA bundle (system roots + broker cert)
 # for interactive terminals. Marker-delimited and idempotent; removing the
-# block restores stock behavior.
+# block restores stock behavior. Scoped to GitHub support: the block is
+# only present while a broker credential is provisioned (the setup script
+# adds it on successful setup; installs without a credential remove it).
 PROFILE_FILE="${HOME}/.profile"
 touch "$PROFILE_FILE"
-python3 - "$PROFILE_FILE" "$RUNTIME/github-broker-ca.pem" <<'PY'
+if [ -f "${HOME}/.config/muse-code-space-pilot/github-broker.json" ]; then
+  PROFILE_MODE=add
+else
+  PROFILE_MODE=remove
+fi
+python3 - "$PROFILE_FILE" "$RUNTIME/github-broker-ca.pem" "$PROFILE_MODE" <<'PY'
 import pathlib, sys
 profile = pathlib.Path(sys.argv[1])
-ca = sys.argv[2]
+ca, mode = sys.argv[2], sys.argv[3]
 begin, end = "# >>> muse-code-space github broker >>>", "# <<< muse-code-space github broker <<<"
 lines = profile.read_text().splitlines()
 kept, skipping = [], False
@@ -185,13 +192,19 @@ for line in lines:
     if line.strip() == begin: skipping = True
     if not skipping: kept.append(line)
     if line.strip() == end: skipping = False
-block = [begin,
-         f'export GIT_SSL_CAINFO="{ca}"',
-         f'export SSL_CERT_FILE="{ca}"',
-         end]
-profile.write_text("\n".join(kept + ([""] if kept and kept[-1] else []) + block) + "\n")
+if mode == "add":
+    block = [begin,
+             f'export GIT_SSL_CAINFO="{ca}"',
+             f'export SSL_CERT_FILE="{ca}"',
+             end]
+    kept = kept + ([""] if kept and kept[-1] else []) + block
+profile.write_text("\n".join(kept) + "\n")
 PY
-log "pinned broker CA for login terminals in $PROFILE_FILE"
+if [ "$PROFILE_MODE" = "add" ]; then
+  log "pinned broker CA for login terminals in $PROFILE_FILE"
+else
+  log "no GitHub credential provisioned; login-terminal CA block left absent in $PROFILE_FILE"
+fi
 log "wrote session gitconfig + gh config (sentinel only)"
 # The real credential is host-local and provisioned separately via Secure
 # Vault (see docs); install never creates or overwrites it.

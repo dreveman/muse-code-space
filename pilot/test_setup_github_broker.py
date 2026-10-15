@@ -61,6 +61,18 @@ class SetupScriptTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             setup.validate("1", "2", self.pem, provider_factory=lambda *a: boom(*a))
 
+    def test_profile_block_written_once_and_scoped_to_setup(self):
+        import tempfile
+        profile = pathlib.Path(tempfile.mkdtemp()) / ".profile"
+        profile.write_text("# user profile\n")
+        ca = pathlib.Path("/runtime/github-broker-ca.pem")
+        setup.ensure_profile_block(profile, ca)
+        setup.ensure_profile_block(profile, ca)  # idempotent
+        text = profile.read_text()
+        self.assertEqual(text.count("muse-code-space github broker >>>"), 1)
+        self.assertIn('GIT_SSL_CAINFO="/runtime/github-broker-ca.pem"', text)
+        self.assertTrue(text.startswith("# user profile"), "user content preserved")
+
     def test_main_aborts_cleanly_on_bad_validation(self):
         # Drive main with stubbed prompts/validation: nothing should be written.
         import unittest.mock as mock
