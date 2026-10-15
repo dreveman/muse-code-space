@@ -7,4 +7,34 @@ export const privileged = definePrivilegedContracts({
     response: z.object({ baseUrl: z.string().url() }),
     timeoutMs: 5_000,
   },
+  listTranscripts: {
+    request: z.object({}),
+    response: z.object({
+      transcripts: z.array(z.object({
+        pilot_session_id: z.string(),
+        app_session_id: z.string().nullable(),
+        title: z.string().nullable(),
+        name: z.string().nullable(),
+        model_id: z.string().nullable(),
+        workspace_root: z.string().nullable(),
+        created_at: z.string().nullable(),
+        updated_at: z.string().nullable(),
+        prompt: z.string().nullable(),
+        latest_text: z.string().nullable(),
+        latest_seq: z.number().int().nonnegative(),
+        event_count: z.number().int().nonnegative(),
+      })),
+    }),
+    timeoutMs: 15_000,
+  },
+  readTranscript: {
+    request: z.object({ pilot_session_id: z.string().min(1).max(200) }),
+    response: z.object({
+      found: z.boolean(),
+      // Raw pilot stream events, in file order. Parsed loosely here; the
+      // action layer translates them with the same helpers as live sync.
+      events: z.array(z.record(z.string(), z.unknown())),
+    }),
+    timeoutMs: 30_000,
+  },
 });
