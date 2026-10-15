@@ -36,6 +36,7 @@ import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
+import { contextUsageLabel } from "./contextUsage";
 import { hasStoredOutputBeyondView, toolTranscriptLines, TOOL_PREVIEW_LINES } from "./toolTranscript";
 import { filePreviewForTool, toolPresentation } from "./toolPresentation";
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
@@ -2596,8 +2597,8 @@ export function App() {
           <div className="composer-actions">
             <span
               className="composer-budget"
-              title={`Context: approximately ${estimatedContextTokens.toLocaleString()} of ${CONTEXT_WINDOW_TOKENS.toLocaleString()} tokens used`}
-              aria-label={`Approximately ${estimatedContextTokens.toLocaleString()} of ${CONTEXT_WINDOW_TOKENS.toLocaleString()} context tokens used`}
+              title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
+              aria-label={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
             >
               <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
             </span>
@@ -2605,7 +2606,7 @@ export function App() {
               type="button"
               className={`composer-icon voice-button ${listening ? "listening" : ""}`}
               onClick={toggleVoiceInput}
-              title={listening ? "Stop dictation" : "Dictate"}
+              title={listening ? "Stop voice input" : "Start voice input"}
               aria-label={listening ? "Stop voice input" : "Start voice input"}
               aria-pressed={listening}
             >
@@ -3102,8 +3103,8 @@ export function App() {
                             <div className="composer-actions">
                               <span
                                 className="composer-budget"
-                                title={`Context: approximately ${estimatedContextTokens.toLocaleString()} of ${CONTEXT_WINDOW_TOKENS.toLocaleString()} tokens used`}
-                                aria-label={`Approximately ${estimatedContextTokens.toLocaleString()} of ${CONTEXT_WINDOW_TOKENS.toLocaleString()} context tokens used`}
+                                title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
+                                aria-label={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
                               >
                                 <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
                               </span>
@@ -3111,7 +3112,7 @@ export function App() {
                                 type="button"
                                 className={`composer-icon voice-button ${listening ? "listening" : ""}`}
                                 onClick={toggleVoiceInput}
-                                title={listening ? "Stop dictation" : "Dictate"}
+                                title={listening ? "Stop voice input" : "Start voice input"}
                                 aria-label={listening ? "Stop voice input" : "Start voice input"}
                                 aria-pressed={listening}
                               >
