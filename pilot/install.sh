@@ -165,6 +165,33 @@ chmod 644 "$RUNTIME/gh-config/hosts.yml" "$RUNTIME/gh-config/config.yml"
 # Interactive App provisioning entry point (prompts, validates, restarts).
 printf '#!/bin/sh\nexec python3 "%s/setup_github_broker.py" "$@"\n' "$RUNTIME" > "$RUNTIME/setup-github-broker"
 chmod +x "$RUNTIME/setup-github-broker"
+# Login terminals re-export the egress CA from /etc/profile.d *after* the
+# pilot spawns them, clobbering the session CA pins — so git in a terminal
+# fails broker TLS verification even though agent shells work. The user's
+# own ~/.profile runs after the system profile; keep a small managed block
+# there that re-pins the combined CA bundle (system roots + broker cert)
+# for interactive terminals. Marker-delimited and idempotent; removing the
+# block restores stock behavior.
+PROFILE_FILE="${HOME}/.profile"
+touch "$PROFILE_FILE"
+python3 - "$PROFILE_FILE" "$RUNTIME/github-broker-ca.pem" <<'PY'
+import pathlib, sys
+profile = pathlib.Path(sys.argv[1])
+ca = sys.argv[2]
+begin, end = "# >>> muse-code-space github broker >>>", "# <<< muse-code-space github broker <<<"
+lines = profile.read_text().splitlines()
+kept, skipping = [], False
+for line in lines:
+    if line.strip() == begin: skipping = True
+    if not skipping: kept.append(line)
+    if line.strip() == end: skipping = False
+block = [begin,
+         f'export GIT_SSL_CAINFO="{ca}"',
+         f'export SSL_CERT_FILE="{ca}"',
+         end]
+profile.write_text("\n".join(kept + ([""] if kept and kept[-1] else []) + block) + "\n")
+PY
+log "pinned broker CA for login terminals in $PROFILE_FILE"
 log "wrote session gitconfig + gh config (sentinel only)"
 # The real credential is host-local and provisioned separately via Secure
 # Vault (see docs); install never creates or overwrites it.

@@ -143,20 +143,22 @@ test("pilot-supplied session wiring (GitHub broker) reaches the shell", async ()
 });
 
 test("function envExtras are re-read at open time (broker wiring generated after boot)", async () => {
+  // A marker var is used (not a CA var) because login profiles on this
+  // host rewrite CA variables after spawn; laziness is what is pinned.
   let wiring = {};
   const m = createTerminalManager({ envExtras: () => wiring });
   const cwd = mkdtempSync(path.join(os.tmpdir(), "term-lazy-"));
   try {
     const first = m.open({ key: "lazy", cwd });
-    m.input(first.terminalId, 'echo "CA1=${GIT_SSL_CAINFO:-unset}"\r');
-    const r1 = await readUntil(m, first.terminalId, 0, /CA1=(unset|\/)/);
-    assert.match(r1.out, /CA1=unset/);
-    m.kill("lazy");
-    wiring = { GIT_SSL_CAINFO: "/home/hatch/workspace/muse-code-space-pilot/github-broker-cert.pem" };
+    m.input(first.terminalId, 'echo "M1=${LAZY_WIRING_MARKER:-unset}"\r');
+    const r1 = await readUntil(m, first.terminalId, 0, /M1=(unset|one)/);
+    assert.match(r1.out, /M1=unset/);
+    m.removeByKey("lazy");
+    wiring = { LAZY_WIRING_MARKER: "one" };
     const second = m.open({ key: "lazy", cwd });
-    m.input(second.terminalId, 'echo "CA2=${GIT_SSL_CAINFO:-unset}"\r');
-    const r2 = await readUntil(m, second.terminalId, 0, /CA2=\/home/);
-    assert.match(r2.out, /CA2=\/home\/hatch\/workspace\/muse-code-space-pilot\/github-broker-cert\.pem/);
+    m.input(second.terminalId, 'echo "M2=${LAZY_WIRING_MARKER:-unset}"\r');
+    const r2 = await readUntil(m, second.terminalId, 0, /M2=(unset|one)/);
+    assert.match(r2.out, /M2=one/);
   } finally {
     m.closeAll();
   }
