@@ -1,5 +1,5 @@
 import { defineAction, z, type ActionsModule, type Ctx, type PrivilegedExecutor } from "@hatch/space-sdk";
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { privileged } from "@space/privileged";
 import {
 buildUserInputAnswers,
@@ -1447,6 +1447,7 @@ export const Actions = {
     request: z.object({
       id: z.string().min(1),
       event_limit: z.number().int().positive().max(2000).default(1000),
+      after_id: z.number().int().nonnegative().optional(),
     }),
     response: z.object({
       session: sessionResponseSchema.nullable(),
@@ -1462,7 +1463,6 @@ export const Actions = {
       const row = rows[0];
       if (!row) return { session: null, events: [] };
 
-
       const events = await db
         .select()
         .from(schema.outputEvents)
@@ -1470,6 +1470,7 @@ export const Actions = {
           and(
             eq(schema.outputEvents.sessionId, args.id),
             ne(schema.outputEvents.kind, "result"),
+            ...(args.after_id !== undefined ? [gt(schema.outputEvents.id, args.after_id)] : []),
           ),
         )
         .orderBy(desc(schema.outputEvents.id))

@@ -1575,7 +1575,43 @@ export function App() {
     queryKey: ["code-session", selectedId],
     queryFn: async () => {
       const id = selectedId ?? "";
-      const data = await api.getSession({ id, event_limit: 1000 });
+      const cached = queryClient.getQueryData<ApiResponse<typeof api, "getSession">>(["code-session", id]);
+      let afterId: number | undefined;
+      let immutablePrefix: TranscriptEvent[] = [];
+      if (cached?.session?.id === id && cached.events.length > 0) {
+        let cutoff = cached.events.length;
+        for (let i = 0; i < cached.events.length; i++) {
+          const ev = cached.events[i]!;
+          if ((ev.kind === "tool" || ev.kind === "thinking" || ev.kind === "agents") && ev.finished_at === null) {
+            cutoff = i;
+            break;
+          }
+        }
+        if (cutoff > 0) {
+          afterId = cached.events[cutoff - 1]!.id;
+          immutablePrefix = cached.events.slice(0, cutoff);
+        }
+      }
+      const rawData = await api.getSession({
+        id,
+        event_limit: 1000,
+        ...(afterId !== undefined ? { after_id: afterId } : {}),
+      });
+      const mergedEvents = afterId !== undefined && rawData.session
+        ? rawData.events.length === 0 && immutablePrefix.length === cached?.events.length
+          ? cached.events
+          : immutablePrefix.concat(rawData.events).slice(-1000)
+        : rawData.events;
+      const data = afterId !== undefined && rawData.session
+        ? {
+            session: {
+              ...rawData.session,
+              output_count: mergedEvents.length,
+              latest_output: rawData.session.latest_output ?? cached?.session?.latest_output ?? null,
+            },
+            events: mergedEvents,
+          }
+        : rawData;
       if (data.session) {
         const body = terminalBodyRef.current;
         const atBottom = selectedIdRef.current === id && !document.hidden && (body === null || followTranscriptRef.current || transcriptAtBottom(body));
