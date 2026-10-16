@@ -25,6 +25,7 @@ import { completeMention, matchingAgents, mentionAtCursor, type MentionAgent } f
 import { PaneDivider } from "./PaneDivider";
 import { chatWidthBounds, clampChatShare, clampSidebarWidth, DEFAULT_CHAT_SHARE, DEFAULT_SIDEBAR_WIDTH, DIVIDER_WIDTH, loadPaneSizes, savePaneSizes, sidebarWidthBounds } from "./layoutSizing";
 import { isHardwareKeyEvent, isVirtualKeyboardEnvironment, shouldSubmitOnEnter } from "./keyboardSubmit";
+import { buildPromptHistory, INITIAL_PROMPT_HISTORY_STATE, navigatePromptHistory, type PromptHistoryState } from "./promptHistory";
 import { COMPOSER_MIN_HEIGHT, resizeComposerTextarea } from "./composerSizing";
 import { formatMessageTime } from "./messageTime";
 import { reasoningDisplay } from "./reasoningDisplay";
@@ -1293,6 +1294,8 @@ export function App() {
   const takeoverInputRef = useRef<HTMLTextAreaElement>(null);
   const draftInputRef = useRef<HTMLTextAreaElement>(null);
   const suppressMentionKeyUpRef = useRef(false);
+  const promptHistoryStateRef = useRef<PromptHistoryState>(INITIAL_PROMPT_HISTORY_STATE);
+  const sentPromptsRef = useRef<string[]>([]);
   // Flips once a key only a physical keyboard can produce is seen, so a
   // Bluetooth keyboard on a touch device gets desktop Enter-to-submit.
   const hardwareKeyboardSeenRef = useRef(false);
@@ -1548,6 +1551,40 @@ export function App() {
     }
     return false;
   };
+  const handleHistoryKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return false;
+    if (event.nativeEvent.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return false;
+    const input = event.currentTarget;
+    const history = draftSelected || selectedCompanion !== null
+      ? buildPromptHistory([], sentPromptsRef.current)
+      : buildPromptHistory(
+          transcriptEvents,
+          [
+            ...(transcriptEvents.some((item) => item.kind === "user") || !detailSession?.prompt ? [] : [detailSession.prompt]),
+            ...(pendingDirection ? [pendingDirection] : []),
+          ],
+        );
+    const step = navigatePromptHistory({
+      state: promptHistoryStateRef.current,
+      key: event.key,
+      currentText: direction,
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+      history,
+    });
+    if (!step) return false;
+    event.preventDefault();
+    suppressMentionKeyUpRef.current = true;
+    promptHistoryStateRef.current = step.state;
+    setDirection(step.value);
+    setCaretPosition(step.value.includes("@") ? step.caret : null);
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      if (document.activeElement !== input) input.focus();
+      input.setSelectionRange(step.caret, step.caret);
+    });
+    return true;
+  };
 
   useEffect(() => {
     if (sessions.length === 0 && selectedId !== null && selectedId !== draft?.id) {
@@ -1558,6 +1595,7 @@ export function App() {
   useEffect(() => {
     setDirection("");
     setCaretPosition(null);
+    promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     snappedSessionRef.current = null;
     followTranscriptRef.current = true;
     setShowScrollToBottom(false);
@@ -2330,6 +2368,8 @@ export function App() {
       return;
     }
     followTranscriptRef.current = true;
+    sentPromptsRef.current.push(content);
+    promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     setDirection("");
     setTakeoverError(null);
     setTakeoverStatus(null);
@@ -2476,6 +2516,8 @@ export function App() {
       return;
     }
     setCreateError(null);
+    sentPromptsRef.current.push(prompt);
+    promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     if (decision === "queue") {
       setQueuedPrompt(queued);
       setDirection("");
@@ -2903,6 +2945,7 @@ export function App() {
             updateCaretPosition(event.currentTarget);
           }}
           onChange={(event) => {
+            promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
             setDirection(event.target.value);
             updateCaretPosition(event.target);
             setMentionIndex(0);
@@ -2910,6 +2953,7 @@ export function App() {
           }}
           onKeyDown={(event) => {
             if (handleMentionKeyDown(event)) return;
+            if (handleHistoryKeyDown(event)) return;
             if (event.key !== "Enter") return;
             if (!shouldSubmitOnEnter({
               isComposing: event.nativeEvent.isComposing,
@@ -3450,6 +3494,7 @@ export function App() {
                               updateCaretPosition(event.currentTarget);
                             }}
                             onChange={(event) => {
+                              promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
                               setDirection(event.target.value);
                               updateCaretPosition(event.target);
                               setMentionIndex(0);
@@ -3459,6 +3504,7 @@ export function App() {
                             }}
                             onKeyDown={(event) => {
                               if (handleMentionKeyDown(event)) return;
+                              if (handleHistoryKeyDown(event)) return;
                               if (event.key !== "Enter") return;
                               if (!shouldSubmitOnEnter({
                                 isComposing: event.nativeEvent.isComposing,
