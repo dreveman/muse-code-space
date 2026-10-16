@@ -276,6 +276,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   scrollbar-gutter: stable;
   contain: strict;
 }
@@ -476,8 +477,8 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   bottom: 0;
   z-index: 2;
   flex: 0 0 auto;
-  display: grid;
-  gap: 0;
+  display: block;
+  contain: layout style;
   /* Full width + square, like the prompt and tool boxes; the centered
      layout below rounds and insets it. */
   padding: 0 0 env(safe-area-inset-bottom);
@@ -491,12 +492,21 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   --terminal-dim: #667069;
   --terminal-faint: #dce1dc;
   position: relative;
-  overflow: visible;
+  display: block;
+  width: 100%;
+  height: 95px;
+  overflow: hidden;
+  contain: strict;
   /* Top border always; side borders only once there's a gap between the box
      and the sidebar divider; bottom border and corner radius ease in with the
      centered layout (see "Centered chat" at the end of this file). */
   border: 1px solid #d6dad6;
   background: #ffffff;
+}
+
+.terminal-composer.menu-open {
+  overflow: visible;
+  contain: size layout style;
 }
 .task-resume-notice { margin: 0; padding: 8px 12px; color: var(--terminal-dim); font: 12px/1.45 var(--sans); }
 :root[data-color-mode="dark"] .terminal-composer {
@@ -511,8 +521,10 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .terminal-prompt textarea {
   display: block;
   width: 100%;
+  height: 48px;
   min-height: 48px;
   max-height: 240px;
+  contain: strict;
   resize: none;
   overflow-y: hidden;
   border: 0;

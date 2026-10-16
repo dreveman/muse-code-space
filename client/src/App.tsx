@@ -25,7 +25,7 @@ import { completeMention, matchingAgents, mentionAtCursor, type MentionAgent } f
 import { PaneDivider } from "./PaneDivider";
 import { chatWidthBounds, clampChatShare, clampSidebarWidth, DEFAULT_CHAT_SHARE, DEFAULT_SIDEBAR_WIDTH, DIVIDER_WIDTH, loadPaneSizes, savePaneSizes, sidebarWidthBounds } from "./layoutSizing";
 import { isHardwareKeyEvent, isVirtualKeyboardEnvironment, shouldSubmitOnEnter } from "./keyboardSubmit";
-import { resizeComposerTextarea } from "./composerSizing";
+import { COMPOSER_MIN_HEIGHT, resizeComposerTextarea } from "./composerSizing";
 import { formatMessageTime } from "./messageTime";
 import { reasoningDisplay } from "./reasoningDisplay";
 import { redundantSendToolIds } from "./messageToolVisibility";
@@ -761,9 +761,9 @@ function agentColorStyle(name: string): CSSProperties {
   return { "--agent-hue": agentNameHue(name) } as CSSProperties;
 }
 
-function ContextRing({ value, max }: { value: number; max: number }) {
+const ContextRing = memo(function ContextRing({ value, max }: { value: number; max: number }) {
   const radius = 8;
-  const progress = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
+  const progress = max > 0 ? Math.min(1, Math.max(0, Math.round((value / max) * 1000) / 1000)) : 0;
 
   return (
     <svg className="context-ring" aria-hidden="true" viewBox="0 0 24 24" fill="none">
@@ -779,7 +779,7 @@ function ContextRing({ value, max }: { value: number; max: number }) {
       />
     </svg>
   );
-}
+});
 
 function MicrophoneIcon() {
   return (
@@ -1510,6 +1510,10 @@ export function App() {
     name: mentionSender?.title ?? null,
   }) : [];
   const selectedMentionIndex = Math.min(mentionIndex, Math.max(0, mentionMatches.length - 1));
+  const updateCaretPosition = (target: HTMLTextAreaElement) => {
+    const next = target.value.includes("@") ? target.selectionStart : null;
+    setCaretPosition((current) => (current === next ? current : next));
+  };
   const chooseMention = (agent: MentionAgent) => {
     const input = (draftSelected ? draftInputRef : takeoverInputRef).current;
     const completed = completeMention(direction, input?.selectionStart ?? caretPosition ?? direction.length, agent.name);
@@ -1858,13 +1862,15 @@ export function App() {
   );
   const promptStartedAt = latestUserEvent?.created_at ?? detailSession?.started_at ?? new Date(nowMs).toISOString();
   const promptStartedMs = new Date(promptStartedAt).getTime();
-  const workingLabel = awaitingPilot ? "Connecting" : getWorkingLabel({
-    status: detailSession?.status,
-    promptStartedMs,
-    events: workingEvents,
-    nowMs,
-    workspaceRoot: detailSession?.workspace_root,
-  });
+  const workingLabel = useMemo(() => (
+    awaitingPilot ? "Connecting" : getWorkingLabel({
+      status: detailSession?.status,
+      promptStartedMs,
+      events: workingEvents,
+      nowMs,
+      workspaceRoot: detailSession?.workspace_root,
+    })
+  ), [awaitingPilot, detailSession?.status, promptStartedMs, workingEvents, nowMs, detailSession?.workspace_root]);
   const runElapsedSeconds = Number.isFinite(promptStartedMs) ? (nowMs - promptStartedMs) / 1000 : 0;
   const sendingElapsedSeconds = pendingSentAtMs > 0 ? Math.max(0, nowMs - pendingSentAtMs) / 1000 : 0;
   // Dimmed echo of the just-submitted prompt until the real event arrives.
@@ -2139,11 +2145,53 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", markVisibleRead);
   }, [detailSessionId, detail?.session?.output_revision, detail?.session?.seen_output_revision]);
 
+  const prevComposerMeasureRef = useRef<{
+    input: HTMLTextAreaElement | null;
+    direction: string;
+    viewportWidth: number;
+    sidebarWidth: number;
+    chatShare: number;
+    hasSidePanel: boolean;
+  } | null>(null);
+
   useLayoutEffect(() => {
     // The first-prompt draft has its own textarea; sizing only the existing
     // agent's composer left draft messages clipped after the first line.
     const input = draftSelected ? draftInputRef.current : takeoverInputRef.current;
     if (!input) return;
+    const prev = prevComposerMeasureRef.current;
+    const sameGeometry =
+      prev !== null &&
+      prev.input === input &&
+      prev.viewportWidth === viewportWidth &&
+      prev.sidebarWidth === paneSizes.sidebarWidth &&
+      prev.chatShare === paneSizes.chatShare &&
+      prev.hasSidePanel === hasSidePanel;
+    const prevDirection = sameGeometry ? prev.direction : "";
+    prevComposerMeasureRef.current = {
+      input,
+      direction,
+      viewportWidth,
+      sidebarWidth: paneSizes.sidebarWidth,
+      chatShare: paneSizes.chatShare,
+      hasSidePanel,
+    };
+    const currentHeight = input.style.height || `${COMPOSER_MIN_HEIGHT}px`;
+    const atMinHeight = currentHeight === `${COMPOSER_MIN_HEIGHT}px`;
+    const onlyAppendedSingleLine =
+      sameGeometry &&
+      direction.length >= prevDirection.length &&
+      !direction.slice(prevDirection.length).includes("\n");
+    // While fixed at a pixel height with overflow-y: hidden, <textarea> is an
+    // isolated Blink relayout boundary: reading scrollHeight/clientHeight only
+    // lays out the 2 nodes inside the textarea (~0.05ms). Setting height="auto"
+    // inside resizeComposerTextarea destroys that boundary and shifts the flex
+    // container by 12px twice, forcing two 60ms full-document layouts across
+    // all 44,500 transcript objects per keystroke.
+    if (sameGeometry && currentHeight !== "") {
+      if (atMinHeight && (direction.length === 0 || input.scrollHeight <= COMPOSER_MIN_HEIGHT)) return;
+      if (onlyAppendedSingleLine && input.scrollHeight <= input.clientHeight) return;
+    }
     // Growing the composer shrinks the transcript viewport. If the reader
     // was following the bottom, re-pin after the resize layout settles —
     // otherwise the last lines slide under the composer and a spurious
@@ -2151,7 +2199,7 @@ export function App() {
     const body = terminalBodyRef.current;
     const wasFollowing = body !== null && followTranscriptRef.current && transcriptAtBottom(body);
     resizeComposerTextarea(input);
-    if (!body || !wasFollowing) return;
+    if (!body || !wasFollowing || input.style.height === currentHeight) return;
     const frame = requestAnimationFrame(() => {
       // Layout-induced scroll events from the shrink itself may have
       // cleared the follow flag in between; the pre-resize snapshot is
@@ -2834,7 +2882,7 @@ export function App() {
   const firstMessageComposer = (startingDraft?.draft.id === selectedId || selectedCompanion !== null) ? (
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
-      <div className="terminal-composer">
+      <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
         <label className="sr-only" htmlFor="draft-input">
           First message
         </label>
@@ -2847,16 +2895,16 @@ export function App() {
           aria-autocomplete="list"
           aria-controls={activeMention ? "agent-mention-options" : undefined}
           aria-activedescendant={activeMention && mentionMatches.length > 0 ? `agent-mention-option-${selectedMentionIndex}` : undefined}
-          onFocus={(event) => { setComposerFocused(true); setCaretPosition(event.currentTarget.selectionStart); }}
+          onFocus={(event) => { setComposerFocused(true); updateCaretPosition(event.currentTarget); }}
           onBlur={() => setComposerFocused(false)}
-          onClick={(event) => setCaretPosition(event.currentTarget.selectionStart)}
+          onClick={(event) => updateCaretPosition(event.currentTarget)}
           onKeyUp={(event) => {
             if (suppressMentionKeyUpRef.current) { suppressMentionKeyUpRef.current = false; return; }
-            setCaretPosition(event.currentTarget.selectionStart);
+            updateCaretPosition(event.currentTarget);
           }}
           onChange={(event) => {
             setDirection(event.target.value);
-            setCaretPosition(event.target.selectionStart);
+            updateCaretPosition(event.target);
             setMentionIndex(0);
             setCreateError(null);
           }}
@@ -3122,6 +3170,79 @@ export function App() {
     draftCompanionId,
     moreAvailableExpanded,
   ]);
+  const detailMenuSession = selectedSession ?? detailSession;
+  const detailCompanionActive = liveWork || sendingDirection || pendingEcho !== null;
+  const detailCompanionActivity = agentsRunning && !sessionActive ? "Running helpers" : workingLabel;
+  const detailCompanionVisible = !isNarrow || !mobileListOpen;
+  const detailFloatingToolbar = useMemo(() => {
+    if (!detailSession || !detailMenuSession) return null;
+    return (
+                    <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
+                      <button type="button" className="mobile-back-button" aria-label="Back to companions"
+                        onClick={() => { setMobileListOpen(true); setSelectedId(null); }}><BackIcon /></button>
+                      <TranscriptCompanion key={detailSession.id} name={detailAgentName}
+                        connecting={connectionLost || pilotUnavailable}
+                        archived={sessionPast}
+                        active={detailCompanionActive}
+                        starting={taskStarting}
+                        activity={detailCompanionActivity}
+                        visible={detailCompanionVisible} />
+                      <div className="chat-floating-actions">
+                        <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                        <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
+                        <SessionMenu actions={sessionMenuActions(selectedSession ?? detailSession)} colorMode={colorMode}
+                          onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
+                          showRawToolOutput={showRawToolOutput}
+                          onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)} />
+                      </div>
+                    </div>
+    );
+  }, [
+    detailSession,
+    detailMenuSession,
+    detailAgentName,
+    connectionLost,
+    pilotUnavailable,
+    sessionPast,
+    detailCompanionActive,
+    taskStarting,
+    detailCompanionActivity,
+    detailCompanionVisible,
+    ownedFiles,
+    openFileTabForDetail,
+    colorMode,
+    showRawToolOutput,
+    showReasoning,
+    expandTools,
+    showWorkingDetails,
+    archiveBusy,
+    deleteBusy,
+    renameBusy,
+    sessionsForMessages,
+    isNarrow,
+  ]);
+  const takeoverDisabledReason = liveWork || sendingDirection || pendingDirection !== null
+    ? "Stop the current turn before handing over this task." : queuedPrompt !== null
+    ? "Send or cancel the queued message before handing over this task." : connectionLost ? "Connect before handing over this task." : undefined;
+  const takeoverComposerTools = useMemo(() => (
+                            <div className="composer-tools" aria-label="Message tools">
+                              <CompanionMenu name={detailAgentName} effort={effort} icon={<MuseIcon />}
+                                picking={sessionPast} models={accessibleModels}
+                                options={companions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
+                                busy={handoffBusy}
+                                disabledReason={takeoverDisabledReason}
+                                onChoose={(id) => { void handOffCompanion(id); }} />
+                            </div>
+  ), [
+    detailAgentName,
+    effort,
+    sessionPast,
+    accessibleModels,
+    availableCompanions,
+    handoffBusy,
+    takeoverDisabledReason,
+    detailSession?.id,
+  ]);
 
   return (
     <div className="app-shell">
@@ -3219,25 +3340,7 @@ export function App() {
                     className="transcript"
                     aria-live={isTurnLive(detailSession.status) ? "polite" : "off"}
                   >
-                    <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
-                      <button type="button" className="mobile-back-button" aria-label="Back to companions"
-                        onClick={() => { setMobileListOpen(true); setSelectedId(null); }}><BackIcon /></button>
-                      <TranscriptCompanion key={detailSession.id} name={detailAgentName}
-                        connecting={connectionLost || pilotUnavailable}
-                        archived={sessionPast}
-                        active={liveWork || sendingDirection || pendingEcho !== null}
-                        starting={taskStarting}
-                        activity={agentsRunning && !sessionActive ? "Running helpers" : workingLabel}
-                        visible={!isNarrow || !mobileListOpen} />
-                      <div className="chat-floating-actions">
-                        <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
-                        <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
-                        <SessionMenu actions={sessionMenuActions(selectedSession ?? detailSession)} colorMode={colorMode}
-                          onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
-                          showRawToolOutput={showRawToolOutput}
-                          onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)} />
-                      </div>
-                    </div>
+                    {detailFloatingToolbar}
                     <div
                       ref={terminalBodyRef}
                       className="terminal-body"
@@ -3326,7 +3429,7 @@ export function App() {
                             "unavailable" verdict would be a guess; the header already
                             says the companion is connecting. */}
                         {!promptConnectionLost && accessibleModels !== undefined && <CompanionAccessNotice access={detailModelAccess} modelName={displayModelLabel(detailModelId)} />}
-                        <div className="terminal-composer">
+                        <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
                           <label className="sr-only" htmlFor="takeover-input">
                             Message Muse Code
                           </label>
@@ -3339,16 +3442,16 @@ export function App() {
                             aria-autocomplete="list"
                             aria-controls={activeMention ? "agent-mention-options" : undefined}
                             aria-activedescendant={activeMention && mentionMatches.length > 0 ? `agent-mention-option-${selectedMentionIndex}` : undefined}
-                            onFocus={(event) => { setComposerFocused(true); setCaretPosition(event.currentTarget.selectionStart); }}
+                            onFocus={(event) => { setComposerFocused(true); updateCaretPosition(event.currentTarget); }}
                             onBlur={() => setComposerFocused(false)}
-                            onClick={(event) => setCaretPosition(event.currentTarget.selectionStart)}
+                            onClick={(event) => updateCaretPosition(event.currentTarget)}
                             onKeyUp={(event) => {
                               if (suppressMentionKeyUpRef.current) { suppressMentionKeyUpRef.current = false; return; }
-                              setCaretPosition(event.currentTarget.selectionStart);
+                              updateCaretPosition(event.currentTarget);
                             }}
                             onChange={(event) => {
                               setDirection(event.target.value);
-                              setCaretPosition(event.target.selectionStart);
+                              updateCaretPosition(event.target);
                               setMentionIndex(0);
                               setPendingDirection(null);
                               setTakeoverError(null);
@@ -3378,16 +3481,7 @@ export function App() {
                               inputRef={takeoverInputRef} mentionStart={activeMention.start} value={direction} />
                           )}
                           <div className="composer-toolbar">
-                            <div className="composer-tools" aria-label="Message tools">
-                              <CompanionMenu name={detailAgentName} effort={effort} icon={<MuseIcon />}
-                                picking={sessionPast} models={accessibleModels}
-                                options={companions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
-                                busy={handoffBusy}
-                                disabledReason={liveWork || sendingDirection || pendingDirection !== null
-                                  ? "Stop the current turn before handing over this task." : queuedPrompt !== null
-                                  ? "Send or cancel the queued message before handing over this task." : connectionLost ? "Connect before handing over this task." : undefined}
-                                onChoose={(id) => { void handOffCompanion(id); }} />
-                            </div>
+                            {takeoverComposerTools}
                             <div className="composer-actions">
                               <span
                                 className="composer-budget"
