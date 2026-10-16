@@ -60,6 +60,20 @@ jobs:
       SDK_TARBALL_SHA256: "031b34f98766aedde11e799911dbe53865265bcd66dd94f9be67731e60a9e67b"
     steps:
       - uses: actions/checkout@v4
+      - name: Check R2 configuration
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          missing=()
+          [ -n "$R2_ACCOUNT_ID" ] || missing+=(R2_ACCOUNT_ID)
+          [ -n "$AWS_ACCESS_KEY_ID" ] || missing+=(R2_ACCESS_KEY_ID)
+          [ -n "$AWS_SECRET_ACCESS_KEY" ] || missing+=(R2_SECRET_ACCESS_KEY)
+          if ((${#missing[@]})); then
+            echo "::error::Missing repository secrets: ${missing[*]} — add them under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
       - name: Fetch the space SDK tarball from R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
