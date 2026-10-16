@@ -23,7 +23,7 @@
 // The app DB here is a throwaway local file, never the artifact's app.db.
 
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -36,9 +36,22 @@ import {
   type PrivilegedHandler,
 } from "@hatch/space-sdk";
 import * as schema from "../server/src/schema";
-import spaceJson from "../space.json";
 
 const ROOT = resolve(import.meta.dir, "..");
+function resolveSpaceSlug(): string {
+  for (const candidate of ["space.json", "space.json.template"]) {
+    const filePath = join(ROOT, candidate);
+    if (!existsSync(filePath)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, "utf8")) as { slug?: unknown };
+      if (typeof parsed.slug === "string" && parsed.slug && parsed.slug !== "__ARTIFACT_SLUG__") {
+        return parsed.slug;
+      }
+    } catch { /* fall through */ }
+  }
+  return "muse-code-space";
+}
+const SPACE_SLUG = resolveSpaceSlug();
 // MUSE_CODE_SPACE_DEV_DIR keeps a second instance from sharing the
 // build output and DB of the one you're using.
 const DEV_DIR = resolve(process.env.MUSE_CODE_SPACE_DEV_DIR ?? join(ROOT, ".dev"));
@@ -70,9 +83,17 @@ try {
 }
 const liveHome = typeof pilotHealth?.home === "string" && pilotHealth.home.startsWith("/") ? pilotHealth.home : null;
 if (liveHome) writeFileSync(homeCachePath, JSON.stringify({ pilotUrl, home: liveHome }));
+const defaultHome = !process.env.MUSE_CODE_SPACE_DEV_DIR && !existsSync("/home/hatch") && process.env.HOME?.startsWith("/")
+  ? process.env.HOME
+  : "/home/hatch";
 if (!process.env.MUSE_CODE_SPACE_HOME_ROOT) {
-  process.env.MUSE_CODE_SPACE_HOME_ROOT = liveHome ?? cachedHome ?? "/home/hatch";
+  process.env.MUSE_CODE_SPACE_HOME_ROOT = liveHome ?? cachedHome ?? defaultHome;
 }
+if (!process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR && (process.env.MUSE_CODE_SPACE_DEV_DIR || pilotHealth?.fake === true)) {
+  process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR = join(DEV_DIR, "pilot-state");
+}
+(globalThis as { __MUSE_CODE_SPACE_HOME_ROOT__?: string }).__MUSE_CODE_SPACE_HOME_ROOT__ =
+  process.env.MUSE_CODE_SPACE_HOME_ROOT;
 const { Actions } = await import("../server/src/actions");
 const { privilegedHandlers } = await import("../server/src/privileged");
 
@@ -81,6 +102,13 @@ const sqlite = new Database(DB_PATH, { create: true });
 sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
 const db = drizzle(sqlite, { schema });
 migrate(db, { migrationsFolder: join(ROOT, "drizzle") });
+const activeHomeRoot = process.env.MUSE_CODE_SPACE_HOME_ROOT;
+if (activeHomeRoot && activeHomeRoot !== "/home/hatch" && !existsSync("/home/hatch")) {
+  sqlite.run(
+    "UPDATE sessions SET workspace_root = ? || substr(workspace_root, length('/home/hatch') + 1) WHERE workspace_root LIKE '/home/hatch/%'",
+    [activeHomeRoot],
+  );
+}
 
 // ---- privileged functions ----
 if (!isPrivilegedHandlers(privilegedHandlers)) {
@@ -92,10 +120,11 @@ const privilegedByName = new Map<string, PrivilegedHandler>(
 
 // ---- live reload / invalidation channel ----
 const listeners = new Set<ReadableStreamDefaultController<string>>();
-function broadcast(event: "reload" | "invalidate") {
+function broadcast(event: "reload" | "invalidate", payload: Record<string, unknown> = {}) {
+  const data = JSON.stringify(payload);
   for (const controller of listeners) {
     try {
-      controller.enqueue(`event: ${event}\ndata: {}\n\n`);
+      controller.enqueue(`event: ${event}\ndata: ${data}\n\n`);
     } catch {
       listeners.delete(controller);
     }
@@ -109,10 +138,14 @@ const DEV_CLIENT_SCRIPT = `<script>
   if (typeof EventSource === "undefined") return;
   const es = new EventSource("/__dev/events");
   es.addEventListener("reload", () => location.reload());
-  es.addEventListener("invalidate", () => window.postMessage(
-    { type: "hatch:space:query-invalidated", payload: { queryKeys: [] } },
-    location.origin,
-  ));
+  es.addEventListener("invalidate", (e) => {
+    let payload = { queryKeys: [] };
+    try { payload = JSON.parse(e.data); } catch {}
+    window.postMessage(
+      { type: "hatch:space:query-invalidated", payload },
+      location.origin,
+    );
+  });
 })();
 </script>`;
 
@@ -174,14 +207,14 @@ function makeCtx(actionCallId: string, declared: readonly PrivilegedContract[] |
     return handler(args);
   });
   return {
-    slug: spaceJson.slug,
+    slug: SPACE_SLUG,
     invocationId: actionCallId,
     spaceDir: ROOT,
     db: () => db,
     viewer: {
       source: "local" as const,
       authenticated: true as const,
-      spaceSlug: spaceJson.slug,
+      spaceSlug: SPACE_SLUG,
       userId: "local-dev",
       ownerUserId: "local-dev",
       isOwner: true,
@@ -201,8 +234,15 @@ function makeCtx(actionCallId: string, declared: readonly PrivilegedContract[] |
     inference: { complete: unavailable("ctx.inference") },
     tool: new Proxy({}, { get: (_t, name) => unavailable(`ctx.tool.${String(name)}`) }),
     emit() {},
-    invalidateQueries() {
-      broadcast("invalidate");
+    invalidateQueries(invalidation?: unknown) {
+      const queryKeys = Array.isArray(invalidation)
+        ? [invalidation]
+        : invalidation && typeof invalidation === "object" && "queryKey" in invalidation
+          ? [(invalidation as { queryKey: unknown }).queryKey]
+          : invalidation && typeof invalidation === "object" && "queryKeys" in invalidation
+            ? (invalidation as { queryKeys: unknown[] }).queryKeys
+            : [];
+      broadcast("invalidate", { originActionCallId: actionCallId, queryKeys });
     },
     executePrivileged: executor.executePrivileged,
   };

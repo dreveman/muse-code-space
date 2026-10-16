@@ -20,6 +20,12 @@ import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 //              it runs, its two child agents progress in the background, and
 //              Muse then starts a turn on its own (host_turn_started) with
 //              the combined answer. Cancel/result routes work on it.
+//   "long-transcript [N] [live]" (or "benchmark [N] [live]") → generates a
+//              realistic N-item transcript (default 200, up to 1500) covering
+//              reasoning, TS/Py/CSS/Rust file reads & writes, structured edit
+//              patches, multi-file searches, bash runs, peer/assistant messages,
+//              workflows, and rich Markdown replies. Add "live" (or "stream")
+//              to stream the tail steps over time after the bulk history lands.
 // The response shapes mirror pilot.mjs; when the real pilot's API changes,
 // update this file too. It is a test double, not a reference.
 
@@ -80,6 +86,7 @@ const MODELS = [
 let seq = 0;
 const sessions = new Map<string, Session>();
 const toolOutputs = new Map<string, string>();
+const sessionFiles = new Map<string, Map<string, string>>();
 const museInbox: Array<{ seq: number; messageId: string; at: string; from: unknown; text: string }> = [];
 // The user's Muse assistant (like the real pilot: default Jolly, Muse blue).
 const assistant = { name: "Jolly", color: "#d0e4fc", avatar_data_url: null as string | null };
@@ -89,12 +96,13 @@ const wire: Array<{ at: string; dir: string; method: string; ms?: number; ok?: b
 
 function saveState() {
   if (!STATE_FILE) return;
-  const data = { seq, assistant, toolOutputs: [...toolOutputs], sessions: [...sessions.values()].map(({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events }) => ({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events })) };
+  const serializedFiles = [...sessionFiles.entries()].map(([id, map]) => [id, [...map.entries()]] as const);
+  const data = { seq, assistant, toolOutputs: [...toolOutputs], sessionFiles: serializedFiles, sessions: [...sessions.values()].map(({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events }) => ({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events })) };
   writeFileSync(STATE_FILE, JSON.stringify(data));
 }
 function loadState() {
   if (!STATE_FILE || !existsSync(STATE_FILE)) return;
-  const data = JSON.parse(readFileSync(STATE_FILE, "utf8")) as { seq: number; assistant?: typeof assistant; toolOutputs?: Array<[string, string]>; sessions: Array<Pick<Session, "id" | "title" | "name" | "workspaceRoot" | "appSessionId" | "initialTurnId" | "modelId" | "events">> };
+  const data = JSON.parse(readFileSync(STATE_FILE, "utf8")) as { seq: number; assistant?: typeof assistant; toolOutputs?: Array<[string, string]>; sessionFiles?: Array<[string, Array<[string, string]>]>; sessions: Array<Pick<Session, "id" | "title" | "name" | "workspaceRoot" | "appSessionId" | "initialTurnId" | "modelId" | "events">> };
   seq = data.seq;
   if (data.assistant) {
     assistant.name = data.assistant.name;
@@ -103,15 +111,16 @@ function loadState() {
       ? data.assistant.avatar_data_url : null;
   }
   for (const [id, output] of data.toolOutputs ?? []) toolOutputs.set(id, output);
+  for (const [id, entries] of data.sessionFiles ?? []) sessionFiles.set(id, new Map(entries));
   for (const saved of data.sessions) {
     sessions.set(saved.id, { ...saved, openTurn: null, cancel: null, inputs: new Map() });
   }
   console.log(`[fake-pilot] restored ${sessions.size} sessions from ${STATE_FILE}`);
 }
 
-function push(session: Session, type: string, extra: Record<string, unknown> = {}) {
+function push(session: Session, type: string, extra: Record<string, unknown> = {}, save = true) {
   session.events.push({ seq: ++seq, type, at: new Date().toISOString(), ...extra });
-  saveState();
+  if (save) saveState();
 }
 function logWire(method: string, params?: unknown) {
   wire.push({ at: new Date().toISOString(), dir: "→", method, ok: true, params: params ? JSON.stringify(params).slice(0, 300) : undefined });
@@ -165,6 +174,590 @@ function startFakeWorkflow(session: Session, turnId: string) {
   return runId;
 }
 
+const SAMPLE_TS_LINES = [
+  'import { useEffect, useMemo, useRef, useState } from "react";',
+  'import type { Session, TranscriptEvent } from "./types";',
+  "",
+  "export interface TranscriptWindowProps {",
+  "  session: Session;",
+  "  events: readonly TranscriptEvent[];",
+  "  showReasoning: boolean;",
+  "  expandTools: boolean;",
+  "  onSelectEvent?: (id: number) => void;",
+  "}",
+  "",
+  "const DEFAULT_WINDOW_SIZE = 120;",
+  "const OVERSCAN_ROWS = 16;",
+  "",
+  "export function computeVisibleSlice(total: number, scrollTop: number, rowHeight: number) {",
+  "  const start = Math.max(0, Math.floor(scrollTop / Math.max(1, rowHeight)) - OVERSCAN_ROWS);",
+  "  const end = Math.min(total, start + DEFAULT_WINDOW_SIZE + OVERSCAN_ROWS * 2);",
+  "  return { start, end, hiddenAbove: start, hiddenBelow: Math.max(0, total - end) };",
+  "}",
+  "",
+  "export function summarizeDurations(events: readonly TranscriptEvent[]): Map<string, number> {",
+  "  const totals = new Map<string, number>();",
+  "  for (const event of events) {",
+  '    if (event.kind !== "tool" || !event.startedAt || !event.finishedAt) continue;',
+  "    const elapsed = Math.max(0, Date.parse(event.finishedAt) - Date.parse(event.startedAt));",
+  '    const toolName = event.content.split("·")[0]?.trim() || "tool";',
+  "    totals.set(toolName, (totals.get(toolName) ?? 0) + elapsed);",
+  "  }",
+  "  return totals;",
+  "}",
+  "",
+  "export function formatBytes(bytes: number): string {",
+  '  if (bytes < 1024) return `${bytes} B`;',
+  '  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;',
+  '  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;',
+  "}",
+];
+
+const SAMPLE_PY_LINES = [
+  "from __future__ import annotations",
+  "import dataclasses",
+  "import json",
+  "import time",
+  "from typing import Iterable",
+  "",
+  "@dataclasses.dataclass(frozen=True)",
+  "class RelayMetric:",
+  "    method: str",
+  "    path: str",
+  "    status: int",
+  "    duration_ms: float",
+  "    request_bytes: int",
+  "    response_bytes: int",
+  "",
+  "def summarize_metrics(entries: Iterable[RelayMetric]) -> dict[str, object]:",
+  "    items = list(entries)",
+  "    if not items:",
+  '        return {"count": 0, "p50_ms": 0.0, "p95_ms": 0.0, "errors": 0}',
+  "    durations = sorted(item.duration_ms for item in items)",
+  "    errors = sum(1 for item in items if item.status >= 400)",
+  "    p50 = durations[len(durations) // 2]",
+  "    p95 = durations[min(len(durations) - 1, int(len(durations) * 0.95))]",
+  '    return {"count": len(items), "p50_ms": round(p50, 2), "p95_ms": round(p95, 2), "errors": errors}',
+];
+
+const SAMPLE_CSS_LINES = [
+  ".transcript-stream {",
+  "  display: flex;",
+  "  flex-direction: column;",
+  "  gap: 0.75rem;",
+  "  padding: 1rem 1.25rem 2.5rem;",
+  "  contain: layout style;",
+  "}",
+  "",
+  ".tool-row-card {",
+  "  border: 1px solid var(--border-subtle);",
+  "  border-radius: 0.5rem;",
+  "  background: var(--surface-elevated);",
+  "  transition: border-color 120ms ease, background-color 120ms ease;",
+  "}",
+  "",
+  ".tool-row-card:hover {",
+  "  border-color: var(--border-strong);",
+  "}",
+];
+
+const SAMPLE_RS_LINES = [
+  "use std::collections::BTreeMap;",
+  "",
+  "#[derive(Debug, Clone, PartialEq, Eq)]",
+  "pub struct DiffSummary {",
+  "    pub files: usize,",
+  "    pub added: usize,",
+  "    pub removed: usize,",
+  "}",
+  "",
+  "pub fn summarize_hunks(lines: &[&str]) -> DiffSummary {",
+  "    let mut added = 0usize;",
+  "    let mut removed = 0usize;",
+  "    for line in lines {",
+  '        if line.starts_with(\'+\') && !line.starts_with("+++") {',
+  "            added += 1;",
+  '        } else if line.starts_with(\'-\') && !line.starts_with("---") {',
+  "            removed += 1;",
+  "        }",
+  "    }",
+  "    DiffSummary { files: 1, added, removed }",
+  "}",
+];
+
+function rememberSessionFile(session: Session, path: string, content: string) {
+  let files = sessionFiles.get(session.id);
+  if (!files) {
+    files = new Map<string, string>();
+    sessionFiles.set(session.id, files);
+  }
+  files.set(path, content);
+}
+
+// Builds a sequence of realistic coding-session closures so we can generate
+// transcripts of any length (e.g. `long-transcript 300` or `long-transcript 600 live`)
+// that exercise every renderer in App.tsx: Markdown, Reasoning, Read/Write with
+// Shiki syntax highlighting, structured Edit diffs, multi-file Search, Bash
+// (short, long paginated, and failing), JSON tools, Agent messages, and Workflows.
+function buildRealisticTranscriptClosures(session: Session, turnId: string, targetItems: number): Array<(save: boolean) => void> {
+  const closures: Array<(save: boolean) => void> = [];
+  const baseMs = Date.now() - targetItems * 4000;
+  let clockOffset = 0;
+  const nextIso = (advanceMs = 850) => {
+    clockOffset += advanceMs;
+    return new Date(baseMs + clockOffset).toISOString();
+  };
+  let round = 0;
+  while (closures.length < targetItems) {
+    const r = ++round;
+    const mod = r % 6;
+
+    const reasoningId = `reasoning-${turnId}-${r}`;
+    const reasoningStart = nextIso(300);
+    const reasoningEnd = nextIso(1200);
+    closures.push((save) => {
+      push(session, "item", {
+        at: reasoningEnd,
+        item: {
+          kind: "reasoning",
+          itemId: reasoningId,
+          status: "completed",
+          recordedAt: reasoningStart,
+          summary: [
+            `Investigating step **#${r}** in \`/home/hatch/workspace/code/client/src/App.tsx\` and checking how \`visibleTranscriptEvents\` interacts with tool rows and scroll anchoring.`,
+            `We should verify the selector output, inspect the relevant module (\`round_${r}\`), and run the unit test suite before applying the patch.`,
+          ],
+        },
+      }, save);
+    });
+    if (closures.length >= targetItems) break;
+
+    const readItemId = `read-${turnId}-${r}`;
+    const readVariant = r % 5;
+    const readPath = readVariant === 0 ? `client/src/TranscriptWindow_${(r % 4) + 1}.tsx`
+      : readVariant === 1 ? `pilot/metrics_${(r % 3) + 1}.py`
+      : readVariant === 2 ? `client/src/transcript_${(r % 3) + 1}.css`
+      : readVariant === 3 ? `src/diff_summary_${(r % 3) + 1}.rs`
+      : `server/src/actions.ts`;
+    const baseLines = readVariant === 0 ? SAMPLE_TS_LINES
+      : readVariant === 1 ? SAMPLE_PY_LINES
+      : readVariant === 2 ? SAMPLE_CSS_LINES
+      : readVariant === 3 ? SAMPLE_RS_LINES
+      : SAMPLE_TS_LINES;
+    const startLine = readVariant === 4 ? 140 : 1;
+    const numberedBody = baseLines.map((line, idx) => `${startLine + idx}|${line}`).join("\n");
+    const readOutput = `Read text file \`${readPath}\`.\n${numberedBody}`;
+    const readRefId = `output-${readItemId}`;
+    toolOutputs.set(readRefId, readOutput);
+    const readStart = nextIso(200);
+    const readEnd = nextIso(450);
+    closures.push((save) => {
+      push(session, "item", {
+        at: readEnd,
+        item: {
+          kind: "toolCall",
+          itemId: readItemId,
+          tool: "read_file",
+          status: "inProgress",
+          recordedAt: readStart,
+          args: JSON.stringify({ path: readPath, ...(startLine > 1 ? { offset: startLine, limit: baseLines.length } : {}) }),
+        },
+      }, false);
+      push(session, "item", {
+        at: readEnd,
+        item: {
+          kind: "toolCall",
+          itemId: readItemId,
+          tool: "read_file",
+          status: "completed",
+          recordedAt: readEnd,
+          args: JSON.stringify({ path: readPath, ...(startLine > 1 ? { offset: startLine, limit: baseLines.length } : {}) }),
+          visibleOutput: readOutput,
+          truncated: false,
+          outputRef: { id: readRefId, byteLen: Buffer.byteLength(readOutput), availability: "available", mediaType: "text/plain" },
+        },
+      }, save);
+    });
+    if (closures.length >= targetItems) break;
+
+    const searchItemId = `search-${turnId}-${r}`;
+    const searchEmpty = r % 9 === 0;
+    const searchPattern = searchEmpty ? `UNUSED_LEGACY_FLAG_${r}` : `computeVisibleSlice`;
+    const searchOutput = searchEmpty ? "" : [
+      `client/src/App.tsx-${100 + r}-  const follow = followTranscriptRef.current;`,
+      `client/src/App.tsx:${101 + r}:  const slice = computeVisibleSlice(visibleTranscriptEvents.length, scrollTop, 44);`,
+      `client/src/App.tsx-${102 + r}-  return slice.end > slice.start;`,
+      `client/src/TranscriptWindow_${(r % 4) + 1}.tsx-18-export function computeVisibleSlice(total: number, scrollTop: number, rowHeight: number) {`,
+      `client/src/TranscriptWindow_${(r % 4) + 1}.tsx:19:  const start = Math.max(0, Math.floor(scrollTop / Math.max(1, rowHeight)) - OVERSCAN_ROWS);`,
+      `client/src/TranscriptWindow_${(r % 4) + 1}.tsx-20-  const end = Math.min(total, start + DEFAULT_WINDOW_SIZE + OVERSCAN_ROWS * 2);`,
+      `client/src/scrollSnap.test.mjs-41-test("slice bounds stay clamped", () => {`,
+      `client/src/scrollSnap.test.mjs:42:  const res = computeVisibleSlice(500, 1200, 40);`,
+      `client/src/scrollSnap.test.mjs-43-  assert.equal(res.start >= 0, true);`,
+    ].join("\n");
+    const searchRefId = `output-${searchItemId}`;
+    toolOutputs.set(searchRefId, searchOutput);
+    const searchStart = nextIso(180);
+    const searchEnd = nextIso(520);
+    closures.push((save) => {
+      push(session, "item", {
+        at: searchStart,
+        item: {
+          kind: "toolCall",
+          itemId: searchItemId,
+          tool: "search",
+          status: "inProgress",
+          recordedAt: searchStart,
+          args: JSON.stringify({ pattern: searchPattern, paths: ["client/src"], output_mode: "text", context_before: 1, context_after: 1 }),
+        },
+      }, false);
+      push(session, "item", {
+        at: searchEnd,
+        item: {
+          kind: "toolCall",
+          itemId: searchItemId,
+          tool: "search",
+          status: "completed",
+          recordedAt: searchEnd,
+          args: JSON.stringify({ pattern: searchPattern, paths: ["client/src"], output_mode: "text", context_before: 1, context_after: 1 }),
+          visibleOutput: searchOutput,
+          truncated: false,
+          outputRef: { id: searchRefId, byteLen: Buffer.byteLength(searchOutput), availability: "available", mediaType: "text/plain" },
+        },
+      }, save);
+    });
+    if (closures.length >= targetItems) break;
+
+    const editItemId = `edit-${turnId}-${r}`;
+    const editPath = `client/src/TranscriptWindow_${(r % 4) + 1}.tsx`;
+    const patchObj = r % 2 === 0 ? {
+      files: [{
+        path: editPath,
+        hunks: [{
+          oldStart: 1,
+          oldLines: 8,
+          newStart: 1,
+          newLines: 10,
+          lines: [
+            ' import { useEffect, useMemo, useRef, useState } from "react";',
+            ' import type { Session, TranscriptEvent } from "./types";',
+            " ",
+            " export interface TranscriptWindowProps {",
+            "   session: Session;",
+            "   events: readonly TranscriptEvent[];",
+            "-  showReasoning: boolean;",
+            "+  showReasoning?: boolean;",
+            "+  overscanRows?: number;",
+            "+  measureRowHeight?: (index: number) => number;",
+            "   expandTools: boolean;",
+            " }",
+          ],
+        }],
+      }],
+    } : {
+      files: [{
+        path: editPath,
+        hunks: [{
+          oldStart: 15,
+          oldLines: 6,
+          newStart: 15,
+          newLines: 7,
+          lines: [
+            "-const DEFAULT_WINDOW_SIZE = 120;",
+            "-const OVERSCAN_ROWS = 16;",
+            "+const DEFAULT_WINDOW_SIZE = 80;",
+            "+const OVERSCAN_ROWS = 12;",
+            "+const MIN_ROW_HEIGHT = 36;",
+            " ",
+            " export function computeVisibleSlice(total: number, scrollTop: number, rowHeight: number) {",
+            "-  const start = Math.max(0, Math.floor(scrollTop / Math.max(1, rowHeight)) - OVERSCAN_ROWS);",
+            "+  const clampedHeight = Math.max(MIN_ROW_HEIGHT, rowHeight);",
+            "+  const start = Math.max(0, Math.floor(scrollTop / clampedHeight) - OVERSCAN_ROWS);",
+          ],
+        }],
+      }],
+    };
+    const patchStr = JSON.stringify(patchObj);
+    const patchRefId = `patch-${editItemId}`;
+    const editOutRefId = `output-${editItemId}`;
+    const editOutput = `Applied patch to ${editPath}`;
+    toolOutputs.set(patchRefId, patchStr);
+    toolOutputs.set(editOutRefId, editOutput);
+    const editStart = nextIso(200);
+    const editEnd = nextIso(650);
+    closures.push((save) => {
+      push(session, "item", {
+        at: editStart,
+        item: {
+          kind: "toolCall",
+          itemId: editItemId,
+          tool: "edit_file",
+          status: "inProgress",
+          recordedAt: editStart,
+          args: JSON.stringify({ path: editPath, find: "DEFAULT_WINDOW_SIZE", replace: "clampedHeight" }),
+        },
+      }, false);
+      push(session, "item", {
+        at: editEnd,
+        item: {
+          kind: "toolCall",
+          itemId: editItemId,
+          tool: "edit_file",
+          status: "completed",
+          recordedAt: editEnd,
+          args: JSON.stringify({ path: editPath, find: "DEFAULT_WINDOW_SIZE", replace: "clampedHeight" }),
+          patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchStr), availability: "available", mediaType: "application/json" },
+          patchSummary: { files: 1, added: r % 2 === 0 ? 3 : 5, removed: r % 2 === 0 ? 1 : 3 },
+          visibleOutput: editOutput,
+          truncated: false,
+          outputRef: { id: editOutRefId, byteLen: Buffer.byteLength(editOutput), availability: "available", mediaType: "text/plain" },
+        },
+      }, save);
+    });
+    if (closures.length >= targetItems) break;
+
+    if (mod === 0 || mod === 3) {
+      const writeItemId = `write-${turnId}-${r}`;
+      const writePath = mod === 0
+        ? `client/src/perf_helper_${(r % 5) + 1}.ts`
+        : `client/src/perf_styles_${(r % 3) + 1}.css`;
+      const writeContent = (mod === 0 ? SAMPLE_TS_LINES : SAMPLE_CSS_LINES).join("\n") + "\n";
+      const byteLen = Buffer.byteLength(writeContent);
+      const writeOutput = `wrote ${byteLen} bytes to ${writePath}`;
+      const writeRefId = `output-${writeItemId}`;
+      toolOutputs.set(writeRefId, writeOutput);
+      rememberSessionFile(session, writePath, writeContent);
+      const writeStart = nextIso(150);
+      const writeEnd = nextIso(420);
+      closures.push((save) => {
+        push(session, "item", {
+          at: writeStart,
+          item: {
+            kind: "toolCall",
+            itemId: writeItemId,
+            tool: "write_file",
+            status: "inProgress",
+            recordedAt: writeStart,
+            args: JSON.stringify({ path: writePath, content: writeContent }),
+          },
+        }, false);
+        push(session, "item", {
+          at: writeEnd,
+          item: {
+            kind: "toolCall",
+            itemId: writeItemId,
+            tool: "write_file",
+            status: "completed",
+            recordedAt: writeEnd,
+            args: JSON.stringify({ path: writePath, content: writeContent }),
+            visibleOutput: writeOutput,
+            truncated: false,
+            outputRef: { id: writeRefId, byteLen: Buffer.byteLength(writeOutput), availability: "available", mediaType: "text/plain" },
+          },
+        }, save);
+      });
+      if (closures.length >= targetItems) break;
+    }
+
+    const bashItemId = `bash-${turnId}-${r}`;
+    const isLongBash = mod === 2;
+    const isFailedBash = mod === 5;
+    const bashCmd = isFailedBash
+      ? `bun x tsc --noEmit -p client/tsconfig.json && node --test client/src/perf_${r}.test.mjs`
+      : isLongBash
+        ? `node --test client/src/*.test.mjs server/src/*.test.mjs`
+        : `bun run typecheck`;
+    const bashDesc = isFailedBash
+      ? `Run typecheck and perf_${r}.test.mjs`
+      : isLongBash
+        ? `Run full client and server unit test suite (batch #${r})`
+        : `Typecheck client and server bundles`;
+    const fullBashOutput = isLongBash
+      ? Array.from({ length: 90 }, (_, idx) => `✔ test case #${idx + 1} in suite round_${r} (${12 + (idx % 19)}ms)`).join("\n")
+      : isFailedBash
+        ? `✖ failing assertion in client/src/perf_${r}.test.mjs:42\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n+ 128\n- 120`
+        : `$ bun x tsc --noEmit -p client/tsconfig.json && bun x tsc --noEmit -p server/tsconfig.json\nChecked 64 files in 312ms. No errors found.`;
+    const visibleBashOutput = isLongBash ? fullBashOutput.split("\n").slice(0, 18).join("\n") : fullBashOutput;
+    const bashRefId = `output-${bashItemId}`;
+    toolOutputs.set(bashRefId, fullBashOutput);
+    const bashStart = nextIso(200);
+    const bashEnd = nextIso(1450);
+    closures.push((save) => {
+      push(session, "item", {
+        at: bashStart,
+        item: {
+          kind: "toolCall",
+          itemId: bashItemId,
+          tool: "bash",
+          status: "inProgress",
+          recordedAt: bashStart,
+          args: JSON.stringify({ command: bashCmd, description: bashDesc }),
+        },
+      }, false);
+      push(session, "item", {
+        at: bashEnd,
+        item: {
+          kind: "toolCall",
+          itemId: bashItemId,
+          tool: "bash",
+          status: isFailedBash ? "failed" : "completed",
+          ...(isFailedBash ? { failureReason: "process exited with status 1" } : {}),
+          recordedAt: bashEnd,
+          args: JSON.stringify({ command: bashCmd, description: bashDesc }),
+          visibleOutput: visibleBashOutput,
+          truncated: isLongBash,
+          outputRef: { id: bashRefId, byteLen: Buffer.byteLength(fullBashOutput), availability: "available", mediaType: "text/plain" },
+        },
+      }, save);
+    });
+    if (closures.length >= targetItems) break;
+
+    if (mod === 1) {
+      const msgAt = nextIso(400);
+      const fromMuse = r % 12 === 1;
+      const peerName = (session.name ?? session.title).trim().toLowerCase() === "pip" ? "juno" : "pip";
+      closures.push((save) => {
+        push(session, "agent_message", {
+          at: msgAt,
+          direction: "in",
+          messageId: `msg-in-${turnId}-${r}`,
+          from: fromMuse
+            ? { kind: "muse", name: assistant.name, color: assistant.color, sessionId: null }
+            : { kind: "agent", name: peerName, sessionId: `fake-${peerName}` },
+          to: { kind: "agent", name: session.name ?? session.title, sessionId: session.id },
+          text: fromMuse
+            ? `Quick check-in on round #${r}: please make sure the scroll position stays pinned when new tool output arrives.`
+            : `I finished checking the server schema in round #${r}. Ready for your client changes whenever you are!`,
+          queued: false,
+        }, save);
+      });
+      if (closures.length >= targetItems) break;
+    } else if (mod === 4) {
+      const sendToolId = `send-${turnId}-${r}`;
+      const sendOut = "Delivered to juno.";
+      const sendRef = `output-${sendToolId}`;
+      toolOutputs.set(sendRef, sendOut);
+      const sendAt = nextIso(350);
+      closures.push((save) => {
+        push(session, "item", {
+          at: sendAt,
+          item: {
+            kind: "toolCall",
+            itemId: sendToolId,
+            tool: "mcp__code_space__send_message",
+            status: "completed",
+            recordedAt: sendAt,
+            args: JSON.stringify({ to: "juno", text: `Round #${r} client benchmark numbers look solid.` }),
+            visibleOutput: sendOut,
+            truncated: false,
+            outputRef: { id: sendRef, byteLen: Buffer.byteLength(sendOut), availability: "available", mediaType: "text/plain" },
+          },
+        }, false);
+        push(session, "agent_message", {
+          at: sendAt,
+          direction: "out",
+          messageId: `msg-out-${turnId}-${r}`,
+          from: { kind: "agent", name: session.name ?? session.title, sessionId: session.id },
+          to: { kind: "agent", name: "juno", sessionId: "fake-juno" },
+          text: `Round #${r} client benchmark numbers look solid.`,
+          queued: false,
+        }, save);
+      });
+      if (closures.length >= targetItems) break;
+    } else if (mod === 2) {
+      const jsonItemId = `json-${turnId}-${r}`;
+      const jsonPayload = JSON.stringify({
+        ok: true,
+        round: r,
+        metrics: { renderMs: 4.2 + (r % 5), domNodes: 1420 + r * 18, memoHitRate: 0.94 },
+        files: [`client/src/TranscriptWindow_${(r % 4) + 1}.tsx`, "client/src/App.tsx"],
+      });
+      const jsonRef = `output-${jsonItemId}`;
+      toolOutputs.set(jsonRef, jsonPayload);
+      const jsonAt = nextIso(320);
+      closures.push((save) => {
+        push(session, "item", {
+          at: jsonAt,
+          item: {
+            kind: "toolCall",
+            itemId: jsonItemId,
+            tool: "inspect_perf_snapshot",
+            status: "completed",
+            recordedAt: jsonAt,
+            args: JSON.stringify({ round: r, includeDomMetrics: true }),
+            visibleOutput: jsonPayload,
+            truncated: false,
+            outputRef: { id: jsonRef, byteLen: Buffer.byteLength(jsonPayload), availability: "available", mediaType: "text/plain" },
+          },
+        }, save);
+      });
+      if (closures.length >= targetItems) break;
+    } else if (mod === 5) {
+      const wfItemId = `wf-${turnId}-${r}`;
+      const wfRunId = `wf-run-${turnId}-${r}`;
+      const wfAt = nextIso(2400);
+      const envelope = `<workflow-launch-reconciled>${JSON.stringify({
+        type: "workflow_launch_reconciled",
+        final_summary: {
+          status: "completed",
+          summary: `Verified render profile across 3 subagents in round #${r}: no regressions detected.`,
+        },
+        latest_failure: null,
+      })}</workflow-launch-reconciled>`;
+      closures.push((save) => {
+        push(session, "item", {
+          at: wfAt,
+          item: {
+            kind: "workflow",
+            itemId: wfItemId,
+            turnId,
+            status: "completed",
+            workflowRunId: wfRunId,
+            entryId: `Parallel verification #${r}`,
+            recordedAt: wfAt,
+            message: envelope,
+            children: [
+              { childId: `c1-${r}`, attempt: 1, label: "typecheck-worker", status: "terminal", terminal: "completed", durationMs: 1120 },
+              { childId: `c2-${r}`, attempt: 1, label: "unit-test-worker", status: "terminal", terminal: "completed", durationMs: 2180 },
+              { childId: `c3-${r}`, attempt: 1, label: "bundle-audit", status: "terminal", terminal: "completed", durationMs: 1640 },
+            ],
+          },
+        }, save);
+      });
+      if (closures.length >= targetItems) break;
+    }
+
+    const msgAt = nextIso(900);
+    const markdownReply = [
+      `### Phase ${r}: Completed \`TranscriptWindow_${(r % 4) + 1}.tsx\` updates`,
+      "",
+      `I updated \`/home/hatch/workspace/code/${editPath}\` and verified the behavior against the test suite:`,
+      "",
+      `- **Windowed slice calculation:** clamped row height and adjusted \`OVERSCAN_ROWS\` for smoother scrolling.`,
+      `- **Verification:** ran \`${bashDesc}\` and inspected ${searchEmpty ? "0 legacy references" : "3 matching call sites"}.`,
+      `- **Next step:** continue profiling [Chrome DevTools Performance](https://developer.chrome.com/docs/devtools/performance) traces.`,
+      "",
+      "> Note: Finished tool rows stay memoized while active rows update their local elapsed timer.",
+      "",
+      "```ts",
+      `const slice = computeVisibleSlice(events.length, scrollTop, ${36 + (r % 8)});`,
+      `console.log("round ${r} visible range:", slice.start, slice.end);`,
+      "```",
+    ].join("\n");
+    closures.push((save) => {
+      push(session, "item", {
+        at: msgAt,
+        item: {
+          kind: "agentMessage",
+          status: "completed",
+          recordedAt: msgAt,
+          text: markdownReply,
+        },
+      }, save);
+    });
+  }
+  return closures;
+}
+
 async function runTurn(session: Session, text: string) {
   const turnId = crypto.randomUUID();
   session.openTurn = turnId;
@@ -175,6 +768,53 @@ async function runTurn(session: Session, text: string) {
   const slowStepMs = Math.max(250, Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_SLOW_STEP_MS) || 10_000);
   const step = /\bslow\b/i.test(text) ? slowStepMs : 400;
   logWire("turn/start", { sessionId: session.id, text: text.slice(0, 80) });
+
+  const longTranscriptMatch = /\b(?:long-transcript|benchmark|perf-transcript)(?:[:\s]+(\d+))?\b/i.exec(text);
+  if (longTranscriptMatch) {
+    const requestedCount = longTranscriptMatch[1] ? Number(longTranscriptMatch[1]) : 200;
+    const targetItems = Math.max(12, Math.min(1500, Number.isFinite(requestedCount) ? requestedCount : 200));
+    const streamLiveTail = /\b(?:live|stream|slow)\b/i.test(text);
+    const liveTailCount = streamLiveTail ? Math.min(20, Math.max(6, Math.floor(targetItems * 0.15))) : 0;
+    const bulkCount = targetItems - liveTailCount;
+    const liveDelayMs = /\bslow\b/i.test(text) ? Math.min(2000, slowStepMs) : 250;
+
+    void (async () => {
+      rememberSessionFile(session, "alpha.ts", SAMPLE_TS_LINES.join("\n") + "\n");
+      rememberSessionFile(session, "test.rs", SAMPLE_RS_LINES.join("\n") + "\n");
+      push(session, "item", { item: { kind: "userMessage", text, status: "completed" } }, false);
+      const closures = buildRealisticTranscriptClosures(session, turnId, targetItems);
+      for (let i = 0; i < bulkCount && i < closures.length; i++) {
+        if (cancelled) break;
+        closures[i]!(false);
+      }
+      saveState();
+
+      for (let i = bulkCount; i < closures.length; i++) {
+        if (cancelled) break;
+        await sleep(liveDelayMs);
+        if (cancelled) break;
+        closures[i]!(true);
+      }
+
+      if (cancelled) {
+        push(session, "turn_completed", { turnId, cancelled: true, outcome: { status: "cancelled" } });
+      } else {
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text: `## Benchmark transcript ready (${closures.length} items)\n\nGenerated **${closures.length}** realistic transcript events across reasoning, syntax-highlighted file reads/writes, structured edit diffs, multi-file searches, bash runs, peer/assistant messages, workflows, and Markdown replies.\n\n- Use **Expand tools by default** or click individual tool rows to profile tool views.\n- Send another message (e.g. \`slow\`, \`thinking\`, \`edit-diff\`, or \`long-transcript 100 live\`) to profile live streaming on top of this transcript.`,
+          },
+        }, false);
+        push(session, "turn_completed", { turnId, outcome: { status: "completed" } }, true);
+      }
+      if (session.openTurn === turnId) {
+        session.openTurn = null;
+        session.cancel = null;
+      }
+    })();
+    return turnId;
+  }
 
   void (async () => {
     // Like the real pilot: both revisions of a tool call share its itemId and
@@ -403,7 +1043,16 @@ Bun.serve({
         inputs: new Map(),
       };
       sessions.set(session.id, session);
-      push(session, "session_started", { meta: { title: session.title, modelId: session.modelId } });
+      push(session, "session_started", {
+        meta: {
+          title: session.title,
+          name: session.name ?? session.title,
+          modelId: session.modelId,
+          workspaceRoot: session.workspaceRoot ?? null,
+          appSessionId: session.appSessionId ?? null,
+          createdAt: new Date().toISOString(),
+        },
+      });
       const turnId = body.prompt ? await runTurn(session, String(body.prompt)) : null;
       session.initialTurnId = turnId;
       saveState();
@@ -477,6 +1126,9 @@ Bun.serve({
     const sub = m[2] ?? "";
 
     if (sub === "/files/read" && req.method === "POST") {
+      const requestedPath = typeof body.path === "string" ? body.path : "";
+      const dynamicContent = sessionFiles.get(session.id)?.get(requestedPath);
+      if (dynamicContent !== undefined) return json(200, { ok: true, path: requestedPath, content: dynamicContent });
       if (body.path === "alpha.ts") return json(200, { ok: true, path: "alpha.ts", content: "const x: number = 3;\nconsole.log(x)\n" });
       if (body.path === "test.rs") return json(200, { ok: true, path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" });
       if (body.path === "notes.unknown") return json(200, { ok: true, path: "notes.unknown", content: "const x = 3;\n" });
