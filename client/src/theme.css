@@ -371,6 +371,18 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .agents-child-phase { flex: 0 0 auto; color: var(--terminal-dim); font: 11px var(--mono); }
 .agents-message { padding: 6px 0 0 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agents-note { padding-left: 24px; color: var(--terminal-dim); font: 11px var(--mono); }
+/* Live PR monitoring row: a persistent transcript entry the pilot updates
+   in place (not a tool row). Spinner while active, still mark when done. */
+.pr-monitor-row { display: grid; gap: 3px; font: 13px/1.45 var(--sans); }
+.pr-monitor-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pr-monitor-spinner { width: 11px; height: 11px; }
+.pr-monitor-mark { flex: 0 0 auto; width: 13px; height: 13px; display: inline-grid; place-items: center; font: 600 11px/1 var(--sans); color: var(--terminal-dim); }
+.pr-monitor-mark.merged, .pr-monitor-mark.closed { color: var(--terminal-live); }
+.pr-monitor-mark.error, .pr-monitor-mark.stopped { color: var(--terminal-error); }
+.pr-monitor-state { flex: 0 0 auto; font-weight: 650; }
+.pr-monitor-link { flex: 0 0 auto; color: inherit; }
+.pr-monitor-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--terminal-dim); }
+.pr-monitor-detail { padding-left: 21px; color: var(--terminal-dim); font-size: 12px; overflow-wrap: anywhere; }
 .agents-error { color: var(--terminal-error); font: 11px/1.4 var(--mono); }
 /* A subtle spinner sits on the right while a tool runs. Only finished tools
    show their frozen duration, and adapters may opt out of that label. The

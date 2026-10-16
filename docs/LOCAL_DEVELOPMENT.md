@@ -607,8 +607,14 @@ interactive (TUI) sessions, so serve-hosted agents never get its
     session sentinel — agents never hold a credential — and repo/head
     default to the session workspace's origin remote and current branch.
     The gate is checked per request, so provisioning GitHub later lights
-    the tools up without restarting sessions. Watching a PR (polling or
-    notifications) is deliberately not included yet.
+    the tools up without restarting sessions.
+  - **`github_monitor_pr(number)`** starts background monitoring: the
+    pilot (`pilot/prMonitor.mjs`) polls the PR through the broker about
+    once a minute for reviews/approvals, new comments, CI transitions,
+    and merge/close, persisting monitors in `pr-monitors.json` so they
+    survive restarts. Material changes upsert a live `pr_monitor`
+    transcript row and deliver a turn to the owning session. Monitoring
+    stops when the PR merges or closes (or via `stop: true`).
   - During pilot startup the HTTP listener starts before sessions resume,
     so required MCP servers can connect; `/health` reports unhealthy and
     normal API routes return 503 until reconciliation finishes.

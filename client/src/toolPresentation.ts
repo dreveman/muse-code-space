@@ -144,6 +144,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating Pull Request", "Created Pull Request", shortDetail(args?.title), ctx, failed), view: "plain" },
   { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking Pull Request", "Checked Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
   { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing Pull Requests", "Listed Pull Requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: (ctx, args, failed) => githubAction("Starting Pull Request Monitor", "Monitoring Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
 ];
 
 function compactTool(label: string): string {

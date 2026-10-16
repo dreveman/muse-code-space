@@ -20,7 +20,7 @@ type PilotStreamEvent,
 import { toolDetailsFromItem } from "./toolDetails.ts";
 
 export type RestoredEventRow = {
-  kind: "stdout" | "system" | "user" | "tool" | "agents" | "message" | "thinking";
+  kind: "stdout" | "system" | "user" | "tool" | "agents" | "message" | "thinking" | "pr_monitor";
   content: string;
   systemIsError: boolean;
   createdAt: Date;
@@ -262,6 +262,18 @@ export function transcriptToRows(rawEvents: Array<Record<string, unknown>>, fall
         systemIsError: false, createdAt: lastTime, itemId: event.messageId ?? null,
         toolDetails: null, startedAt: null, finishedAt: null,
       });
+      continue;
+    }
+
+    if (event.type === "pr_monitor" && event.monitor && typeof event.monitor === "object") {
+      const monitor = event.monitor as { id?: unknown };
+      if (typeof monitor.id === "string" && monitor.id) {
+        // One row per monitor; later polls replace the snapshot in place.
+        pushKeyed(`pr_monitor:${monitor.id}`, {
+          kind: "pr_monitor", content: JSON.stringify(monitor).slice(0, MAX_CONTENT), systemIsError: false,
+          createdAt: lastTime, itemId: monitor.id, toolDetails: null, startedAt: null, finishedAt: null,
+        });
+      }
       continue;
     }
 

@@ -87,7 +87,7 @@ export const outputEvents = sqliteTable("output_events", {
   sessionId: text("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
-  kind: text("kind", { enum: ["stdout", "stderr", "system", "result", "user", "tool", "agents", "message", "thinking"] })
+  kind: text("kind", { enum: ["stdout", "stderr", "system", "result", "user", "tool", "agents", "message", "thinking", "pr_monitor"] })
     .notNull()
     .default("stdout"),
   content: text("content").notNull(),
