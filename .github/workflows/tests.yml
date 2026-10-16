@@ -63,25 +63,26 @@ jobs:
       - name: Check R2 configuration
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           missing=()
           [ -n "$R2_ACCOUNT_ID" ] || missing+=(R2_ACCOUNT_ID)
-          [ -n "$AWS_ACCESS_KEY_ID" ] || missing+=(R2_ACCESS_KEY_ID)
-          [ -n "$AWS_SECRET_ACCESS_KEY" ] || missing+=(R2_SECRET_ACCESS_KEY)
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing+=(CLOUDFLARE_API_TOKEN)
           if ((${#missing[@]})); then
             echo "::error::Missing repository secrets: ${missing[*]} — add them under Settings → Secrets and variables → Actions → Repository secrets."
             exit 1
           fi
       - name: Fetch the space SDK tarball from R2
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          aws s3 cp "s3://muse-code-space-ci/space-sdk.tgz" /tmp/space-sdk.tgz \
-            --endpoint-url "https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          # Via the Cloudflare API (the wrangler path), not the S3
+          # endpoint: the runner's aws CLI gets a TLS handshake failure
+          # from <account>.r2.cloudflarestorage.com.
+          curl -fsSL -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$R2_ACCOUNT_ID/r2/buckets/muse-code-space-ci/objects/space-sdk.tgz" \
+            -o /tmp/space-sdk.tgz
           echo "$SDK_TARBALL_SHA256  /tmp/space-sdk.tgz" | sha256sum -c -
           sudo mkdir -p /opt/hatch/skills/spaces/ts-runtime/dist
           sudo cp /tmp/space-sdk.tgz /opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz
