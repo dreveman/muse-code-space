@@ -39,7 +39,8 @@ for (const v of ["LOCAL_SESSION_MESSAGING", "EXTERNAL_AGENT_INGRESS"]) {
 
 import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-code/sdk";
 import { createServer } from "node:http";
-import { get as httpsGet } from "node:https";
+import { get as httpsGet, request as httpsRequest } from "node:https";
+import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync } from "node:fs";
 import { createHash, getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -47,6 +48,7 @@ import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
 import { readWorkspaceFile } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
+import { createGitHubToolset } from "./githubTools.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
 const HOME = process.env.HOME;
@@ -1021,6 +1023,79 @@ const brokerProber = setInterval(async () => {
 }, 15000);
 if (typeof brokerProber.unref === "function") brokerProber.unref();
 
+// Session GitHub tools (githubTools.mjs) run through the broker with the
+// session sentinel; "set up" means a broker credential is provisioned —
+// the same signal install.sh keys on. Checked per call, so provisioning
+// GitHub later lights the tools up without a pilot restart.
+const GITHUB_BROKER_CONFIG = process.env.MUSE_CODE_SPACE_GITHUB_BROKER_CONFIG ?? `${HOME}/.config/muse-code-space-pilot/github-broker.json`;
+const GITHUB_SENTINEL = "broker-provided-sentinel";
+
+function githubBrokerRequestOnce(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const certPath = join(dirname(STATE_DIR), "github-broker-cert.pem");
+    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const req = httpsRequest({
+      host: "127.0.0.1", port: BROKER_PORT, path, method, timeout: 15000,
+      ...(existsSync(certPath) ? { ca: readFileSync(certPath) } : { rejectUnauthorized: false }),
+      headers: {
+        authorization: `Bearer ${GITHUB_SENTINEL}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "code-space-pilot",
+        ...(payload ? { "content-type": "application/json", "content-length": payload.length } : {}),
+      },
+    }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on("data", (chunk) => { size += chunk.length; if (size <= 1_000_000) chunks.push(chunk); });
+      res.on("end", () => {
+        let json = null;
+        try { json = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { /* non-JSON stays null */ }
+        resolve({ status: res.statusCode ?? 0, json });
+      });
+    });
+    req.on("timeout", () => req.destroy(new Error("broker request timed out")));
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function githubBrokerRequest(method, path, body) {
+  // The broker occasionally returns a transient 502 on connect; one retry
+  // for idempotent reads absorbs it (writes are never replayed).
+  const attempts = method === "GET" ? 2 : 1;
+  let result;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+    result = await githubBrokerRequestOnce(method, path, body);
+    if (result.status !== 502) break;
+  }
+  return result;
+}
+
+function gitRead(workspaceRoot, args) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000 }, (error, stdout) => {
+      resolve(error ? null : stdout.trim() || null);
+    });
+  });
+}
+
+async function githubGitContext(workspaceRoot) {
+  if (!workspaceRoot) return {};
+  const [remote, branch] = await Promise.all([
+    gitRead(workspaceRoot, ["config", "--get", "remote.origin.url"]),
+    gitRead(workspaceRoot, ["branch", "--show-current"]),
+  ]);
+  return { remote: remote ?? undefined, branch: branch ?? undefined };
+}
+
+const githubToolset = createGitHubToolset({
+  enabled: () => existsSync(GITHUB_BROKER_CONFIG),
+  brokerRequest: githubBrokerRequest,
+  gitContext: githubGitContext,
+});
+
 function healthPayload() {
   const relay = relayUpSyncCache;
   const turns = turnReadiness();
@@ -1402,6 +1477,7 @@ const mcpDeps = {
   sendMessage(self, to, text) {
     return deliverAgentMessage({ from: { kind: "agent", entry: self }, to, text });
   },
+  github: githubToolset,
 };
 
 // Permanently forget a session: registry entry, alias, buffers and the
