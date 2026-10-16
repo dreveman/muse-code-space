@@ -1042,7 +1042,8 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
   prev.expandTools === next.expandTools &&
   prev.showRawToolOutput === next.showRawToolOutput &&
   prev.openFileTabForDetail === next.openFileTabForDetail &&
-  (prev.event.kind !== "stdout" && (prev.event.kind !== "agents" || prev.event.finished_at !== null) || prev.nowMs === next.nowMs),
+  (prev.event.kind !== "stdout" || prev.nowMs === next.nowMs || formatMessageTime(prev.event.created_at, prev.nowMs) === formatMessageTime(next.event.created_at, next.nowMs)) &&
+  (prev.event.kind !== "agents" || prev.event.finished_at !== null || prev.nowMs === next.nowMs),
 );
 
 const SessionRow = memo(function SessionRow({
@@ -1714,7 +1715,7 @@ export function App() {
   });
   const pendingInputs = pendingInputsQuery.data?.ok ? pendingInputsQuery.data.inputs : [];
 
-  const sidebarClockMs = Math.floor(nowMs / 60_000) * 60_000;
+  const minuteClockMs = Math.floor(nowMs / 60_000) * 60_000;
   const visibleSessions = useMemo(() => {
     // A quiet task still owns its companion until it is archived.
     const base =
@@ -1723,6 +1724,13 @@ export function App() {
         : sessions.filter((item) => !item.archived);
     return base.filter((item) => matchesSessionQuery(item, sessionQuery));
   }, [filter, sessions, sessionQuery]);
+  const sidebarTimeSignature = useMemo(() => {
+    const ageSig = filter === "inactive"
+      ? groupSessionsByAge(visibleSessions, minuteClockMs).map((g) => `${g.key}:${g.sessions.length}`).join(",")
+      : "";
+    return `${ageSig}|${visibleSessions.map((s) => `${s.id}:${formatRelativeTime(s.updated_at, minuteClockMs)}`).join("|")}`;
+  }, [filter, visibleSessions, minuteClockMs]);
+  const sidebarClockMs = useMemo(() => minuteClockMs, [sidebarTimeSignature]);
 
   const filterLabel = FILTERS.find((item) => item.value === filter)?.label ?? filter;
 
@@ -2758,8 +2766,18 @@ export function App() {
   );
   const sessionsForMessages = useMemo(() => sessions, [sessionsPeerKey]);
   // Only running workflow rows need a 1s clock; stdout message timestamps
-  // only change across minute/day boundaries.
-  const transcriptClockMs = agentsRunning ? nowMs : Math.floor(nowMs / 60_000) * 60_000;
+  // only change across 24h/48h age boundaries.
+  const stdoutTimeSignature = useMemo(() => {
+    let sig = "";
+    for (const event of visibleTranscriptEvents) {
+      if (event.kind === "stdout") sig += `${event.id}:${formatMessageTime(event.created_at, minuteClockMs)}|`;
+    }
+    return sig;
+  }, [visibleTranscriptEvents, minuteClockMs]);
+  const transcriptClockMs = useMemo(
+    () => (agentsRunning ? nowMs : minuteClockMs),
+    [agentsRunning ? nowMs : stdoutTimeSignature],
+  );
   const renderedTranscriptEvents = useMemo(() => {
     if (!detailSessionIdForFiles) return [];
     const nowMs = transcriptClockMs;
