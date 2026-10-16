@@ -1,5 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { companionArtwork } from "./companionArtwork";
+import { isIdleMotionAllowed, subscribeIdleMotion } from "./CompanionAvatar";
 import { companionForName } from "./companionRoster";
 
 function CompanionPortrait({ source, crossFade, onError }: {
@@ -57,6 +58,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   // would briefly show the idle pose before the wake-up animation.
   const [motionAllowed, setMotionAllowed] = useState(() =>
     !window.matchMedia("(prefers-reduced-motion: reduce)").matches && !document.hidden);
+  const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -64,14 +66,17 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
     update();
     media.addEventListener("change", update);
     document.addEventListener("visibilitychange", update);
+    const stopIdle = subscribeIdleMotion(setIdleMotionAllowed);
     return () => {
       media.removeEventListener("change", update);
       document.removeEventListener("visibilitychange", update);
+      stopIdle();
     };
   }, []);
   const animation = starting ? "waking" : active ? "working" : "idle";
   const animatedSource = artwork && (animation === "idle" ? artwork.portraitIdle : artwork[animation]);
-  const source = artwork && (motionAllowed && visible && !archived ? animatedSource : artwork.still);
+  const canAnimate = (animation === "idle" ? idleMotionAllowed : motionAllowed) && visible && !archived;
+  const source = artwork && (canAnimate ? animatedSource : artwork.still);
   const imageSource = failedSource === source ? artwork?.still : source;
   const activityLabel = activity === "Thinking" ? "is thinking"
     : activity === "Typing" ? "is typing"
