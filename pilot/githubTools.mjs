@@ -90,6 +90,11 @@ function parseRepoArg(repo) {
 
 const NOT_SET_UP = "GitHub integration isn't set up for Code Space, so GitHub tools are unavailable.";
 
+// Error text carries a uniform prefix the transcript UI keys on (MCP
+// isError does not reliably surface as a failed tool status), matching
+// the send_message "Not delivered:" precedent.
+const fail = (text) => ({ text: `Failed: ${text}`, isError: true });
+
 function githubError(status, json) {
   const message = typeof json?.message === "string" ? json.message : `HTTP ${status}`;
   const details = Array.isArray(json?.errors)
@@ -180,10 +185,10 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
     enabled,
     async call(entry, name, args = {}) {
       try {
-        if (!enabled()) return { text: NOT_SET_UP, isError: true };
+        if (!enabled()) return fail(NOT_SET_UP);
         if (name === "github_create_pr") {
           const title = typeof args.title === "string" ? args.title.trim() : "";
-          if (!title) return { text: "github_create_pr needs a `title`.", isError: true };
+          if (!title) return fail("github_create_pr needs a `title`.");
           const { owner, repo } = await resolveRepo(entry, args);
           let head = typeof args.head === "string" && args.head.trim() ? args.head.trim() : undefined;
           if (!head) {
@@ -191,7 +196,7 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
             head = context?.branch ?? undefined;
           }
           if (!head) {
-            return { text: "Could not infer the head branch (workspace is not on a branch); pass `head` explicitly.", isError: true };
+            return fail("Could not infer the head branch (workspace is not on a branch); pass `head` explicitly.");
           }
           const body = { title, head, draft: args.draft === true };
           if (typeof args.body === "string") body.body = args.body;
@@ -201,7 +206,7 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
         }
         if (name === "github_pr_status") {
           const number = Number.isInteger(args.number) && args.number > 0 ? args.number : null;
-          if (!number) return { text: "github_pr_status needs a positive integer `number`.", isError: true };
+          if (!number) return fail("github_pr_status needs a positive integer `number`.");
           const { owner, repo } = await resolveRepo(entry, args);
           const pr = await request("GET", `/repos/${owner}/${repo}/pulls/${number}`);
           let runs = null;
@@ -218,9 +223,9 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
           const prs = await request("GET", `/repos/${owner}/${repo}/pulls?state=${state}&per_page=${limit}&sort=created&direction=desc`);
           return { text: formatPrList(Array.isArray(prs) ? prs : [], `${owner}/${repo}`, state) };
         }
-        return { text: `unknown GitHub tool: ${name}`, isError: true };
+        return fail(`unknown GitHub tool: ${name}`);
       } catch (error) {
-        return { text: error?.message ?? String(error), isError: true };
+        return fail(error?.message ?? String(error));
       }
     },
   };
