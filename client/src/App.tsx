@@ -1382,6 +1382,7 @@ export function App() {
   // (and every few seconds while open), ask the worker to start one pending
   // agent. A DB lease and the pilot's workspaceName key dedupe concurrent
   // views and lost HTTP replies.
+  const hasPendingAgents = sessionsQuery.data?.sessions.some((item) => item.status === "queued" && item.pilot_session_id === null) ?? false;
   useQuery({
     queryKey: ["recover-pending-agents"],
     queryFn: async () => {
@@ -1389,7 +1390,8 @@ export function App() {
       if (result.started || result.failed) await sessionsQuery.refetch();
       return result;
     },
-    enabled: sessionsQuery.data !== undefined,
+    enabled: hasPendingAgents,
+    notifyOnChangeProps: [],
     refetchInterval: 5000,
     retry: false,
   });
@@ -1447,7 +1449,7 @@ export function App() {
     browserOnline,
     listFailed: sessionsQuery.isError,
     sendFailedAt,
-    listUpdatedAt: sessionsQuery.dataUpdatedAt,
+    listUpdatedAt: sendFailedAt > 0 ? sessionsQuery.dataUpdatedAt : 0,
   });
   // The app can still serve cached DB-backed sessions while its pilot is
   // down. Don't treat a successful session-list fetch as pilot connectivity.
@@ -1616,8 +1618,29 @@ export function App() {
       return data;
     },
     enabled: selectedId !== null && selectedId !== draft?.id,
-    refetchInterval: 5000,
+    refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 5000 : false,
   });
+  const detailLoadedSession = detailQuery.data?.session ?? null;
+  useEffect(() => {
+    if (!selectedSession || !detailLoadedSession || detailLoadedSession.id !== selectedSession.id) return;
+    if (
+      selectedSession.output_revision !== detailLoadedSession.output_revision ||
+      selectedSession.status !== detailLoadedSession.status ||
+      selectedSession.summary !== detailLoadedSession.summary
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ["code-session", selectedSession.id] });
+    }
+  }, [
+    selectedSession?.id,
+    selectedSession?.output_revision,
+    selectedSession?.status,
+    selectedSession?.summary,
+    detailLoadedSession?.id,
+    detailLoadedSession?.output_revision,
+    detailLoadedSession?.status,
+    detailLoadedSession?.summary,
+    queryClient,
+  ]);
   // Read the whole durable write history, not just the transcript's last
   // 1000 displayed events. No file button appears until ownership is known.
   // The key must NOT include output_revision: it bumps on every streamed
@@ -1645,11 +1668,13 @@ export function App() {
 
   // Agent questions for the user (`request_user_input` transport): polled
   // live so the answer UI appears even before the transcript marker syncs.
+  const shouldPollPendingInputs = selectedSession !== null && !selectedSession.archived &&
+    (isTurnLive(selectedSession.status) || selectedSession.needs_you);
   const pendingInputsQuery = useQuery({
     queryKey: ["pending-user-inputs", selectedId],
     queryFn: () => api.getPendingUserInputs({ id: selectedId ?? "" }),
-    enabled: selectedSession !== null && !selectedSession.archived,
-    refetchInterval: 3000,
+    enabled: shouldPollPendingInputs,
+    refetchInterval: shouldPollPendingInputs ? 3000 : false,
   });
   const pendingInputs = pendingInputsQuery.data?.ok ? pendingInputsQuery.data.inputs : [];
 
