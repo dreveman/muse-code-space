@@ -5,7 +5,7 @@
 // finishes. Stop cancels a running workflow. (Per-child results aren't on
 // the protocol: subagent/readResult is a steering command for the parent
 // agent, not a data read.)
-import { useState } from "react";
+import { memo, useState } from "react";
 import { api } from "./api";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 
@@ -62,7 +62,7 @@ function AgentsIcon() {
   );
 }
 
-export function AgentsEvent({ sessionId, content, startedAt, finishedAt, nowMs }: {
+export const AgentsEvent = memo(function AgentsEvent({ sessionId, content, startedAt, finishedAt, nowMs }: {
   sessionId: string;
   content: string;
   startedAt: string | null;
@@ -123,4 +123,10 @@ export function AgentsEvent({ sessionId, content, startedAt, finishedAt, nowMs }
       {stopError && <div className="agents-error">{stopError}</div>}
     </div>
   );
-}
+}, (prev, next) =>
+  prev.sessionId === next.sessionId &&
+  prev.content === next.content &&
+  prev.startedAt === next.startedAt &&
+  prev.finishedAt === next.finishedAt &&
+  (prev.finishedAt !== null || prev.nowMs === next.nowMs),
+);

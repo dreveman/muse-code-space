@@ -4,6 +4,29 @@ export type HighlightLines = HighlightToken[][];
 export type CodeTheme = "light" | "dark";
 const MAX_HIGHLIGHT_BYTES = 128 * 1024;
 const MAX_HIGHLIGHT_LINES = 2500;
+const MAX_CACHE_ENTRIES = 128;
+const highlightCache = new Map<string, HighlightLines | null>();
+const inflightHighlights = new Map<string, Promise<HighlightLines | null>>();
+
+function cacheKey(text: string, lang: CodeLanguage, theme: CodeTheme): string {
+  return `${theme}:${lang}:${text}`;
+}
+
+function setCached(key: string, value: HighlightLines | null) {
+  if (highlightCache.has(key)) highlightCache.delete(key);
+  else if (highlightCache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = highlightCache.keys().next().value;
+    if (oldest !== undefined) highlightCache.delete(oldest);
+  }
+  highlightCache.set(key, value);
+}
+
+export function getCachedHighlight(text: string, path: string | null, theme: CodeTheme): HighlightLines | null | undefined {
+  const lang = codeLanguageForPath(path);
+  if (!lang) return null;
+  return highlightCache.get(cacheKey(text, lang, theme));
+}
+
 const languages: Record<CodeLanguage, () => Promise<unknown>> = {
   typescript: () => import("shiki/langs/typescript.mjs"), tsx: () => import("shiki/langs/tsx.mjs"),
   javascript: () => import("shiki/langs/javascript.mjs"), jsx: () => import("shiki/langs/jsx.mjs"),
@@ -37,18 +60,47 @@ async function loadLanguage(lang: CodeLanguage) {
   return h;
 }
 
+// Serialize uncached tokenization across macrotasks so multiple cold-start
+// Oniguruma grammar compilations never merge into one long microtask.
+let tokenizeChain: Promise<void> = Promise.resolve();
+function enqueueTokenize<T>(work: () => Promise<T>): Promise<T> {
+  const next = tokenizeChain.then(
+    () => new Promise<T>((resolve, reject) => {
+      setTimeout(() => {
+        work().then(resolve, reject);
+      }, 0);
+    }),
+  );
+  tokenizeChain = next.then(() => undefined, () => undefined);
+  return next;
+}
+
 // Null means plain text: no known filename, oversized/partial view, grammar
 // unavailable, or any token mismatch. The source text is never rewritten.
 export async function highlightCode(text: string, path: string | null, theme: CodeTheme): Promise<HighlightLines | null> {
   const lang = codeLanguageForPath(path);
-  if (!lang || new TextEncoder().encode(text).length > MAX_HIGHLIGHT_BYTES || text.split("\n").length > MAX_HIGHLIGHT_LINES) return null;
-  try {
-    const h = await loadLanguage(lang);
-    const result = h.codeToTokens(text, { lang, theme: theme === "dark" ? "github-dark" : "github-light" });
-    const tokens = result.tokens.map((line) => line.map((token) => ({ text: token.content, color: token.color ?? null })));
-    // Shiki may normalize final newlines or unsupported input; never render a
-    // token stream if it doesn't reconstruct exactly what the user can copy.
-    if (tokens.map((line) => line.map((token) => token.text).join("")).join("\n") !== text) return null;
-    return tokens;
-  } catch { return null; }
+  if (!lang || (text.length * 3 > MAX_HIGHLIGHT_BYTES && new TextEncoder().encode(text).length > MAX_HIGHLIGHT_BYTES) || text.split("\n").length > MAX_HIGHLIGHT_LINES) return null;
+  const key = cacheKey(text, lang, theme);
+  const cached = highlightCache.get(key);
+  if (cached !== undefined) return cached;
+  const existing = inflightHighlights.get(key);
+  if (existing) return existing;
+  const pending = enqueueTokenize(async () => {
+    try {
+      const h = await loadLanguage(lang);
+      const result = h.codeToTokens(text, { lang, theme: theme === "dark" ? "github-dark" : "github-light" });
+      const tokens = result.tokens.map((line) => line.map((token) => ({ text: token.content, color: token.color ?? null })));
+      // Shiki may normalize final newlines or unsupported input; never render a
+      // token stream if it doesn't reconstruct exactly what the user can copy.
+      const valid = tokens.map((line) => line.map((token) => token.text).join("")).join("\n") === text ? tokens : null;
+      setCached(key, valid);
+      return valid;
+    } catch {
+      return null;
+    } finally {
+      inflightHighlights.delete(key);
+    }
+  });
+  inflightHighlights.set(key, pending);
+  return pending;
 }

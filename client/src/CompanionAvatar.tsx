@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CompanionArtwork } from "./companionArtwork";
+import { observeElementIntersection } from "./CodeFileLines";
 
 export function CompanionAvatar({ artwork, animate = true, className }: {
   artwork: CompanionArtwork;
@@ -17,12 +18,13 @@ export function CompanionAvatar({ artwork, animate = true, className }: {
     update();
     media.addEventListener("change", update);
     document.addEventListener("visibilitychange", update);
-    const observer = new IntersectionObserver(([entry]) => setInView(entry?.isIntersecting ?? false));
-    if (imageRef.current) observer.observe(imageRef.current);
+    const stop = imageRef.current && typeof IntersectionObserver !== "undefined"
+      ? observeElementIntersection(imageRef.current, null, "0px", setInView)
+      : undefined;
     return () => {
       media.removeEventListener("change", update);
       document.removeEventListener("visibilitychange", update);
-      observer.disconnect();
+      stop?.();
     };
   }, [artwork.portraitIdle, artwork.still]);
   const source = animate && motionAllowed && inView ? artwork.portraitIdle : artwork.still;

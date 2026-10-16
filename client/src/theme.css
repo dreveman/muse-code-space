@@ -241,10 +241,6 @@ summary { width: max-content; cursor: pointer; font: 600 11px var(--mono); }
 details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-height: 1.55; }
 .archive-error.detail-action-error { padding: 4px 0 0; }
 .archive-error { padding: 10px 17px; color: var(--error); font: 11px/1.4 var(--mono); }
-.transcript-restore { padding: 8px 17px 2px; }
-.transcript-restore-button { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius); padding: 6px 10px; font: 12px/1.3 var(--mono); cursor: pointer; }
-.transcript-restore-button:disabled { opacity: 0.55; cursor: default; }
-.transcript-restore-note { margin: 6px 0 0; color: var(--dim); font: 11px/1.4 var(--mono); }
 .transcript {
   --terminal-bg: #080a0b;
   --terminal-surface: #101416;
@@ -281,15 +277,17 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  contain: strict;
 }
 .output-stream { padding: 6px 0 6px; }
-.transcript-scroll-controls { position: relative; flex: 0 0 0; z-index: 3; }
+.transcript-scroll-controls { position: relative; flex: 0 0 0; z-index: 3; contain: layout style; opacity: 0; pointer-events: none; }
+.transcript-scroll-controls.visible { opacity: 1; pointer-events: auto; }
 .scroll-to-bottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 17px; border: 1px solid color-mix(in srgb, #7db9ed 35%, var(--terminal-bg)); border-radius: 999px; background: color-mix(in srgb, #cce6ff 90%, var(--terminal-bg)); color: #162b3d; font: 600 12px/1.4 var(--sans); white-space: nowrap; cursor: pointer; }
 .scroll-to-bottom svg { width: 16px; height: 16px; transform: rotate(90deg); }
 .scroll-to-bottom:hover { filter: brightness(.96); }
 .scroll-to-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 :root[data-color-mode="dark"] .scroll-to-bottom { background: color-mix(in srgb, #7db9ed 22%, var(--terminal-bg)); color: #d8ecff; }
-.output-event { padding: 10px 13px; }
+.output-event { padding: 10px 13px; contain: layout style; }
 .output-event { font: 14px/1.6 var(--sans); }
 .output-event.user { background: var(--terminal-user-bg); }
 .output-event.user .message-text { color: var(--terminal-user); }
@@ -392,7 +390,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .tool-diff-caption { margin: 0 0 8px; color: var(--terminal-dim); font: 600 10px/1.4 var(--mono); }
 /* Full diff content is always available inside this bounded, keyboard-scrollable
    pane. The raw-output view retains its separate Show all behavior. */
-.tool-diff { max-height: min(420px, 48dvh); overflow: auto; overscroll-behavior-x: contain; overscroll-behavior-y: auto; scrollbar-gutter: stable; border: 1px solid var(--tool-output-bg); border-radius: 6px; background: var(--terminal-surface); color: var(--terminal-text); font: 11px/1.55 var(--mono); tab-size: 4; }
+.tool-diff { max-height: min(420px, 48dvh); overflow: auto; overscroll-behavior-x: contain; overscroll-behavior-y: auto; scrollbar-gutter: stable; contain: layout style; border: 1px solid var(--tool-output-bg); border-radius: 6px; background: var(--terminal-surface); color: var(--terminal-text); font: 11px/1.55 var(--mono); tab-size: 4; }
 .tool-diff:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tool-diff-line { display: grid; grid-template-columns: var(--diff-gutter-width, 3ch) max-content; column-gap: 1ch; width: max-content; min-width: 100%; padding: 0 8px; white-space: pre; font-size: 12px; }
 .tool-diff-file-label { padding: 4px 8px; border-top: 1px solid var(--terminal-faint); color: var(--terminal-dim); font: 600 10px/1.5 var(--mono); }

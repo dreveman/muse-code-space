@@ -1,5 +1,5 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { highlightCode, type HighlightLines } from "./codeHighlight";
+import { memo, useEffect, useState, type CSSProperties } from "react";
+import { getCachedHighlight, highlightCode, type HighlightLines } from "./codeHighlight";
 import { codeLanguageForPath } from "./codeLanguage";
 import { copyCodeSelection } from "./codeSelection";
 import { diffDisplayLines, type DiffDocument, type DiffFile } from "./toolDiff";
@@ -7,23 +7,29 @@ import { diffDisplayLines, type DiffDocument, type DiffFile } from "./toolDiff";
 // A hunk starting at line 1 has a known lexical starting state on each side
 // of the edit. All later/disjoint hunks remain plain; guessing the grammar's
 // state in the unseen gap could incorrectly color a string or comment.
-function DiffFileLines({ file, source }: { file: DiffFile; source: DiffDocument["source"] }) {
+const DiffFileLines = memo(function DiffFileLines({ file, source }: { file: DiffFile; source: DiffDocument["source"] }) {
   const first = file.hunks[0];
   const startsAtBeginning = source === "patch" && first && /^@@ -1(?:,\d+)? \+1(?:,\d+)? @@/.test(first.header) && codeLanguageForPath(file.path) !== null;
   const oldText = startsAtBeginning ? first.lines.filter((line) => line.kind === "remove" || line.kind === "context").map((line) => line.text.slice(1)).join("\n") : "";
   const newText = startsAtBeginning ? first.lines.filter((line) => line.kind === "add" || line.kind === "context").map((line) => line.text.slice(1)).join("\n") : "";
+  const cachedOld = startsAtBeginning ? getCachedHighlight(oldText, file.path, "light") : null;
+  const cachedNext = startsAtBeginning ? getCachedHighlight(newText, file.path, "light") : null;
   const [result, setResult] = useState<{ path: string; oldText: string; newText: string; old: HighlightLines; next: HighlightLines } | null>(null);
-  const colored = startsAtBeginning && result?.path === file.path && result.oldText === oldText && result.newText === newText ? result : null;
+  const colored = startsAtBeginning
+    ? cachedOld && cachedNext
+      ? { old: cachedOld, next: cachedNext }
+      : result?.path === file.path && result.oldText === oldText && result.newText === newText ? result : null
+    : null;
   useEffect(() => {
+    if (!startsAtBeginning || (cachedOld !== undefined && cachedNext !== undefined)) return;
     let cancelled = false;
-    setResult(null);
-    if (startsAtBeginning) void Promise.all([
+    void Promise.all([
       highlightCode(oldText, file.path, "light"), highlightCode(newText, file.path, "light"),
     ]).then(([old, next]) => {
       if (!cancelled && old && next) setResult({ path: file.path, oldText, newText, old, next });
     });
     return () => { cancelled = true; };
-  }, [startsAtBeginning, oldText, newText, file.path]);
+  }, [startsAtBeginning, cachedOld, cachedNext, oldText, newText, file.path]);
   const rows = diffDisplayLines({ files: [file], source }).filter((row) => row.kind !== "file" && row.kind !== "hunk");
   let oldIndex = 0, nextIndex = 0;
   return <div>
@@ -42,11 +48,11 @@ function DiffFileLines({ file, source }: { file: DiffFile; source: DiffDocument[
       </div>;
     })}
   </div>;
-}
+});
 
 // The scroll pane shows code lines with visible old/new line numbers. Raw
 // ---/+++/@@ headers are omitted; multi-file patches get a simple file label.
-export function ToolDiff({ doc }: { doc: DiffDocument }) {
+export const ToolDiff = memo(function ToolDiff({ doc }: { doc: DiffDocument }) {
   const numberDigits = diffDisplayLines(doc).reduce((widest, row) =>
     Math.max(widest, row.lineNumber === null ? 0 : String(row.lineNumber).length), 1);
   const style = { "--diff-gutter-width": `${numberDigits + 1}ch` } as CSSProperties;
@@ -60,4 +66,4 @@ export function ToolDiff({ doc }: { doc: DiffDocument }) {
       ))}
     </div>
   );
-}
+});

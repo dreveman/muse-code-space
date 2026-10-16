@@ -365,9 +365,12 @@ function legacyPrompt(content: string, modelId: string, effort: ReasoningEffort)
 
 // Home folder on the machine the pilot (and muse serve) runs on; workspace
 // paths are paths there. The VM is /home/hatch. The artifact platform forbids
-// the `process` global in action handlers, so this is a constant — the
-// MUSE_CODE_SPACE_HOME_ROOT override lives only in dev/server.ts for local dev.
-const HOME_ROOT = "/home/hatch";
+// the `process` global in action handlers, so dev/server.ts passes its local
+// override on globalThis before importing this module.
+const configuredHomeRoot = (globalThis as { __MUSE_CODE_SPACE_HOME_ROOT__?: string }).__MUSE_CODE_SPACE_HOME_ROOT__
+  ?.trim()
+  .replace(/\/+$/, "");
+const HOME_ROOT = configuredHomeRoot && configuredHomeRoot.startsWith("/") ? configuredHomeRoot : "/home/hatch";
 const WORKSPACE_ROOT = `${HOME_ROOT}/workspace`;
 // Placeholder model id stored before the pilot reports the one it chose.
 const FALLBACK_MODEL_ID = "muse-spark-1.3";
@@ -1361,33 +1364,6 @@ export const Actions = {
     },
   }),
 
-  // Rebuild the past-conversation list from the pilot's transcript files.
-  // With keep_only_title, every other past conversation is deleted first
-  // (its pilot transcript and its app rows), and only the named agent's
-  // transcript is restored — the recovery path after an app-state wipe
-  // combined with a cleanup. Without it, this only adds what is missing.
-  restoreFromTranscripts: defineAction({
-    request: z.object({
-      keep_only_title: z.string().trim().min(1).max(200).optional(),
-    }),
-    response: z.object({
-      ok: z.boolean(),
-      available: z.boolean(),
-      restored: z.number().int().nonnegative(),
-      linked: z.number().int().nonnegative(),
-      pruned: z.number().int().nonnegative(),
-      kept: z.array(z.string()),
-      error: z.string().nullable(),
-    }),
-    privileged: [privileged.resolvePilotUrl, privileged.listTranscripts, privileged.readTranscript],
-    async handler(ctx, args) {
-      const denied = terminalAccessError(ctx.viewer);
-      if (denied) return { ok: false, available: false, restored: 0, linked: 0, pruned: 0, kept: [], error: denied };
-      const result = await reconcileTranscripts(ctx, { pruneExceptTitle: args.keep_only_title });
-      return { ok: result.error === null, ...result };
-    },
-  }),
-
   listSessions: defineAction({
     request: z.object({
       limit: z.number().int().positive().max(100).default(50),
@@ -1426,8 +1402,8 @@ export const Actions = {
             eq(schema.outputEvents.sessionId, row.id),
             ne(schema.outputEvents.kind, "result"),
           );
-          const events = await db
-            .select({ id: schema.outputEvents.id })
+          const countRows = await db
+            .select({ value: count() })
             .from(schema.outputEvents)
             .where(visibleEventFilter);
           const latestRows = await db
@@ -1457,7 +1433,7 @@ export const Actions = {
             needs_you: row.needsUserInput || row.status === "failed",
             output_revision: row.outputRevision,
             seen_output_revision: row.seenOutputRevision,
-            output_count: events.length,
+            output_count: countRows[0]?.value ?? 0,
             latest_output: latest ? latest.slice(0, 220) : null,
             project_id: row.projectId ?? null,
           };
@@ -1608,7 +1584,6 @@ export const Actions = {
         .where(eq(schema.sessions.id, args.id))
         .returning({ seenOutputRevision: schema.sessions.seenOutputRevision });
       if (!rows[0]) return { ok: false, seen_output_revision: 0, error: "Session not found" };
-      ctx.invalidateQueries();
       return { ok: true, seen_output_revision: rows[0].seenOutputRevision, error: null };
     },
   }),
@@ -3188,7 +3163,14 @@ export const Actions = {
           finishedAt: terminalAt,
         })
         .where(eq(schema.sessions.id, session.id));
-      if (added > 0 || backendChanged) ctx.invalidateQueries();
+      if (added > 0 || backendChanged) {
+        const sessionMetaChanged = nextStatus !== session.status || nameUpdate !== null || needsUserInput !== session.needsUserInput;
+        ctx.invalidateQueries(
+          sessionMetaChanged
+            ? { queryKeys: [["code-sessions"], ["code-session", session.id]] }
+            : { queryKey: ["code-session", session.id] },
+        );
+      }
       return { added, status: nextStatus, pilot_available: true };
     },
   }),

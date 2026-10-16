@@ -42,6 +42,7 @@ import { filePreviewForTool, toolPresentation } from "./toolPresentation";
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
+import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
 import { ToolSearchView } from "./ToolSearchView";
 import { searchPreviewForTool } from "./searchOutput";
@@ -265,7 +266,7 @@ function renderParagraphLines(lines: string[], keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
-function Markdown({ text }: { text: string }) {
+const Markdown = memo(function Markdown({ text }: { text: string }) {
   const nodes: ReactNode[] = [];
   const lines = text.split("\n");
   let key = 0;
@@ -391,7 +392,7 @@ function Markdown({ text }: { text: string }) {
 
   if (nodes.length === 0) return <div className="message-text">{text}</div>;
   return <div className="markdown-body">{nodes}</div>;
-}
+});
 
 function formatElapsed(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
@@ -531,11 +532,27 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
     const panel = patchPanelRef.current;
     if (!panel) return;
     if (typeof IntersectionObserver === "undefined") { setPatchInView(true); return; }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) { setPatchInView(true); observer.disconnect(); }
-    }, { root: panel.closest(".terminal-body"), rootMargin: "160px" });
-    observer.observe(panel);
-    return () => observer.disconnect();
+    // Shared IntersectionObserver (instead of a new IntersectionObserver( per row).
+    let timer: number | null = null;
+    let stop: (() => void) | undefined;
+    stop = observeElementIntersection(panel, panel.closest(".terminal-body"), "160px", (intersecting) => {
+      if (intersecting) {
+        if (timer === null) {
+          timer = window.setTimeout(() => {
+            timer = null;
+            setPatchInView(true);
+            stop?.();
+          }, 120);
+        }
+      } else if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    });
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      stop?.();
+    };
   }, [expanded, patchAvailable, showRawToolOutput, details?.patchRef?.id]);
   useEffect(() => {
     if (expanded && (manuallyOpenedRef.current || patchInView) && !showRawToolOutput && patchAvailable && !patchDoc && !patchError && !loadingPatch) void loadPatch();
@@ -666,7 +683,7 @@ function AssistantMessageAvatar({ source }: { source: string | null }) {
   </span>;
 }
 
-function MessageEvent({ content, agents, assistantAvatar }: { content: string; agents: readonly Session[]; assistantAvatar: string | null }) {
+const MessageEvent = memo(function MessageEvent({ content, agents, assistantAvatar }: { content: string; agents: readonly Session[]; assistantAvatar: string | null }) {
   let message: AgentMessage | null = null;
   try {
     message = JSON.parse(content) as AgentMessage;
@@ -701,7 +718,18 @@ function MessageEvent({ content, agents, assistantAvatar }: { content: string; a
       </div>
     </article>
   );
-}
+}, (prev, next) => {
+  if (prev.content !== next.content || prev.assistantAvatar !== next.assistantAvatar) return false;
+  if (prev.agents === next.agents) return true;
+  try {
+    const message = JSON.parse(next.content) as AgentMessage;
+    const peer = message.direction === "in" ? message.from : message.to;
+    if (peer.kind === "muse") return true;
+    return messagePeerHue(peer, prev.agents) === messagePeerHue(peer, next.agents);
+  } catch {
+    return true;
+  }
+});
 
 function AgentListToolView({ list }: { list: AgentListOutput }) {
   return (
@@ -957,7 +985,67 @@ function UserInputCard({
   );
 }
 
-function SessionRow({
+type TranscriptEvent = ApiResponse<typeof api, "getSession">["events"][number];
+
+const TranscriptEventRow = memo(function TranscriptEventRow({
+  event,
+  detailSessionId,
+  detailWorkspaceRoot,
+  nowMs,
+  expandTools,
+  showRawToolOutput,
+  openFileTabForDetail,
+}: {
+  event: TranscriptEvent;
+  detailSessionId: string;
+  detailWorkspaceRoot: string;
+  nowMs: number;
+  expandTools: boolean;
+  showRawToolOutput: boolean;
+  openFileTabForDetail: (path: string) => void;
+}) {
+  const reasoning = event.kind === "thinking" ? reasoningDisplay(event.content) : null;
+  const content = displayOutput(reasoning?.summary ?? event.content);
+  if (event.kind === "thinking" && !content.trim()) return null;
+  const time = event.kind === "stdout" ? formatMessageTime(event.created_at, nowMs) : "";
+  return (
+    <article className={`output-event ${event.kind}${event.system_is_error ? " system-error" : ""}`}>
+      {event.kind === "user" ? (
+        <div className="message-text">
+          {content}
+        </div>
+      ) : event.kind === "agents" ? (
+        <AgentsEvent sessionId={detailSessionId} content={event.content} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} />
+      ) : event.kind === "tool" ? (
+        <ToolEvent sessionId={detailSessionId} workspaceRoot={detailWorkspaceRoot} eventId={event.id} text={content} details={event.tool_details} startedAt={event.started_at} finishedAt={event.finished_at} expandedByDefault={expandTools} showRawToolOutput={showRawToolOutput} onOpenFile={openFileTabForDetail} />
+      ) : event.kind === "thinking" ? (
+        <>
+          <Markdown text={content} />
+          {reasoning?.truncated && <div className="message-time" role="note" aria-label="Reasoning summary truncated" title="Reasoning summary truncated">...</div>}
+        </>
+      ) : event.kind === "stdout" ? (
+        <>
+          <Markdown text={content} />
+          {time !== "" && (
+            <div className="message-time">{time}</div>
+          )}
+        </>
+      ) : (
+        <div className="message-text">{content}</div>
+      )}
+    </article>
+  );
+}, (prev, next) =>
+  prev.event === next.event &&
+  prev.detailSessionId === next.detailSessionId &&
+  prev.detailWorkspaceRoot === next.detailWorkspaceRoot &&
+  prev.expandTools === next.expandTools &&
+  prev.showRawToolOutput === next.showRawToolOutput &&
+  prev.openFileTabForDetail === next.openFileTabForDetail &&
+  (prev.event.kind !== "stdout" && (prev.event.kind !== "agents" || prev.event.finished_at !== null) || prev.nowMs === next.nowMs),
+);
+
+const SessionRow = memo(function SessionRow({
   session,
   selected,
   past,
@@ -1093,7 +1181,7 @@ function SessionRow({
       )}
     </div>
   );
-}
+});
 
 export function App() {
   const [selectedCompanionId, setSelectedCompanionId] = useState<string | null>(null);
@@ -1185,9 +1273,16 @@ export function App() {
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
+  const scrollControlsRef = useRef<HTMLDivElement>(null);
+  const scrollToBottomButtonRef = useRef<HTMLButtonElement>(null);
   const snappedSessionRef = useRef<string | null>(null);
   const followTranscriptRef = useRef(true);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const showScrollToBottomRef = useRef(false);
+  const setShowScrollToBottom = useCallback((show: boolean) => {
+    showScrollToBottomRef.current = show;
+    scrollControlsRef.current?.classList.toggle("visible", show);
+    if (scrollToBottomButtonRef.current) scrollToBottomButtonRef.current.tabIndex = show ? 0 : -1;
+  }, []);
   const syncingSessionsRef = useRef(new Set<string>());
   const backgroundCursorRef = useRef(0);
   const backgroundTargetsRef = useRef<Array<{ id: string; status: Session["status"] }>>([]);
@@ -1326,10 +1421,19 @@ export function App() {
   const selectedCompanion = companions.find((companion) => companion.id === selectedCompanionId) ?? null;
   const selectedModelAccess = selectedCompanion ? companionModelAccess(selectedCompanion, accessibleModels) : null;
   const selectedModelBlocked = selectedModelAccess !== null && selectedModelAccess.status !== "ready";
-  const availableCompanions = orderCompanionsByAccess(availableCompanionDefinitions(sessions), accessibleModels);
-  const matchingAvailableCompanions = availableCompanions.filter((companion) => matchesCompanionQuery(companion, sessionQuery));
-  const visibleAvailableCompanions = moreAvailableExpanded || sessionQuery.trim()
-    ? matchingAvailableCompanions : matchingAvailableCompanions.filter(isDefaultCompanion);
+  const availableCompanions = useMemo(
+    () => orderCompanionsByAccess(availableCompanionDefinitions(sessions), accessibleModels),
+    [sessions, accessibleModels],
+  );
+  const matchingAvailableCompanions = useMemo(
+    () => availableCompanions.filter((companion) => matchesCompanionQuery(companion, sessionQuery)),
+    [availableCompanions, sessionQuery],
+  );
+  const visibleAvailableCompanions = useMemo(
+    () => moreAvailableExpanded || sessionQuery.trim()
+      ? matchingAvailableCompanions : matchingAvailableCompanions.filter(isDefaultCompanion),
+    [moreAvailableExpanded, sessionQuery, matchingAvailableCompanions],
+  );
   const hasActiveTasks = sessions.some((session) => !session.archived);
   const availableOpen = !hasActiveTasks || availableExpanded;
   useEffect(() => { setAvailableExpanded(false); }, [hasActiveTasks]);
@@ -1467,9 +1571,52 @@ export function App() {
   const selectedSession = sessions.find((item) => item.id === selectedId) ?? null;
   const detailQuery = useQuery({
     queryKey: ["code-session", selectedId],
-    queryFn: () => api.getSession({ id: selectedId ?? "", event_limit: 1000 }),
+    queryFn: async () => {
+      const id = selectedId ?? "";
+      const data = await api.getSession({ id, event_limit: 1000 });
+      if (data.session) {
+        const body = terminalBodyRef.current;
+        const atBottom = selectedIdRef.current === id && !document.hidden && (body === null || followTranscriptRef.current || transcriptAtBottom(body));
+        const syncedSession = atBottom && data.session.seen_output_revision < data.session.output_revision
+          ? { ...data.session, seen_output_revision: data.session.output_revision }
+          : data.session;
+        queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) => {
+          if (!old) return old;
+          let changed = false;
+          const nextSessions = old.sessions.map((item) => {
+            if (item.id !== id) return item;
+            if (
+              item.status === syncedSession.status &&
+              item.title === syncedSession.title &&
+              item.session_summary === syncedSession.session_summary &&
+              item.needs_you === syncedSession.needs_you &&
+              item.archived === syncedSession.archived &&
+              agentVisualStatus(item) === agentVisualStatus(syncedSession)
+            ) {
+              return item;
+            }
+            changed = true;
+            return syncedSession;
+          });
+          return changed ? { ...old, sessions: nextSessions } : old;
+        });
+        if (syncedSession !== data.session) {
+          const revision = data.session.output_revision;
+          if (revision > (requestedSeenRef.current.get(id) ?? 0)) {
+            requestedSeenRef.current.set(id, revision);
+            void api.markAgentSeen({ id, output_revision: revision }).then((res) => {
+              if (!res.ok && requestedSeenRef.current.get(id) === revision) requestedSeenRef.current.delete(id);
+            }).catch(() => {
+              if (requestedSeenRef.current.get(id) === revision) requestedSeenRef.current.delete(id);
+            });
+          }
+          return { ...data, session: syncedSession };
+        }
+      }
+      return data;
+    },
     enabled: selectedId !== null && selectedId !== draft?.id,
-    refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 1500 : 5000,
+    refetchInterval: 5000,
   });
   // Read the whole durable write history, not just the transcript's last
   // 1000 displayed events. No file button appears until ownership is known.
@@ -1506,6 +1653,7 @@ export function App() {
   });
   const pendingInputs = pendingInputsQuery.data?.ok ? pendingInputsQuery.data.inputs : [];
 
+  const sidebarClockMs = Math.floor(nowMs / 60_000) * 60_000;
   const visibleSessions = useMemo(() => {
     // A quiet task still owns its companion until it is archived.
     const base =
@@ -1513,18 +1661,19 @@ export function App() {
         ? sessions.filter((item) => item.archived)
         : sessions.filter((item) => !item.archived);
     return base.filter((item) => matchesSessionQuery(item, sessionQuery));
-  }, [filter, sessions, sessionQuery, nowMs]);
+  }, [filter, sessions, sessionQuery]);
 
   const filterLabel = FILTERS.find((item) => item.value === filter)?.label ?? filter;
 
   // Active groups by project; Past groups by age (Yesterday, Earlier this week, Earlier).
   const sessionGroups = useMemo(() => {
+    const nowMs = sidebarClockMs;
     const groups = filter === "inactive"
       ? groupSessionsByAge(visibleSessions, nowMs)
       : projects.length > 0 ? groupSessionsByProject(visibleSessions, projects)
       : [{ key: "", projectId: null, name: "On a task", sessions: visibleSessions }];
     return groups.map((group) => ({ ...group, sessions: sortSessions(group.sessions, sortMode) }));
-  }, [filter, visibleSessions, projects, nowMs, sortMode]);
+  }, [filter, visibleSessions, projects, sidebarClockMs, sortMode]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((current) => {
@@ -1604,10 +1753,14 @@ export function App() {
     // unmatched tools, and show every tool in the raw debugging mode.
     return showRawToolOutput ? events : events.filter((event) => !redundantMessageTools.has(event.id));
   }, [transcriptEvents, showReasoning, showRawToolOutput, redundantMessageTools]);
+  const detailEventsCharCount = useMemo(
+    () => detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0,
+    [detail?.events],
+  );
   const estimatedContextTokens = Math.ceil(
     (
       (detailSession?.prompt.length ?? 0) +
-      (detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0) +
+      detailEventsCharCount +
       direction.length
     ) / 4,
   );
@@ -1617,20 +1770,29 @@ export function App() {
   // A workflow's child agents keep running after the turn that launched them
   // ended: keep syncing and ticking while any agents row is still running
   // (bounded, so a row orphaned by a lost backend doesn't poll forever).
-  const agentsRunning = transcriptEvents.some((event) => {
+  const agentsRunning = useMemo(() => transcriptEvents.some((event) => {
     if (event.kind !== "agents" || event.finished_at) return false;
     const row = parseAgentsRow(event.content);
     const started = event.started_at ? Date.parse(event.started_at) : NaN;
     return !!row && agentStatusRunning(row.status) && Number.isFinite(started) && Date.now() - started < 12 * 60 * 60 * 1000;
-  });
+  }), [transcriptEvents]);
   const liveWork = !detailSession?.archived && (sessionActive || agentsRunning);
-  const latestUserEvent = [...transcriptEvents].reverse().find((event) => event.kind === "user");
+  const latestUserEvent = useMemo(() => {
+    for (let i = transcriptEvents.length - 1; i >= 0; i--) {
+      if (transcriptEvents[i]!.kind === "user") return transcriptEvents[i];
+    }
+    return undefined;
+  }, [transcriptEvents]);
+  const workingEvents = useMemo(
+    () => transcriptEvents.filter((event) => !redundantMessageTools.has(event.id)),
+    [transcriptEvents, redundantMessageTools],
+  );
   const promptStartedAt = latestUserEvent?.created_at ?? detailSession?.started_at ?? new Date(nowMs).toISOString();
   const promptStartedMs = new Date(promptStartedAt).getTime();
   const workingLabel = awaitingPilot ? "Connecting" : getWorkingLabel({
     status: detailSession?.status,
     promptStartedMs,
-    events: transcriptEvents.filter((event) => !redundantMessageTools.has(event.id)),
+    events: workingEvents,
     nowMs,
     workspaceRoot: detailSession?.workspace_root,
   });
@@ -1667,7 +1829,14 @@ export function App() {
         // Recovery can finish a lost turn. Refresh status before releasing a
         // queued prompt so it uses continueSession rather than stale sendInput.
         if (!cancelled && (result.added > 0 || id === queuedSessionId && result.pilot_available === true)) {
-          await Promise.all([sessionsQuery.refetch(), detailQuery.refetch()]);
+          if (id === selectedIdRef.current && id !== queuedSessionId) {
+            await queryClient.invalidateQueries({ queryKey: ["code-session", id] });
+          } else {
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ["code-sessions"] }),
+              queryClient.invalidateQueries({ queryKey: ["code-session", id] }),
+            ]);
+          }
         }
         if (!cancelled && result.pilot_available !== null) {
           setPilotSync((current) => current[id] === result.pilot_available ? current : { ...current, [id]: result.pilot_available! });
@@ -1713,13 +1882,13 @@ export function App() {
           } catch { /* Reconnect on the next tick. */ }
           finally { syncingSessionsRef.current.delete(item.id); }
         }));
-        if (changed && !cancelled) await refetchSessionsRef.current();
+        if (changed && !cancelled) await queryClient.invalidateQueries({ queryKey: ["code-sessions"] });
       } finally { running = false; }
     };
     void syncOthers();
     const interval = window.setInterval(() => void syncOthers(), 5000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, []);
+  }, [queryClient]);
 
   // Tick every second while a turn runs or a sent prompt is still pending
   // (continuing a finished session isn't "active" until its status flips).
@@ -1786,19 +1955,36 @@ export function App() {
   const markVisibleRead = () => {
     const currentSession = detail?.session;
     const body = terminalBodyRef.current;
-    if (!currentSession || currentSession.id !== selectedId || !body || document.hidden || !transcriptAtBottom(body)) return;
+    if (!currentSession || currentSession.id !== selectedId || !body || document.hidden) return;
     const id = currentSession.id;
     const revision = currentSession.output_revision;
     if (revision <= Math.max(currentSession.seen_output_revision, requestedSeenRef.current.get(id) ?? 0)) return;
+    if (!transcriptAtBottom(body)) return;
     requestedSeenRef.current.set(id, revision);
     void api.markAgentSeen({ id, output_revision: revision }).then((result) => {
       if (!result.ok) {
         if (requestedSeenRef.current.get(id) === revision) requestedSeenRef.current.delete(id);
         return;
       }
-      if (result.seen_output_revision < revision) requestedSeenRef.current.set(id, result.seen_output_revision);
-      void refetchSessionsRef.current();
-      if (selectedIdRef.current === id) void detailQuery.refetch();
+      const seen = result.seen_output_revision;
+      if (seen < revision) requestedSeenRef.current.set(id, seen);
+      queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) =>
+        old
+          ? {
+              ...old,
+              sessions: old.sessions.map((item) =>
+                item.id === id && item.seen_output_revision < seen
+                  ? { ...item, seen_output_revision: seen }
+                  : item,
+              ),
+            }
+          : old,
+      );
+      queryClient.setQueryData<typeof detailQuery.data>(["code-session", id], (old) =>
+        old?.session && old.session.seen_output_revision < seen
+          ? { ...old, session: { ...old.session, seen_output_revision: seen } }
+          : old,
+      );
     }).catch(() => {
       if (requestedSeenRef.current.get(id) === revision) requestedSeenRef.current.delete(id);
     });
@@ -1833,6 +2019,7 @@ export function App() {
     }
   }, [detailSessionId, transcriptEvents, pendingEcho, showReasoning, showRawToolOutput]);
 
+  const hasOutputStream = visibleTranscriptEvents.length > 0;
   useLayoutEffect(() => {
     const body = terminalBodyRef.current;
     if (!body) { setShowScrollToBottom(false); return; }
@@ -1841,8 +2028,12 @@ export function App() {
     // Keep the bottom pinned through those changes without moving a reader
     // who deliberately scrolled up.
     const measure = () => {
-      if (followTranscriptRef.current) body.scrollTop = body.scrollHeight;
-      setShowScrollToBottom(!transcriptAtBottom(body));
+      if (followTranscriptRef.current) {
+        body.scrollTop = body.scrollHeight;
+        setShowScrollToBottom(false);
+      } else {
+        setShowScrollToBottom(!transcriptAtBottom(body));
+      }
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -1850,7 +2041,7 @@ export function App() {
     observer.observe(body, { box: "border-box" });
     if (transcriptContentRef.current) observer.observe(transcriptContentRef.current, { box: "border-box" });
     return () => observer.disconnect();
-  }, [detailSessionId, detailQuery.isPending, visibleTranscriptEvents.length, pendingEcho !== null, queuedMessageHere !== null, selectedCompanionId]);
+  }, [detailSessionId, detailQuery.isPending, hasOutputStream, pendingEcho !== null, queuedMessageHere !== null, selectedCompanionId]);
 
   useEffect(() => {
     // An offline prompt is visible before any real transcript event arrives.
@@ -2350,36 +2541,6 @@ export function App() {
     }
   };
 
-  const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restoreNote, setRestoreNote] = useState<string | null>(null);
-
-  // Past conversations come from the pilot's transcript files, not app
-  // state: this re-registers any transcript that has no app row (e.g. after
-  // the app's data was wiped) and imports its transcript into Past.
-  const restoreFromTranscripts = async () => {
-    setRestoreBusy(true);
-    setRestoreNote(null);
-    try {
-      const response = await api.restoreFromTranscripts({});
-      if (!response.ok) {
-        setRestoreNote(response.error ?? "Restore failed. Try again.");
-        return;
-      }
-      if (!response.available) {
-        setRestoreNote("The session host is unreachable, so transcripts can't be checked right now.");
-        return;
-      }
-      await sessionsQuery.refetch();
-      setRestoreNote(response.restored > 0
-        ? `Restored ${response.restored} conversation${response.restored === 1 ? "" : "s"} from transcripts.`
-        : "No missing conversations found in the transcripts.");
-    } catch {
-      setRestoreNote("Restore failed. Try again.");
-    } finally {
-      setRestoreBusy(false);
-    }
-  };
-
   const askToDelete = (session: Session) => {
     setDeleteError(null);
     const title = sessionTaskTitle(session);
@@ -2528,6 +2689,48 @@ export function App() {
   const openFileTabForDetail = useCallback((path: string) => {
     if (detailSessionIdForFiles) openFileTab(detailSessionIdForFiles, path);
   }, [openFileTab, detailSessionIdForFiles]);
+  const detailWorkspaceRoot = detailSession?.workspace_root ?? "";
+  const assistantAvatarUrl = assistantIdentityQuery.data?.avatar_data_url ?? null;
+  const sessionsPeerKey = useMemo(
+    () => sessions.map((item) => `${item.id}:${item.pilot_session_id ?? ""}:${item.title}`).join("|"),
+    [sessions],
+  );
+  const sessionsForMessages = useMemo(() => sessions, [sessionsPeerKey]);
+  // Only running workflow rows need a 1s clock; stdout message timestamps
+  // only change across minute/day boundaries.
+  const transcriptClockMs = agentsRunning ? nowMs : Math.floor(nowMs / 60_000) * 60_000;
+  const renderedTranscriptEvents = useMemo(() => {
+    if (!detailSessionIdForFiles) return [];
+    const nowMs = transcriptClockMs;
+    const sessions = sessionsForMessages;
+    return visibleTranscriptEvents.map((event) => (
+      event.kind === "message" ? (
+        <MessageEvent key={event.id} content={event.content} agents={sessions}
+          assistantAvatar={assistantAvatarUrl} />
+      ) : (
+        <TranscriptEventRow
+          key={event.id}
+          event={event}
+          detailSessionId={detailSessionIdForFiles}
+          detailWorkspaceRoot={detailWorkspaceRoot}
+          nowMs={nowMs}
+          expandTools={expandTools}
+          showRawToolOutput={showRawToolOutput}
+          openFileTabForDetail={openFileTabForDetail}
+        />
+      )
+    ));
+  }, [
+    detailSessionIdForFiles,
+    detailWorkspaceRoot,
+    visibleTranscriptEvents,
+    transcriptClockMs,
+    sessionsForMessages,
+    assistantAvatarUrl,
+    expandTools,
+    showRawToolOutput,
+    openFileTabForDetail,
+  ]);
   // Closing a tab ends what it shows: for a terminal, its shell.
   const closeSideTab = (sessionId: string, tab: SideTab) => {
     if (tab.kind === "terminal" && tab.terminalId) void api.closeTerminal({ terminal_id: tab.terminalId }).catch(() => undefined);
@@ -2549,7 +2752,7 @@ export function App() {
   };
 
 
-  const firstMessageComposer = (
+  const firstMessageComposer = (startingDraft?.draft.id === selectedId || selectedCompanion !== null) ? (
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
       <div className="terminal-composer">
@@ -2645,17 +2848,14 @@ export function App() {
         </div>
       )}
     </form>
-  );
+  ) : null;
 
-  return (
-    <div className="app-shell">
-      <SafeAreaTopScrim backgroundColor="var(--bg)" />
-      <main className="workspace">
-        <div
-          ref={layoutRef}
-          className={`console-layout ${mobileListOpen ? "mobile-list-view" : isNarrow && hasSidePanel && mobileSideOpen ? "mobile-side-view" : "mobile-detail-view"}`}
-          style={{ "--sidebar-width": `${paneSizes.sidebarWidth}px` } as CSSProperties}
-        >
+  const sidebarLoaded = sessionsQuery.data !== undefined;
+  const draftCompanionId = draft?.companionId ?? null;
+  const draftBusy = creating || queuedPrompt?.kind === "draft";
+  const sidebarElement = useMemo(() => {
+    const nowMs = sidebarClockMs;
+    return (
             <aside id="agent-sidebar" className="session-rail" aria-label="Code companions">
               <header className="command-bar">
                 <span className="command-bar-eyebrow">THE CODING TEAM</span>
@@ -2680,20 +2880,6 @@ export function App() {
               </div>}
               {archiveError && <div className="archive-error" role="alert">{archiveError}</div>}
               {renameError && <div className="archive-error" role="alert">{renameError}</div>}
-              {filter === "inactive" && (
-                <div className="transcript-restore">
-                  <button
-                    type="button"
-                    className="transcript-restore-button"
-                    onClick={() => void restoreFromTranscripts()}
-                    disabled={restoreBusy}
-                    aria-label="Restore past conversations from session transcripts"
-                  >
-                    {restoreBusy ? "Checking transcripts…" : "Restore from transcripts"}
-                  </button>
-                  {restoreNote && <p className="transcript-restore-note" aria-live="polite">{restoreNote}</p>}
-                </div>
-              )}
               {sessions.length > 1 && <div className="session-filter">
                 <FilterIcon />
                 <input
@@ -2826,6 +3012,48 @@ export function App() {
                 </nav>
               </section>}
             </aside>
+    );
+  }, [
+    sidebarClockMs,
+    sessions,
+    sidebarLoaded,
+    connectionLost,
+    filter,
+    filterLabel,
+    sortMode,
+    archiveError,
+    renameError,
+    sessionQuery,
+    visibleSessions,
+    sessionGroups,
+    collapsedGroups,
+    selectedCompanionId,
+    selectedId,
+    archiveBusy,
+    deleteBusy,
+    renamingId,
+    renameValue,
+    renameBusy,
+    hasActiveTasks,
+    availableOpen,
+    visibleAvailableCompanions,
+    matchingAvailableCompanions,
+    accessibleModels,
+    draftBusy,
+    draftCompanionId,
+    moreAvailableExpanded,
+  ]);
+
+  return (
+    <div className="app-shell">
+      <SafeAreaTopScrim backgroundColor="var(--bg)" />
+      <main className="workspace">
+        <div
+          ref={layoutRef}
+          className={`console-layout ${mobileListOpen ? "mobile-list-view" : isNarrow && hasSidePanel && mobileSideOpen ? "mobile-side-view" : "mobile-detail-view"}`}
+          style={{ "--sidebar-width": `${paneSizes.sidebarWidth}px` } as CSSProperties}
+        >
+            {sidebarElement}
             <PaneDivider
               label="Resize companion sidebar and chat"
               controls="agent-sidebar agent-detail"
@@ -2955,42 +3183,7 @@ export function App() {
                         </div>
                       ) : (
                         <div ref={transcriptContentRef} className="output-stream">
-                          {visibleTranscriptEvents.map((event) => {
-                            const reasoning = event.kind === "thinking" ? reasoningDisplay(event.content) : null;
-                            const content = displayOutput(reasoning?.summary ?? event.content);
-                            if (event.kind === "thinking" && !content.trim()) return null;
-                            const time = formatMessageTime(event.created_at, nowMs);
-                            return event.kind === "message" ? (
-                              <MessageEvent key={event.id} content={event.content} agents={sessions}
-                                assistantAvatar={assistantIdentityQuery.data?.avatar_data_url ?? null} />
-                            ) : (
-                              <article key={event.id} className={`output-event ${event.kind}${event.system_is_error ? " system-error" : ""}`}>
-                                {event.kind === "user" ? (
-                                  <div className="message-text">
-                                    {content}
-                                  </div>
-                                ) : event.kind === "agents" ? (
-                                  <AgentsEvent sessionId={detailSession.id} content={event.content} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} />
-                                ) : event.kind === "tool" ? (
-                                  <ToolEvent sessionId={detailSession.id} workspaceRoot={detailSession.workspace_root} eventId={event.id} text={content} details={event.tool_details} startedAt={event.started_at} finishedAt={event.finished_at} expandedByDefault={expandTools} showRawToolOutput={showRawToolOutput} onOpenFile={openFileTabForDetail} />
-                                ) : event.kind === "thinking" ? (
-                                  <>
-                                    <Markdown text={content} />
-                                    {reasoning?.truncated && <div className="message-time" role="note" aria-label="Reasoning summary truncated" title="Reasoning summary truncated">...</div>}
-                                  </>
-                                ) : event.kind === "stdout" ? (
-                                  <>
-                                    <Markdown text={content} />
-                                    {time !== "" && (
-                                      <div className="message-time">{time}</div>
-                                    )}
-                                  </>
-                                ) : (
-                                  <div className="message-text">{content}</div>
-                                )}
-                              </article>
-                            );
-                          })}
+                          {renderedTranscriptEvents}
                           {pendingEcho !== null && (
                             <article className="output-event user pending-echo" aria-label="Sending">
                               <div className="message-text">{displayOutput(pendingEcho)}</div>
@@ -3007,21 +3200,20 @@ export function App() {
                       )}
                     </div>
 
-                    {showScrollToBottom && (
-                      <div className="transcript-scroll-controls">
-                        <button type="button" className="scroll-to-bottom" aria-label="Scroll to bottom of conversation"
-                          onClick={() => {
-                            const body = terminalBodyRef.current;
-                            if (!body) return;
-                            followTranscriptRef.current = true;
-                            body.scrollTop = body.scrollHeight;
-                            setShowScrollToBottom(false);
-                            markVisibleRead();
-                          }}>
-                          Scroll to bottom <ChevronIcon />
-                        </button>
-                      </div>
-                    )}
+                    <div ref={scrollControlsRef} className={`transcript-scroll-controls${showScrollToBottomRef.current ? " visible" : ""}`}>
+                      <button ref={scrollToBottomButtonRef} type="button" className="scroll-to-bottom" aria-label="Scroll to bottom of conversation"
+                        tabIndex={showScrollToBottomRef.current ? 0 : -1}
+                        onClick={() => {
+                          const body = terminalBodyRef.current;
+                          if (!body) return;
+                          followTranscriptRef.current = true;
+                          body.scrollTop = body.scrollHeight;
+                          setShowScrollToBottom(false);
+                          markVisibleRead();
+                        }}>
+                        Scroll to bottom <ChevronIcon />
+                      </button>
+                    </div>
 
                     {pendingInputs.map((input) => (
                       <UserInputCard

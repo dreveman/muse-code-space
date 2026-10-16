@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { companionArtwork } from "./companionArtwork";
 import { companionForName } from "./companionRoster";
 
@@ -43,7 +43,7 @@ function CompanionPortrait({ source, crossFade, onError }: {
   </span>;
 }
 
-export function TranscriptCompanion({ name, active, starting, activity, visible, archived = false, connecting = false }: {
+export const TranscriptCompanion = memo(function TranscriptCompanion({ name, active, starting, activity, visible, archived = false, connecting = false }: {
   name: string;
   active: boolean;
   starting: boolean;
@@ -91,4 +91,4 @@ export function TranscriptCompanion({ name, active, starting, activity, visible,
       </span>
     </div>
   );
-}
+});
