@@ -34,12 +34,15 @@ export function CompanionMenu({ name, effort, icon, options, models, picking = f
   const triggerRef = useRef<HTMLButtonElement>(null);
   const id = useId();
   useLayoutEffect(() => {
+    const composer = wrapRef.current?.closest(".terminal-composer");
+    composer?.classList.toggle("menu-open", open);
     if (!open) return;
     const measure = () => setMenuMaxHeight(Math.max(0, (triggerRef.current?.getBoundingClientRect().top ?? 16) - 16));
     measure();
     window.addEventListener("resize", measure);
     window.visualViewport?.addEventListener("resize", measure);
     return () => {
+      composer?.classList.remove("menu-open");
       window.removeEventListener("resize", measure);
       window.visualViewport?.removeEventListener("resize", measure);
     };
