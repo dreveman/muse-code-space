@@ -40,7 +40,8 @@ jobs:
           # everything else here runs on bare Node.
           files=()
           for f in client/src/*.test.mjs server/src/*.test.mjs web/*.test.mjs \
-                   pilot/terminals.test.mjs pilot/files.test.mjs pilot/install.test.mjs; do
+                   pilot/terminals.test.mjs pilot/files.test.mjs pilot/install.test.mjs \
+                   pilot/githubTools.test.mjs; do
             [[ "$f" == *codeHighlight* ]] || files+=("$f")
           done
           node --test "${files[@]}"

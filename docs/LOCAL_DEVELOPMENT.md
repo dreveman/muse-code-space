@@ -600,6 +600,15 @@ interactive (TUI) sessions, so serve-hosted agents never get its
   - Its URL `/mcp/<token>` identifies the agent, so tool calls always know
     the sender. The tools are **`send_message(to, text)`** and
     **`list_agents()`** (`pilot/mcp.mjs`). There is no bash fallback.
+  - When GitHub integration is set up (a broker credential is
+    provisioned), the same server also offers **`github_create_pr`**,
+    **`github_pr_status`**, and **`github_list_prs`** (`pilot/githubTools.mjs`).
+    Calls run from the pilot through the local GitHub broker with the
+    session sentinel — agents never hold a credential — and repo/head
+    default to the session workspace's origin remote and current branch.
+    The gate is checked per request, so provisioning GitHub later lights
+    the tools up without restarting sessions. Watching a PR (polling or
+    notifications) is deliberately not included yet.
   - During pilot startup the HTTP listener starts before sessions resume,
     so required MCP servers can connect; `/health` reports unhealthy and
     normal API routes return 503 until reconciliation finishes.
