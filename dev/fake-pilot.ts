@@ -131,6 +131,48 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Background workflows: runId -> timers + state (so cancel can stop them).
 const workflows = new Map<string, { sessionId: string; timers: Timer[]; itemId: string; cancelled: boolean }>();
 
+// Simulated PR monitoring ("pr-monitor" prompt keyword): the github_monitor_pr
+// tool call starts it, then pr_monitor events update the transcript row —
+// CI fails (with the monitor's injected turn), then the PR merges. Mirrors
+// pilot/prMonitor.mjs payloads so the UI row can be exercised locally.
+function startFakePrMonitor(session: Session) {
+  const monitorId = crypto.randomUUID();
+  const base = {
+    id: monitorId, owner: "dreveman", repo: "muse-code-space", number: 6,
+    title: "Number terminal tabs only when there is more than one",
+    url: "https://github.com/dreveman/muse-code-space/pull/6",
+    approvals: 0, comments: 1,
+    startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+  const emit = (monitor: Record<string, unknown>) => push(session, "pr_monitor", { monitor });
+  const monitorTurn = (text: string, reply: string) => {
+    const hostTurn = crypto.randomUUID();
+    session.openTurn = hostTurn;
+    push(session, "host_turn_started", { turnId: hostTurn });
+    push(session, "item", { item: { kind: "userMessage", text, status: "completed" } });
+    push(session, "item", { item: { kind: "agentMessage", status: "completed", text: reply } });
+    push(session, "turn_completed", { turnId: hostTurn, outcome: { status: "completed" } });
+    if (session.openTurn === hostTurn) session.openTurn = null;
+  };
+  emit({ ...base, status: "monitoring", checks: { passed: 2, failed: 0, pending: 1, failing: [] }, changes: [] });
+  setTimeout(() => {
+    emit({ ...base, status: "monitoring", checks: { passed: 2, failed: 1, pending: 0, failing: ["typecheck"] },
+      changes: [{ at: new Date().toISOString(), text: "CI check failed: typecheck" }] });
+    monitorTurn("[GitHub PR monitor] dreveman/muse-code-space#6: CI check failed: typecheck. https://github.com/dreveman/muse-code-space/pull/6",
+      "I see the typecheck failure — taking a look now.");
+  }, 3000);
+  setTimeout(() => {
+    emit({ ...base, status: "merged", checks: { passed: 3, failed: 0, pending: 0, failing: [] },
+      changes: [
+        { at: new Date().toISOString(), text: "CI check failed: typecheck" },
+        { at: new Date().toISOString(), text: "All checks passed (3 checks)" },
+        { at: new Date().toISOString(), text: "PR was merged" },
+      ] });
+    monitorTurn("[GitHub PR monitor] dreveman/muse-code-space#6: PR was merged. https://github.com/dreveman/muse-code-space/pull/6",
+      "All done — PR #6 is merged and monitoring has ended.");
+  }, 6500);
+}
+
 function startFakeWorkflow(session: Session, turnId: string) {
   const runId = `workflow-run-${crypto.randomUUID()}`;
   const itemId = crypto.randomUUID();
@@ -830,6 +872,7 @@ async function runTurn(session: Session, text: string) {
     const tsWriteContent = "const x: number = 3;\n";
     const jsonTool = /\bjson-tool\b/i.test(text);
     const listAgentsTool = /\blist-agents-tool\b/i.test(text);
+    const monitorTool = /\bpr-monitor\b/i.test(text);
     const sendMessageTool = /\bsend-message-(?:tool|fail)\b/i.test(text);
     const sendMessageFail = /\bsend-message-fail\b/i.test(text);
     const receiveMessage = /\breceive-message\b/i.test(text);
@@ -842,6 +885,7 @@ async function runTurn(session: Session, text: string) {
     const fullOutput = editDiff ? "Applied patch to test.rs"
       : readTool ? (readTsTool ? "Read text file `alpha.ts`.\n1|const x: number = 3;\n2|console.log(x)" : "Read text file `test.rs`.\n1|ALPHA\n2|BETA\n3|GAMMA")
       : writeTool ? (writeTsTool ? `wrote ${Buffer.byteLength(tsWriteContent)} bytes to alpha.ts` : "wrote 17 bytes to test.rs")
+      : monitorTool ? "Monitoring dreveman/muse-code-space#6 — Number terminal tabs only when there is more than one (checks: 2 passed, 0 failed, 1 pending). Updates will be posted to this session as reviews, comments, and CI change; the Monitoring row in the transcript stays live until the PR merges or closes."
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
       : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
       : searchTool ? (searchBad ? "future search format" : searchEmpty ? "" : "alpha.txt-1-ALPHA before\nalpha.txt:2:MCS_SEARCH_PROBE first\nalpha.txt-3-ALPHA after\nbeta.txt-1-BETA before\nbeta.txt:2:MCS_SEARCH_PROBE second\nbeta.txt-3-BETA after")
@@ -852,8 +896,8 @@ async function runTurn(session: Session, text: string) {
     if (editDiff) toolOutputs.set(patchRefId, patchJson);
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
-      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { number: 6 } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },
@@ -885,6 +929,7 @@ async function runTurn(session: Session, text: string) {
         to: { kind: "agent", name: "pip", sessionId: "fake-pip" }, text: "Please run tests", queued: false,
       })] : []),
       () => push(session, "item", { item: toolItem(bashNonzero ? "failed" : "completed") }),
+      ...(monitorTool ? [() => startFakePrMonitor(session)] : []),
     ];
     if (/\bthinking\b/i.test(text)) {
       const reasoningId = crypto.randomUUID();
