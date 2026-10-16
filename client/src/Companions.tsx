@@ -5,7 +5,7 @@ import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
 import { companionModelAccess } from "../../server/src/companionModels";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
-import { CompanionAvatar } from "./CompanionAvatar";
+import { CompanionAvatar, isIdleMotionAllowed, subscribeIdleMotion } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
 import "./companions.css";
 
@@ -69,17 +69,13 @@ function CompanionConfiguration({ companion }: { companion: Companion }) {
 function CompanionCard({ companion, visible, models }: { companion: Companion; visible: boolean; models?: readonly { id: string }[] }) {
   const cardRef = useRef<HTMLElement>(null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
-  const [pageVisible, setPageVisible] = useState(() => !document.hidden);
+  const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const access = companionModelAccess(companion, models);
   const locked = access.status !== "ready";
-  useEffect(() => {
-    const update = () => setPageVisible(!document.hidden);
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
-  }, []);
-  const motion = !locked && !reducedMotion && pageVisible && visible;
+  useEffect(() => subscribeIdleMotion(setIdleMotionAllowed), []);
+  const motion = !locked && !reducedMotion && idleMotionAllowed && visible;
   const cardStill = companion.artwork.cardStill;
   const source = motion ? companion.artwork.cardIdle : cardStill;
   const imageSource = failedSource === source ? cardStill : source;
