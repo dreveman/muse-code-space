@@ -1,9 +1,10 @@
+import { memo } from "react";
 import type { FilePreview } from "./toolPresentation";
 import { CodeFileLines } from "./CodeFileLines";
 
 // Historical read/write preview: only verified tool content gets a numbered
 // code view. Opening it in a tab reads the CURRENT on-disk file separately.
-export function ToolFileView({ preview, workspaceRoot, onOpenFile }: { preview: FilePreview; workspaceRoot: string; onOpenFile?: (path: string) => void }) {
+export const ToolFileView = memo(function ToolFileView({ preview, workspaceRoot, onOpenFile }: { preview: FilePreview; workspaceRoot: string; onOpenFile?: (path: string) => void }) {
   const candidate = preview.path?.startsWith(`${workspaceRoot}/`) ? preview.path.slice(workspaceRoot.length + 1) : preview.path;
   const relative = candidate && !candidate.startsWith("/") && !candidate.includes("\\") &&
     !candidate.split("/").includes("..") && !/[\x00-\x1f\x7f]/.test(candidate) ? candidate : null;
@@ -18,4 +19,4 @@ export function ToolFileView({ preview, workspaceRoot, onOpenFile }: { preview: 
       )}
     </>
   );
-}
+});
