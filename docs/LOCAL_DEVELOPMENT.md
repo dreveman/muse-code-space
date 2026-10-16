@@ -381,7 +381,12 @@ the actions call:
   catalog's `isDefault` entry.
 - Prompt keywords select other scripts: `workflow` (two agents finish in the
   background before a host-started turn), `fail` (turn error), `slow` (10s
-  steps to test Stop), and `ask` (a question the UI must answer).
+  steps to test Stop), `ask` (a question the UI must answer), and
+  `long-transcript [N] [live]` / `benchmark [N] [live]` (generates `N` realistic
+  transcript items — default `200`, up to `1500` — across reasoning, TS/Py/CSS/Rust
+  file reads & writes, structured edit diffs, multi-file searches, bash runs,
+  peer/assistant messages, workflows, and rich Markdown replies; add `live` or
+  `stream` to stream the tail steps over time after the bulk history lands).
 - `receive-message` previews an incoming companion message: **From Pip**, or
   **From Juno** when the current companion is Pip. No sender task is required.
   `send-message-tool` previews an outgoing **To Pip** message. These are
