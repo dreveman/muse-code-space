@@ -2868,12 +2868,61 @@ export function App() {
     () => (agentsRunning ? nowMs : minuteClockMs),
     [agentsRunning ? nowMs : stdoutTimeSignature],
   );
+  const renderedRowCacheRef = useRef<{
+    contextKey: unknown[];
+    rows: Map<
+      number,
+      {
+        content: string;
+        finishedAt: string | null;
+        toolDetails: TranscriptEvent["tool_details"];
+        rowTime: string;
+        rowClockMs: number;
+        element: ReactNode;
+      }
+    >;
+  } | null>(null);
   const renderedTranscriptEvents = useMemo(() => {
     if (!detailSessionIdForFiles) return [];
     const nowMs = transcriptClockMs;
     const sessions = sessionsForMessages;
-    return visibleTranscriptEvents.map((event) => (
-      event.kind === "message" ? (
+    const contextKey = [
+      detailSessionIdForFiles,
+      detailWorkspaceRoot,
+      sessions,
+      assistantAvatarUrl,
+      expandTools,
+      showRawToolOutput,
+      openFileTabForDetail,
+    ];
+    let cache = renderedRowCacheRef.current;
+    if (
+      !cache ||
+      cache.contextKey.length !== contextKey.length ||
+      cache.contextKey.some((val, idx) => !Object.is(val, contextKey[idx]))
+    ) {
+      cache = { contextKey, rows: new Map() };
+      renderedRowCacheRef.current = cache;
+    }
+    const { rows } = cache;
+    return visibleTranscriptEvents.map((event) => {
+      const rowTime = event.kind === "stdout" ? formatMessageTime(event.created_at, nowMs) : "";
+      const runningAgents = event.kind === "agents" && !event.finished_at;
+      const cached = rows.get(event.id);
+      if (
+        cached !== undefined &&
+        cached.content === event.content &&
+        cached.finishedAt === event.finished_at &&
+        cached.toolDetails?.status === event.tool_details?.status &&
+        cached.toolDetails?.output === event.tool_details?.output &&
+        cached.toolDetails?.failureReason === event.tool_details?.failureReason &&
+        cached.rowTime === rowTime &&
+        (!runningAgents || cached.rowClockMs === nowMs)
+      ) {
+        return cached.element;
+      }
+      const rowClockMs = runningAgents || event.kind === "stdout" ? nowMs : 0;
+      const element = event.kind === "message" ? (
         <MessageEvent key={event.id} content={event.content} agents={sessions}
           assistantAvatar={assistantAvatarUrl} />
       ) : (
@@ -2882,13 +2931,22 @@ export function App() {
           event={event}
           detailSessionId={detailSessionIdForFiles}
           detailWorkspaceRoot={detailWorkspaceRoot}
-          nowMs={nowMs}
+          nowMs={rowClockMs}
           expandTools={expandTools}
           showRawToolOutput={showRawToolOutput}
           openFileTabForDetail={openFileTabForDetail}
         />
-      )
-    ));
+      );
+      rows.set(event.id, {
+        content: event.content,
+        finishedAt: event.finished_at,
+        toolDetails: event.tool_details,
+        rowTime,
+        rowClockMs,
+        element,
+      });
+      return element;
+    });
   }, [
     detailSessionIdForFiles,
     detailWorkspaceRoot,
