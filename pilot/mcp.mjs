@@ -99,7 +99,7 @@ export async function handleMcpRequest(token, message, deps) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: MCP_SERVER_NAME, version: "1.0.0" },
       instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there."
-        + (deps.github?.enabled() ? " GitHub tools (github_create_pr, github_pr_status, github_list_prs) work through Code Space's GitHub broker; repo and branch default to your workspace checkout." : ""),
+        + (deps.github?.enabled() ? " GitHub tools (github_create_pr, github_pr_status, github_list_prs, github_monitor_pr) work through Code Space's GitHub broker; repo and branch default to your workspace checkout. github_monitor_pr watches a PR in the background and posts updates to this session." : ""),
     });
   }
   if (method === "ping") return ok(id, {});

@@ -49,6 +49,7 @@ import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from 
 import { readWorkspaceFile } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
+import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
 const HOME = process.env.HOME;
@@ -1090,10 +1091,42 @@ async function githubGitContext(workspaceRoot) {
   return { remote: remote ?? undefined, branch: branch ?? undefined };
 }
 
+// Background PR monitors (prMonitor.mjs): persisted in the state dir and
+// polled through the broker once a minute. A material change updates the
+// session's pr_monitor transcript row and delivers a turn so the agent
+// learns about it without polling itself.
+async function notifyPrMonitor(monitor, changes) {
+  const entry = resolveEntry(monitor.logId);
+  if (!entry) return;
+  const label = `${monitor.owner}/${monitor.repo}#${monitor.number}`;
+  let text = `[GitHub PR monitor] ${label}: ${changes.join("; ")}.${monitor.snapshot?.url ? ` ${monitor.snapshot.url}` : ""}`;
+  if (pendingSeeds.has(entry.logId)) {
+    text = `${pendingSeeds.get(entry.logId)}\n\n---\n\n${text}`;
+    pendingSeeds.delete(entry.logId);
+  }
+  try {
+    const turn = await entry.session.sendUserTurn({ input: [{ type: "text", text }], ifBusy: "queue" });
+    if (turn?.turnId) followedTurns.add(turn.turnId);
+    void pumpTurn(entry.logId, turn);
+  } catch (error) {
+    broadcast(entry.logId, { type: "turn_error", error: `PR monitor update could not be delivered: ${String(error?.message ?? error).slice(0, 200)}` });
+  }
+}
+
+const prMonitors = createPrMonitorRegistry({
+  storePath: `${STATE_DIR}/pr-monitors.json`,
+  brokerRequest: githubBrokerRequest,
+  broadcast,
+  notify: notifyPrMonitor,
+  sessionExists: (logId) => Boolean(resolveEntry(logId)) || Object.hasOwn(loadRegistry(), logId),
+  log,
+});
+
 const githubToolset = createGitHubToolset({
   enabled: () => existsSync(GITHUB_BROKER_CONFIG),
   brokerRequest: githubBrokerRequest,
   gitContext: githubGitContext,
+  monitors: prMonitors,
 });
 
 function healthPayload() {
@@ -1241,6 +1274,8 @@ async function boot() {
     });
   });
   await resumeAll();
+  const resumedMonitors = prMonitors.boot();
+  if (resumedMonitors) log(`resumed ${resumedMonitors} PR monitor(s)`);
   bootReady = true;
 
   // Watch for host death and respawn.
@@ -1507,6 +1542,7 @@ function deleteSession(id) {
     writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
   }
   if (aliases.delete(logId)) saveAliases();
+  prMonitors.forgetSession(logId); // its transcript row is gone; stop watching
   for (const sub of subscribers.get(logId) ?? []) {
     try { sub.end(); } catch { /* already closed */ }
   }

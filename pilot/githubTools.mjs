@@ -1,9 +1,9 @@
 // GitHub tools for Code Space sessions, served by the pilot's per-session
 // MCP server (mcp.mjs) when GitHub integration is set up. Tool calls go to
 // the local GitHub broker with the session sentinel; the broker swaps in
-// the real credential, so agents never hold one. Deliberately small v1:
-// create a PR, read a PR's status, list PRs. Watching/monitoring a PR
-// (polling, notifications) is a later addition, not a silent omission.
+// the real credential, so agents never hold one. Tools: create a PR, read
+// a PR's status, list PRs, and start/stop background PR monitoring (the
+// monitor engine itself lives in prMonitor.mjs, owned by the pilot).
 //
 // Pure logic lives here; the pilot injects the side effects:
 //   enabled()                          -> boolean (broker credential provisioned)
@@ -43,6 +43,25 @@ export const GITHUB_TOOLS = [
       properties: {
         number: { type: "integer", description: "Pull request number." },
         repo: { type: "string", description: "Repository as owner/repo. Defaults to the workspace's origin remote." },
+      },
+      required: ["number"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "github_monitor_pr",
+    title: "Monitor a pull request in the background",
+    description:
+      "Start background monitoring of a pull request. Code Space polls it about once a minute and posts an update " +
+      "to this session when something material changes — a review or approval, new comments, CI checks failing or " +
+      "passing, or the PR merging/closing — and a live Monitoring row in the transcript tracks it. Monitoring " +
+      "survives restarts and runs until the PR merges or closes. Pass stop: true to end it early.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        number: { type: "integer", description: "Pull request number." },
+        repo: { type: "string", description: "Repository as owner/repo. Defaults to the workspace's origin remote." },
+        stop: { type: "boolean", description: "Stop monitoring instead of starting it." },
       },
       required: ["number"],
       additionalProperties: false,
@@ -155,7 +174,7 @@ function formatPrList(prs, repoSlug, state) {
  * Build the toolset the pilot hands to mcp.mjs as deps.github.
  * `call(entry, name, args)` returns { text, isError? }.
  */
-export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
+export function createGitHubToolset({ enabled, brokerRequest, gitContext, monitors = null }) {
   const resolveRepo = async (entry, args) => {
     if (args.repo !== undefined) {
       const parsed = parseRepoArg(args.repo);
@@ -215,6 +234,28 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext }) {
             runs = Array.isArray(checks?.check_runs) ? checks.check_runs : [];
           }
           return { text: formatPrStatus(pr, runs) };
+        }
+        if (name === "github_monitor_pr") {
+          const number = Number.isInteger(args.number) && args.number > 0 ? args.number : null;
+          if (!number) return fail("github_monitor_pr needs a positive integer `number`.");
+          if (!monitors) return fail("PR monitoring isn't available in this Code Space.");
+          const { owner, repo } = await resolveRepo(entry, args);
+          if (args.stop === true) {
+            const stopped = monitors.stop({ logId: entry.logId, owner, repo, number });
+            return stopped
+              ? { text: `Stopped monitoring ${owner}/${repo}#${number}.` }
+              : fail(`No active monitor for ${owner}/${repo}#${number} in this session.`);
+          }
+          const { monitor, created } = await monitors.start({ logId: entry.logId, owner, repo, number });
+          const snap = monitor.snapshot;
+          const checks = snap ? `${snap.checks.passed} passed, ${snap.checks.failed} failed, ${snap.checks.pending} pending` : "checks unknown";
+          if (!monitor.active) {
+            return { text: `${owner}/${repo}#${number} is already ${monitor.status}, so there is nothing to monitor.${snap?.url ? `\n${snap.url}` : ""}` };
+          }
+          return {
+            text: `${created ? "Monitoring" : "Already monitoring"} ${owner}/${repo}#${number}${snap?.title ? ` — ${snap.title}` : ""} (checks: ${checks}). ` +
+              "Updates will be posted to this session as reviews, comments, and CI change; the Monitoring row in the transcript stays live until the PR merges or closes.",
+          };
         }
         if (name === "github_list_prs") {
           const { owner, repo } = await resolveRepo(entry, args);

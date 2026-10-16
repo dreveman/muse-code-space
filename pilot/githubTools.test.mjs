@@ -113,6 +113,34 @@ test("github_list_prs formats, caps the limit, and handles empty", async () => {
   assert.match((await empty.toolset.call(entry, "github_list_prs", { repo: "o/r", state: "closed" })).text, /No closed pull requests/);
 });
 
+test("github_monitor_pr starts, dedupes, stops, and requires the registry", async () => {
+  const started = [];
+  const monitors = {
+    start: async (spec) => {
+      started.push(spec);
+      return { created: started.length === 1, monitor: { active: true, status: "monitoring", snapshot: { title: "Work", url: "https://github.com/o/r/pull/3", checks: { passed: 2, failed: 0, pending: 1, failing: [] } } } };
+    },
+    stop: (spec) => (started.length ? { ...spec } : null),
+  };
+  const withMonitors = createGitHubToolset({
+    enabled: () => true,
+    gitContext: async () => ({ remote: "https://github.com/o/r.git", branch: "main" }),
+    brokerRequest: async () => ({ status: 200, json: {} }),
+    monitors,
+  });
+  const begin = await withMonitors.call(entry, "github_monitor_pr", { number: 3 });
+  assert.match(begin.text, /Monitoring o\/r#3 — Work \(checks: 2 passed, 0 failed, 1 pending\)/);
+  assert.deepEqual(started[0], { logId: "s1", owner: "o", repo: "r", number: 3 });
+  const halt = await withMonitors.call(entry, "github_monitor_pr", { number: 3, stop: true });
+  assert.match(halt.text, /Stopped monitoring o\/r#3\./);
+  assert.equal((await withMonitors.call(entry, "github_monitor_pr", { number: -1 })).isError, true);
+
+  const { toolset } = fakeToolset({});
+  const unavailable = await toolset.call(entry, "github_monitor_pr", { number: 3, repo: "o/r" });
+  assert.equal(unavailable.isError, true);
+  assert.match(unavailable.text, /Failed: PR monitoring isn't available/);
+});
+
 test("the MCP server lists GitHub tools only when enabled and dispatches calls", async () => {
   const { toolset } = fakeToolset({
     context: { remote: "https://github.com/o/r.git", branch: "main" },
