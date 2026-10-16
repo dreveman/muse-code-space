@@ -35,15 +35,68 @@ jobs:
 
       - name: Node tests (client, server, web, pilot shell/install)
         run: |
-          # codeHighlight.test.mjs needs the shiki package at runtime;
-          # everything else runs on bare Node. It joins this job if the
-          # root dependencies ever become installable in CI.
+          # codeHighlight.test.mjs needs the shiki package at runtime, so
+          # it runs in the typecheck job (which installs root deps);
+          # everything else here runs on bare Node.
           files=()
           for f in client/src/*.test.mjs server/src/*.test.mjs web/*.test.mjs \
                    pilot/terminals.test.mjs pilot/files.test.mjs pilot/install.test.mjs; do
             [[ "$f" == *codeHighlight* ]] || files+=("$f")
           done
           node --test "${files[@]}"
+
+  typecheck:
+    # The checks that need root dependencies: typecheck (both tsconfigs)
+    # and the full client/server/web suites, including codeHighlight.
+    # The blocker is @hatch/space-sdk, a platform tarball referenced as
+    # file:/opt/hatch/... rather than a registry package. CI fetches it
+    # from a private Cloudflare R2 bucket (this repo is public, so the
+    # tarball cannot live in a release/artifact here) and verifies the
+    # pinned checksum before placing it where package.json expects it.
+    # To update the SDK: upload the new tarball as space-sdk.tgz, then
+    # bump SDK_TARBALL_SHA256 below to its sha256sum.
+    runs-on: ubuntu-latest
+    env:
+      SDK_TARBALL_SHA256: "031b34f98766aedde11e799911dbe53865265bcd66dd94f9be67731e60a9e67b"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check R2 configuration
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          missing=()
+          [ -n "$R2_ACCOUNT_ID" ] || missing+=(R2_ACCOUNT_ID)
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing+=(CLOUDFLARE_API_TOKEN)
+          if ((${#missing[@]})); then
+            echo "::error::Missing repository secrets: ${missing[*]} — add them under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
+      - name: Fetch the space SDK tarball from R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          # Via the Cloudflare API (the wrangler path), not the S3
+          # endpoint: the runner's aws CLI gets a TLS handshake failure
+          # from <account>.r2.cloudflarestorage.com.
+          curl -fsSL -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$R2_ACCOUNT_ID/r2/buckets/muse-code-space-ci/objects/space-sdk.tgz" \
+            -o /tmp/space-sdk.tgz
+          echo "$SDK_TARBALL_SHA256  /tmp/space-sdk.tgz" | sha256sum -c -
+          sudo mkdir -p /opt/hatch/skills/spaces/ts-runtime/dist
+          sudo cp /tmp/space-sdk.tgz /opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # bun.lock is lockfileVersion 2, which bun 1.3 (the stale
+          # packageManager pin) cannot parse; 1.4 reads it.
+          bun-version: "1.4.3"
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Node tests (client, server, web — all suites)
+        run: node --test client/src/*.test.mjs server/src/*.test.mjs web/*.test.mjs
 
   pilot:
     # The pilot session-lifecycle suite needs @muse-code/sdk, which is a
