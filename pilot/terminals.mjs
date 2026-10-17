@@ -197,6 +197,12 @@ export function createTerminalManager({ log = () => {}, python = process.env.MUS
         };
         t.waiters.add(done);
       });
+      // Full-screen TUI redraws (htop, vim, top) emit multiple write() syscalls
+      // within a fraction of a millisecond. Coalescing briefly after waking
+      // delivers the complete frame in one response instead of two torn halves.
+      if (!t.exited && since < t.end) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
     }
     const from = Math.max(since, t.start);
     const all = Buffer.concat(t.chunks);
