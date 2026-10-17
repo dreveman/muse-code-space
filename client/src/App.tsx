@@ -32,9 +32,8 @@ import { reasoningDisplay } from "./reasoningDisplay";
 import { redundantSendToolIds } from "./messageToolVisibility";
 import { SessionMenu, type SessionMenuAction } from "./WireDebug";
 import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Dialogs";
-import { NewTerminalButton } from "./TerminalPanel";
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
-import { OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
+import { NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 import { contextUsageLabel } from "./contextUsage";
@@ -1930,7 +1929,7 @@ export function App() {
   );
 
   useEffect(() => {
-    const targets = [...new Set([selectedId, queuedSessionId].filter((id): id is string => id !== null))];
+    const targets = [...new Set([selectedId, queuedSessionId].filter((id): id is string => id !== null && id !== draft?.id))];
     if (targets.length === 0) return;
     let cancelled = false;
 
@@ -3442,13 +3441,27 @@ export function App() {
                 </div>
               )}
               {!sessionsQuery.data ? (
-                <p className="detail-loading">Loading companions…</p>
+                <div className="detail-loading boot-loader" role="status" aria-live="polite">
+                  <div className="boot-loader-box">
+                    <span>Loading companions…</span>
+                    <div className="boot-progress-track" aria-hidden="true">
+                      <div className="boot-progress-fill detail-loading-progress-fill" />
+                    </div>
+                  </div>
+                </div>
               ) : sessions.length === 0 ? (
                 <p className="detail-loading">Pick a companion and tell them what you’d like to do.</p>
               ) : selectedId === null ? (
                 <p className="detail-loading">Select a task to see its conversation.</p>
               ) : detailQuery.isPending || !detailSession ? (
-                <p className="detail-loading">Loading output…</p>
+                <div className="detail-loading" role="status" aria-live="polite">
+                  <div className="boot-loader-box">
+                    <span>Loading output…</span>
+                    <div className="boot-progress-track" aria-hidden="true">
+                      <div className="boot-progress-fill detail-loading-progress-fill" />
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <>
                   {/* Side panel (terminal tabs) right of the transcript, stacked when narrow. */}

@@ -5,7 +5,7 @@ import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
 import { companionModelAccess } from "../../server/src/companionModels";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
-import { CompanionAvatar, isIdleMotionAllowed, subscribeIdleMotion } from "./CompanionAvatar";
+import { CompanionAvatar, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
 import "./companions.css";
 
@@ -68,7 +68,6 @@ function CompanionConfiguration({ companion }: { companion: Companion }) {
 
 function CompanionCard({ companion, visible, models }: { companion: Companion; visible: boolean; models?: readonly { id: string }[] }) {
   const cardRef = useRef<HTMLElement>(null);
-  const [failedSource, setFailedSource] = useState<string | null>(null);
   const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -77,15 +76,18 @@ function CompanionCard({ companion, visible, models }: { companion: Companion; v
   useEffect(() => subscribeIdleMotion(setIdleMotionAllowed), []);
   const motion = !locked && !reducedMotion && idleMotionAllowed && visible;
   const cardStill = companion.artwork.cardStill;
-  const source = motion ? companion.artwork.cardIdle : cardStill;
-  const imageSource = failedSource === source ? cardStill : source;
+  const { source: imageSource, onStillLoad, onError } = useProgressiveCompanionImage(
+    cardStill,
+    companion.artwork.cardIdle,
+    motion,
+  );
   return (
     <article ref={cardRef} className={`companion-card${locked ? " companion-card-locked" : ""}${detailsOpen ? " companion-card-expanded" : ""}`} aria-labelledby="companion-card-name"
       style={{ "--companion-hue": agentNameHue(companion.name) } as CSSProperties}>
       <div className="companion-card-identity">
         <div className="companion-card-portrait">
           <img src={imageSource} width={256} height={256} alt={companion.character}
-            decoding="async" onError={() => setFailedSource(source)} />
+            fetchPriority="high" decoding="async" onLoad={onStillLoad} onError={onError} />
           {locked && <span className="companion-unavailable-banner">Unavailable</span>}
         </div>
         <header className="companion-card-heading">

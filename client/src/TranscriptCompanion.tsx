@@ -1,15 +1,17 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { companionArtwork } from "./companionArtwork";
-import { isIdleMotionAllowed, subscribeIdleMotion } from "./CompanionAvatar";
+import { isIdleMotionAllowed, isSlowConnection, subscribeIdleMotion } from "./CompanionAvatar";
 import { companionForName } from "./companionRoster";
 
-function CompanionPortrait({ source, crossFade, onError }: {
+function CompanionPortrait({ source, initialSource, crossFade, onError }: {
   source: string;
+  initialSource?: string;
   crossFade: boolean;
   onError: () => void;
 }) {
-  const [layers, setLayers] = useState([source]);
-  const [shown, setShown] = useState(source);
+  const startSource = initialSource && crossFade && initialSource !== source ? initialSource : source;
+  const [layers, setLayers] = useState(() => startSource !== source ? [startSource, source] : [source]);
+  const [shown, setShown] = useState(startSource);
   const loaded = useRef(new Set<string>());
   useLayoutEffect(() => {
     if (!crossFade) {
@@ -75,7 +77,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   }, []);
   const animation = starting ? "waking" : active ? "working" : "idle";
   const animatedSource = artwork && (animation === "idle" ? artwork.portraitIdle : artwork[animation]);
-  const canAnimate = (animation === "idle" ? idleMotionAllowed : motionAllowed) && visible && !archived;
+  const canAnimate = (animation === "idle" ? idleMotionAllowed : motionAllowed && !isSlowConnection()) && visible && !archived;
   const source = artwork && (canAnimate ? animatedSource : artwork.still);
   const imageSource = failedSource === source ? artwork?.still : source;
   const activityLabel = activity === "Thinking" ? "is thinking"
@@ -85,7 +87,9 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   const showActivity = connecting || archived || active || starting;
   return (
     <div className="transcript-companion" data-animation={archived ? "archived" : animation}>
-      {imageSource && <CompanionPortrait source={imageSource} crossFade={motionAllowed && visible && !archived}
+      {imageSource && <CompanionPortrait source={imageSource}
+        initialSource={starting ? imageSource : (artwork?.still ?? imageSource)}
+        crossFade={motionAllowed && visible && !archived}
         onError={() => setFailedSource(source ?? null)} />}
       <span className="transcript-companion-label" role="status" aria-live="polite" aria-atomic="true"
         aria-label={showActivity ? `${name}: ${label}` : name}>

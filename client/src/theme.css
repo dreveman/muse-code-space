@@ -202,7 +202,9 @@ button { color: inherit; }
 @media (pointer: coarse) { .session-row { min-height: 40px; } }
 
 .detail-pane { position: relative; min-width: 0; background: var(--surface); overflow: hidden; }
-.detail-loading { min-height: 300px; display: grid; place-items: center; color: var(--dim); font: 12px var(--mono); }
+.detail-loading { min-height: 300px; flex: 1 1 0; display: grid; place-items: center; color: var(--dim); font: 12px var(--mono); }
+.detail-loading-progress-fill { width: 90%; animation: detail-loading-pulse 1.6s ease-in-out infinite; }
+@keyframes detail-loading-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 .detail-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 .takeover-trigger { min-height: 34px; padding: 0 12px; border: 0; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); cursor: pointer; font: 650 11px var(--mono); }
 .takeover-trigger:hover, .takeover-trigger.active { background: var(--accent); color: var(--surface-strong); }

@@ -12,7 +12,10 @@ import { Terminal, useTerminal, type WTerm } from "@wterm/react";
 import "@wterm/react/css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { NewTerminalButton } from "./SidePanel";
 import { optimizeTerminalInstance } from "./terminalOptimizations";
+
+export { NewTerminalButton };
 
 type Status = "starting" | "connected" | "reconnecting" | "exited" | "error";
 
@@ -25,30 +28,6 @@ function decodeBase64(data: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
-}
-
-function TerminalIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
-      <path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4" />
-    </svg>
-  );
-}
-
-/** Floating chat button: always opens a new terminal tab. */
-export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button
-      type="button"
-      className="terminal-toggle"
-      onClick={onOpen}
-      aria-label="Open a new terminal"
-      title="New terminal in the working directory"
-    >
-      <TerminalIcon />
-    </button>
-  );
 }
 
 export function TerminalView({ sessionId, terminalId, active, onOpened }: {

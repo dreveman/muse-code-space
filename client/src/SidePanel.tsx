@@ -1,9 +1,31 @@
 // Session side panel: file tabs share the space beside the transcript with
 // terminal tabs. Closing a terminal ends its shell; closing a file discards
 // its local view.
-import { memo, useEffect, useRef, useState } from "react";
-import { TerminalView } from "./TerminalPanel";
+import "@wterm/react/css";
+import { Suspense, lazy, memo, useEffect, useRef, useState } from "react";
 import { FileTab } from "./FileTab";
+
+const LazyTerminalView = lazy(() =>
+  import("./TerminalPanel").then((m) => ({ default: m.TerminalView })),
+);
+
+/** Floating chat button: always opens a new terminal tab. */
+export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className="terminal-toggle"
+      onClick={onOpen}
+      aria-label="Open a new terminal"
+      title="New terminal in the working directory"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+        <path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4" />
+      </svg>
+    </button>
+  );
+}
 
 export type SideTab =
   | { key: string; kind: "terminal"; terminalId: string | null; number: number | null }
@@ -99,12 +121,14 @@ export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpene
               hidden={!selected}
             >
               {tab.kind === "terminal" ? (
-                <TerminalView
-                  sessionId={sessionId}
-                  terminalId={tab.terminalId}
-                  active={selected}
-                  onOpened={(terminalId, number) => onTerminalOpened(tab.key, terminalId, number)}
-                />
+                <Suspense fallback={<div className="terminal-view" />}>
+                  <LazyTerminalView
+                    sessionId={sessionId}
+                    terminalId={tab.terminalId}
+                    active={selected}
+                    onOpened={(terminalId, number) => onTerminalOpened(tab.key, terminalId, number)}
+                  />
+                </Suspense>
               ) : <FileTab sessionId={sessionId} path={tab.path} />}
             </div>
           );
