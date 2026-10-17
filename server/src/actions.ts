@@ -3130,14 +3130,19 @@ export const Actions = {
         // only on start and material changes, so each event is meaningful.
         if (event.type === "pr_monitor" && event.monitor?.id) {
           const content = JSON.stringify(event.monitor);
+          const itemAt = event.at ? new Date(event.at) : new Date();
+          const running = event.monitor.status === "monitoring";
           const existing = (await db
-            .select({ id: schema.outputEvents.id, content: schema.outputEvents.content })
+            .select({ id: schema.outputEvents.id, content: schema.outputEvents.content, finishedAt: schema.outputEvents.finishedAt })
             .from(schema.outputEvents)
             .where(and(eq(schema.outputEvents.sessionId, session.id), eq(schema.outputEvents.itemId, event.monitor.id)))
             .limit(1))[0];
           if (existing) {
-            if (existing.content !== content) {
-              await db.update(schema.outputEvents).set({ content }).where(eq(schema.outputEvents.id, existing.id));
+            if (existing.content !== content || (!running && !existing.finishedAt)) {
+              await db
+                .update(schema.outputEvents)
+                .set({ content, ...(!running ? { finishedAt: existing.finishedAt ?? itemAt } : {}) })
+                .where(eq(schema.outputEvents.id, existing.id));
               outputChanges += 1;
             }
           } else {
@@ -3145,7 +3150,9 @@ export const Actions = {
               sessionId: session.id,
               kind: "pr_monitor",
               content,
-              createdAt: event.at ? new Date(event.at) : new Date(),
+              createdAt: itemAt,
+              startedAt: itemAt,
+              finishedAt: running ? null : itemAt,
               itemId: event.monitor.id,
             });
             outputChanges += 1;
