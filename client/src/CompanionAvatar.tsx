@@ -40,6 +40,27 @@ export function markAnimationPreloaded(url: string | undefined): void {
   if (url) preloadedAnimations.add(url);
 }
 
+export function preloadCompanionStill(url: string | undefined): Promise<void> {
+  if (!url || isAnimationPreloaded(url) || typeof Image === "undefined" || typeof window === "undefined") {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    const img = new Image();
+    img.decoding = "async";
+    const done = () => {
+      window.clearTimeout(timer);
+      img.onload = null;
+      img.onerror = null;
+      markAnimationPreloaded(url);
+      resolve();
+    };
+    const timer = window.setTimeout(done, 10_000);
+    img.onload = done;
+    img.onerror = done;
+    img.src = url;
+  });
+}
+
 type NetworkInfo = {
   saveData?: boolean;
   effectiveType?: string;
@@ -264,6 +285,7 @@ export function CompanionAvatar({ artwork, animate = true, className }: {
     artwork.portraitIdle,
     animate && motionAllowed && inView,
   );
+  const preloaded = isAnimationPreloaded(source);
   return <img ref={imageRef} className={className} src={source}
-    width={44} height={44} alt="" loading="lazy" decoding="async" onLoad={onStillLoad} onError={onError} />;
+    width={44} height={44} alt="" loading={preloaded ? "eager" : "lazy"} decoding={preloaded ? "sync" : "async"} onLoad={onStillLoad} onError={onError} />;
 }

@@ -5,7 +5,7 @@ import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
 import { companionModelAccess } from "../../server/src/companionModels";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
-import { CompanionAvatar, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
+import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
 import "./companions.css";
 
@@ -87,7 +87,7 @@ function CompanionCard({ companion, visible, models }: { companion: Companion; v
       <div className="companion-card-identity">
         <div className="companion-card-portrait">
           <img src={imageSource} width={256} height={256} alt={companion.character}
-            fetchPriority="high" decoding="async" onLoad={onStillLoad} onError={onError} />
+            fetchPriority="high" decoding={isAnimationPreloaded(imageSource) ? "sync" : "async"} onLoad={onStillLoad} onError={onError} />
           {locked && <span className="companion-unavailable-banner">Unavailable</span>}
         </div>
         <header className="companion-card-heading">

@@ -14,7 +14,7 @@ import { MoreCompanionsButton } from "./MoreCompanionsButton";
 import { TranscriptCompanion } from "./TranscriptCompanion";
 import { availableCompanionDefinitions, companionAssignedElsewhere, companionForName, isDefaultCompanion, matchesCompanionQuery } from "./companionRoster";
 import { companionArtwork } from "./companionArtwork";
-import { CompanionAvatar } from "./CompanionAvatar";
+import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
 import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSessionsByAge, groupSessionsByProject, resolveSelectedId, isSessionActive, sortSessions, type SortMode } from "./sessionList";
@@ -1413,7 +1413,28 @@ export function App() {
   });
   const sessionsQuery = useQuery({
     queryKey: ["code-sessions"],
-    queryFn: () => api.listSessions({ limit: 100 }),
+    queryFn: async () => {
+      const isInitialLoad = !queryClient.getQueryData(["code-sessions"]);
+      const data = await api.listSessions({ limit: 100 });
+      if (isInitialLoad) {
+        const activeSessions = data.sessions.filter((item) => !item.archived);
+        const urls = new Set<string>();
+        for (const item of activeSessions) {
+          const url = companionArtwork[companionForName(item.title)?.id ?? ""]?.still;
+          if (url) urls.add(url);
+        }
+        if (activeSessions.length === 0) {
+          for (const companion of companions) {
+            if (isDefaultCompanion(companion)) urls.add(companion.artwork.still);
+          }
+          if (companions[0]?.artwork.cardStill) urls.add(companions[0].artwork.cardStill);
+        }
+        if (urls.size > 0) {
+          await Promise.all([...urls].map((url) => preloadCompanionStill(url)));
+        }
+      }
+      return data;
+    },
     refetchInterval: 3000,
   });
   // Durable first prompts survive service restarts in app.db. On every open
@@ -1672,11 +1693,17 @@ export function App() {
           immutablePrefix = cached.events.slice(0, cutoff);
         }
       }
-      const rawData = await api.getSession({
-        id,
-        event_limit: 1000,
-        ...(afterId !== undefined ? { after_id: afterId } : {}),
-      });
+      const stillUrl = afterId === undefined
+        ? companionArtwork[companionForName(selectedSession?.title ?? "")?.id ?? ""]?.still
+        : undefined;
+      const [rawData] = await Promise.all([
+        api.getSession({
+          id,
+          event_limit: 1000,
+          ...(afterId !== undefined ? { after_id: afterId } : {}),
+        }),
+        preloadCompanionStill(stillUrl),
+      ]);
       const mergedEvents = afterId !== undefined && rawData.session
         ? rawData.events.length === 0 && immutablePrefix.length === cached?.events.length
           ? cached.events
