@@ -221,3 +221,9 @@ test("terminal rows and side-tab-panel are strict CSS relayout boundaries", () =
   assert.ok(/\.terminal-panel-term\s+\.term-row\s*\{[^}]*contain:\s*strict/.test(css));
   assert.ok(/\.side-tab-panel\s*\{[^}]*contain:\s*strict/.test(css));
 });
+
+test("terminal input drains all keystrokes accumulated during an in-flight POST as one batch", () => {
+  const panel = readFileSync(new URL("./TerminalPanel.tsx", import.meta.url), "utf8");
+  assert.ok(panel.includes("while (pendingInput.current.length > 0)"), "drains accumulated pendingInput inside the send loop");
+  assert.ok(panel.includes("if (sendingInputRef.current || !pendingInput.current || !terminalIdRef.current) return;"), "does not slice 1-char closures while a POST is in flight");
+});

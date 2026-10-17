@@ -47,6 +47,7 @@ export function TerminalView({ sessionId, terminalId, active, onOpened }: {
   const terminalIdRef = useRef<string | null>(terminalId);
   const reattachRef = useRef(terminalId !== null); // the first open reattaches
   const pendingInput = useRef("");
+  const sendingInputRef = useRef(false);
   const flushTimer = useRef<number | null>(null);
   const sendChain = useRef<Promise<void>>(Promise.resolve());
   const resizeTimer = useRef<number | null>(null);
@@ -133,15 +134,33 @@ export function TerminalView({ sessionId, terminalId, active, onOpened }: {
   }, [term, sessionId, generation, write]);
 
   const flushInput = useCallback(() => {
-    flushTimer.current = null;
-    const data = pendingInput.current;
-    const id = terminalIdRef.current;
-    if (!data || !id) return;
-    pendingInput.current = "";
-    // Strictly ordered: each batch waits for the previous POST.
+    if (flushTimer.current !== null) {
+      window.clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    if (sendingInputRef.current || !pendingInput.current || !terminalIdRef.current) return;
+    sendingInputRef.current = true;
+    // Strictly ordered: drain all keystrokes accumulated while the previous
+    // POST was in flight as a single batch instead of one POST per keystroke.
     sendChain.current = sendChain.current.then(async () => {
-      const result = await api.terminalInput({ terminal_id: id, data }).catch(() => null);
-      if (!result?.ok) setError(result?.error ?? "Keystrokes couldn't be sent.");
+      try {
+        while (pendingInput.current.length > 0) {
+          const id = terminalIdRef.current;
+          if (!id) {
+            pendingInput.current = "";
+            break;
+          }
+          const data = pendingInput.current;
+          pendingInput.current = "";
+          const result = await api.terminalInput({ terminal_id: id, data }).catch(() => null);
+          if (!result?.ok) {
+            setError(result?.error ?? "Keystrokes couldn't be sent.");
+            break;
+          }
+        }
+      } finally {
+        sendingInputRef.current = false;
+      }
     });
   }, []);
 
