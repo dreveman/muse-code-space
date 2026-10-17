@@ -8,6 +8,9 @@ import "./theme.css";
 
 // Resolve the saved palette before React renders the first frame.
 applyColorMode(loadColorMode());
+document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][media="print"]').forEach((link) => {
+  link.media = "all";
+});
 
 const rootEl = document.querySelector<HTMLElement>("[data-generated-space-root]");
 if (!rootEl) {

@@ -157,6 +157,7 @@ async function buildClient(): Promise<boolean> {
   const result = await Bun.build({
     entrypoints: [join(ROOT, "client/index.html")],
     outdir: OUT_DIR,
+    splitting: true,
     minify: false,
     sourcemap: "linked",
     define: { "process.env.NODE_ENV": JSON.stringify("development") },
@@ -297,7 +298,12 @@ async function serveStatic(pathname: string): Promise<Response> {
     return serveStatic("/");
   }
   if (rel === "index.html") {
-    const html = (await file.text()).replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
+    const html = (await file.text())
+      .replace(
+        /<link rel="stylesheet"([^>]*?)>/g,
+        '<link rel="stylesheet"$1 media="print" onload="this.media=\'all\';window.__onCssLoaded&&window.__onCssLoaded()">',
+      )
+      .replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   return new Response(file, { headers: { "cache-control": "no-store" } });

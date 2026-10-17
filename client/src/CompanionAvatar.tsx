@@ -13,9 +13,102 @@ let idleTimer: number | null = null;
 let lastActivityAt = 0;
 let userIdle = false;
 let reducedMotionMedia: MediaQueryList | null = null;
+const preloadedAnimations = new Set<string>();
+
+type NetworkInfo = {
+  saveData?: boolean;
+  effectiveType?: string;
+  downlink?: number;
+  rtt?: number;
+};
+
+export function isSlowConnection(): boolean {
+  if (typeof navigator !== "undefined") {
+    const conn = (navigator as unknown as { connection?: NetworkInfo }).connection;
+    if (conn) {
+      if (conn.saveData === true) return true;
+      if (conn.effectiveType === "slow-2g" || conn.effectiveType === "2g" || conn.effectiveType === "3g") return true;
+      if (typeof conn.downlink === "number" && conn.downlink > 0 && conn.downlink < 2) return true;
+      if (typeof conn.rtt === "number" && conn.rtt >= 150) return true;
+    }
+  }
+  if (typeof performance !== "undefined" && typeof performance.getEntriesByType === "function") {
+    const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+    for (let i = 0; i < resources.length; i++) {
+      const entry = resources[i]!;
+      if (/\.(js|css)(\?|$)/.test(entry.name) && entry.duration > 500) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function useProgressiveCompanionImage(stillSource: string, animatedSource: string, motionEnabled: boolean): {
+  source: string;
+  onStillLoad: () => void;
+  onError: () => void;
+} {
+  const [stillLoaded, setStillLoaded] = useState(() => preloadedAnimations.has(stillSource));
+  const [animatedReady, setAnimatedReady] = useState(() => preloadedAnimations.has(animatedSource));
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStillLoaded(preloadedAnimations.has(stillSource));
+    setAnimatedReady(preloadedAnimations.has(animatedSource));
+    setFailedSource(null);
+  }, [stillSource, animatedSource]);
+
+  useEffect(() => {
+    if (!motionEnabled || !stillLoaded || animatedSource === stillSource || failedSource === animatedSource) return;
+    if (preloadedAnimations.has(animatedSource)) {
+      setAnimatedReady(true);
+      return;
+    }
+    let cancelled = false;
+    let img: HTMLImageElement | null = null;
+    const timer = window.setTimeout(() => {
+      if (cancelled || isSlowConnection()) return;
+      img = new Image();
+      img.decoding = "async";
+      img.onload = () => {
+        if (cancelled) return;
+        preloadedAnimations.add(animatedSource);
+        setAnimatedReady(true);
+      };
+      img.onerror = () => {
+        if (cancelled) return;
+        setFailedSource(animatedSource);
+      };
+      img.src = animatedSource;
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (img) {
+        img.onload = null;
+        img.onerror = null;
+      }
+    };
+  }, [motionEnabled, stillLoaded, animatedSource, stillSource, failedSource]);
+
+  const useAnimated = motionEnabled && animatedReady && failedSource !== animatedSource;
+  const source = useAnimated ? animatedSource : stillSource;
+  return {
+    source,
+    onStillLoad: () => {
+      preloadedAnimations.add(stillSource);
+      setStillLoaded(true);
+    },
+    onError: () => {
+      if (useAnimated) setFailedSource(animatedSource);
+    },
+  };
+}
 
 export function isIdleMotionAllowed(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
+  if (isSlowConnection()) return false;
   const reduced = reducedMotionMedia
     ? reducedMotionMedia.matches
     : window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -103,9 +196,8 @@ export function CompanionAvatar({ artwork, animate = true, className }: {
   const imageRef = useRef<HTMLImageElement>(null);
   const [motionAllowed, setMotionAllowed] = useState(false);
   const [inView, setInView] = useState(false);
-  const [failedSource, setFailedSource] = useState<string | null>(null);
   useEffect(() => {
-    if (artwork.portraitIdle === artwork.still) return;
+    if (!animate || artwork.portraitIdle === artwork.still) return;
     const stopMotion = subscribeIdleMotion(setMotionAllowed);
     const stopInView = imageRef.current && typeof IntersectionObserver !== "undefined"
       ? observeElementIntersection(imageRef.current, null, "0px", setInView)
@@ -114,8 +206,12 @@ export function CompanionAvatar({ artwork, animate = true, className }: {
       stopMotion();
       stopInView?.();
     };
-  }, [artwork.portraitIdle, artwork.still]);
-  const source = animate && motionAllowed && inView ? artwork.portraitIdle : artwork.still;
-  return <img ref={imageRef} className={className} src={failedSource === source ? artwork.still : source}
-    width={44} height={44} alt="" loading="lazy" decoding="async" onError={() => setFailedSource(source)} />;
+  }, [animate, artwork.portraitIdle, artwork.still]);
+  const { source, onStillLoad, onError } = useProgressiveCompanionImage(
+    artwork.still,
+    artwork.portraitIdle,
+    animate && motionAllowed && inView,
+  );
+  return <img ref={imageRef} className={className} src={source}
+    width={44} height={44} alt="" loading="lazy" decoding="async" onLoad={onStillLoad} onError={onError} />;
 }

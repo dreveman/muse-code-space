@@ -7,4 +7,7 @@
 
 import { buildClient } from "@hatch/space-sdk/build";
 
+const originalBuild = Bun.build.bind(Bun);
+Bun.build = (options) => originalBuild({ splitting: true, ...options });
+
 await buildClient();
