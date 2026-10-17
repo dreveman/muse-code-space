@@ -34,6 +34,7 @@ import { SessionMenu, type SessionMenuAction } from "./WireDebug";
 import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Dialogs";
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { PrMonitorEvent } from "./PrMonitorEvent";
+import { parsePrMonitor } from "./prMonitor";
 import { NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
@@ -1627,7 +1628,10 @@ export function App() {
         let cutoff = cached.events.length;
         for (let i = 0; i < cached.events.length; i++) {
           const ev = cached.events[i]!;
-          if ((ev.kind === "tool" || ev.kind === "thinking" || ev.kind === "agents") && ev.finished_at === null) {
+          if (
+            ((ev.kind === "tool" || ev.kind === "thinking" || ev.kind === "agents") && ev.finished_at === null) ||
+            (ev.kind === "pr_monitor" && parsePrMonitor(ev.content)?.status === "monitoring")
+          ) {
             cutoff = i;
             break;
           }
@@ -1885,6 +1889,7 @@ export function App() {
   // ended: keep syncing and ticking while any agents row is still running
   // (bounded, so a row orphaned by a lost backend doesn't poll forever).
   const agentsRunning = useMemo(() => transcriptEvents.some((event) => {
+    if (event.kind === "pr_monitor") return parsePrMonitor(event.content)?.status === "monitoring";
     if (event.kind !== "agents" || event.finished_at) return false;
     const row = parseAgentsRow(event.content);
     const started = event.started_at ? Date.parse(event.started_at) : NaN;

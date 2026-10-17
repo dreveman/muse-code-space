@@ -34,8 +34,16 @@ test("the transcript renders pr_monitor rows with the dedicated component", () =
   const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const component = readFileSync(new URL("./PrMonitorEvent.tsx", import.meta.url), "utf8");
   const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../../drizzle/0024_add_pr_monitor_events.sql", import.meta.url), "utf8");
+  const journal = readFileSync(new URL("../../drizzle/meta/_journal.json", import.meta.url), "utf8");
   assert.ok(app.includes('event.kind === "pr_monitor" ? ('));
   assert.ok(app.includes("<PrMonitorEvent content={event.content} />"));
+  assert.ok(app.includes('(ev.kind === "pr_monitor" && parsePrMonitor(ev.content)?.status === "monitoring")'), "incremental getSession cutoff includes active pr_monitor rows");
+  assert.ok(app.includes('if (event.kind === "pr_monitor") return parsePrMonitor(event.content)?.status === "monitoring";'), "session keeps live polling while a PR monitor is active");
   assert.ok(component.includes('row.status === "monitoring"'), "spinner only while active");
   assert.ok(css.includes(".pr-monitor-row {"), "row has dedicated styling");
+  assert.ok(journal.includes('"0024_add_pr_monitor_events"'), "migration is registered in drizzle journal");
+  for (const required of ["'pr_monitor'", "system_is_error", "tool_details", "CREATE INDEX output_events_session_id_idx", "CREATE INDEX output_events_item_idx"]) {
+    assert.ok(migration.includes(required), `migration preserves ${required}`);
+  }
 });
