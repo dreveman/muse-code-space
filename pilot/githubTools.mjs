@@ -50,20 +50,30 @@ export const GITHUB_TOOLS = [
   },
   {
     name: "github_monitor_pr",
-    title: "Monitor a pull request in the background",
+    title: "Monitor pull requests in the background",
     description:
-      "Start background monitoring of a pull request. Code Space polls it about once a minute and posts an update " +
+      "Start or stop background monitoring of one or more pull requests. Code Space polls them about once a minute and posts an update " +
       "to this session when something material changes — a review or approval, new comments, CI checks failing or " +
-      "passing, or the PR merging/closing — and a live Monitoring row in the transcript tracks it. Monitoring " +
-      "survives restarts and runs until the PR merges or closes. Pass stop: true to end it early.",
+      "passing, or a PR merging/closing — and a live Monitoring row in the transcript tracks each PR. Monitoring " +
+      "survives restarts and runs until the PR merges or closes. Pass action: \"unsubscribe\" or stop: true to end it early.",
     inputSchema: {
       type: "object",
       properties: {
-        number: { type: "integer", description: "Pull request number." },
+        action: { type: "string", enum: ["subscribe", "unsubscribe"], description: "Whether to start (subscribe) or stop (unsubscribe) monitoring. Default subscribe." },
+        pr_ids: {
+          type: "array",
+          items: { type: ["string", "number"] },
+          description: "Pull request numbers or #N identifiers to monitor, e.g. [\"#6\", \"#7\"].",
+        },
+        numbers: {
+          type: "array",
+          items: { type: "integer" },
+          description: "Pull request numbers to monitor.",
+        },
+        number: { type: "integer", description: "Single pull request number." },
         repo: { type: "string", description: "Repository as owner/repo. Defaults to the workspace's origin remote." },
         stop: { type: "boolean", description: "Stop monitoring instead of starting it." },
       },
-      required: ["number"],
       additionalProperties: false,
     },
   },
@@ -236,25 +246,68 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext, monito
           return { text: formatPrStatus(pr, runs) };
         }
         if (name === "github_monitor_pr") {
-          const number = Number.isInteger(args.number) && args.number > 0 ? args.number : null;
-          if (!number) return fail("github_monitor_pr needs a positive integer `number`.");
+          const rawList = [
+            ...(Array.isArray(args.pr_ids) ? args.pr_ids : []),
+            ...(Array.isArray(args.numbers) ? args.numbers : []),
+            ...(args.number !== undefined ? [args.number] : []),
+          ];
+          const prNumbers = [];
+          for (const item of rawList) {
+            const parsed = typeof item === "number"
+              ? item
+              : typeof item === "string"
+                ? Number(item.trim().replace(/^.*#/, ""))
+                : NaN;
+            if (!Number.isInteger(parsed) || parsed <= 0) {
+              return fail("github_monitor_pr needs positive integer PR numbers (`number` or `pr_ids`).");
+            }
+            if (!prNumbers.includes(parsed)) prNumbers.push(parsed);
+          }
+          if (prNumbers.length === 0) {
+            return fail("github_monitor_pr needs a positive integer `number` or non-empty `pr_ids`.");
+          }
           if (!monitors) return fail("PR monitoring isn't available in this Code Space.");
           const { owner, repo } = await resolveRepo(entry, args);
-          if (args.stop === true) {
-            const stopped = monitors.stop({ logId: entry.logId, owner, repo, number });
-            return stopped
-              ? { text: `Stopped monitoring ${owner}/${repo}#${number}.` }
-              : fail(`No active monitor for ${owner}/${repo}#${number} in this session.`);
+          const stopping = args.stop === true || args.action === "unsubscribe";
+          if (stopping) {
+            const stopped = [];
+            for (const num of prNumbers) {
+              if (monitors.stop({ logId: entry.logId, owner, repo, number: num })) {
+                stopped.push(num);
+              }
+            }
+            if (stopped.length === 0) {
+              return fail(`No active monitor for ${owner}/${repo}#${prNumbers[0]} in this session.`);
+            }
+            return {
+              text: stopped.length === 1
+                ? `Stopped monitoring ${owner}/${repo}#${stopped[0]}.`
+                : `Stopped monitoring ${stopped.map((n) => `${owner}/${repo}#${n}`).join(", ")}.`,
+            };
           }
-          const { monitor, created } = await monitors.start({ logId: entry.logId, owner, repo, number });
-          const snap = monitor.snapshot;
-          const checks = snap ? `${snap.checks.passed} passed, ${snap.checks.failed} failed, ${snap.checks.pending} pending` : "checks unknown";
-          if (!monitor.active) {
-            return { text: `${owner}/${repo}#${number} is already ${monitor.status}, so there is nothing to monitor.${snap?.url ? `\n${snap.url}` : ""}` };
+          const results = [];
+          for (const num of prNumbers) {
+            const res = await monitors.start({ logId: entry.logId, owner, repo, number: num });
+            results.push({ number: num, ...res });
           }
+          const lines = [];
+          for (const { number: num, monitor, created } of results) {
+            const snap = monitor.snapshot;
+            const checks = snap ? `${snap.checks.passed} passed, ${snap.checks.failed} failed, ${snap.checks.pending} pending` : "checks unknown";
+            const stateTag = monitor.active ? (snap?.draft ? "DRAFT" : "OPEN") : String(monitor.status).toUpperCase();
+            const comments = snap?.commentCount ?? 0;
+            const headLine = `${created ? "Monitoring" : "Already monitoring"} ${owner}/${repo}#${num}${snap?.title ? ` — ${snap.title}` : ""} (checks: ${checks})`;
+            lines.push(`  #${num} — ${stateTag} · CI: ${checks} · ${comments} comment${comments === 1 ? "" : "s"} · ${headLine}`);
+          }
+          const activeList = typeof monitors.list === "function"
+            ? monitors.list().filter((m) => m.active && m.logId === entry.logId).map((m) => `#${m.number}`)
+            : results.filter((r) => r.monitor.active).map((r) => `#${r.number}`);
+          const activeIds = activeList.length > 0 ? activeList : results.map((r) => `#${r.number}`);
           return {
-            text: `${created ? "Monitoring" : "Already monitoring"} ${owner}/${repo}#${number}${snap?.title ? ` — ${snap.title}` : ""} (checks: ${checks}). ` +
-              "Updates will be posted to this session as reviews, comments, and CI change; the Monitoring row in the transcript stays live until the PR merges or closes.",
+            text:
+              `Now monitoring ${results.length} PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n` +
+              `Current state:\n${lines.join("\n")}\n\n` +
+              `Active subscriptions: ${activeIds.join(", ")}.`,
           };
         }
         if (name === "github_list_prs") {
