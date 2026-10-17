@@ -1629,7 +1629,7 @@ export function App() {
             break;
           }
         }
-        if (cutoff > 0) {
+        if (cutoff > 0 && cached.events[cutoff - 1]!.id > 0) {
           afterId = cached.events[cutoff - 1]!.id;
           immutablePrefix = cached.events.slice(0, cutoff);
         }
@@ -1706,7 +1706,7 @@ export function App() {
       selectedSession.status !== detailLoadedSession.status ||
       selectedSession.summary !== detailLoadedSession.summary
     ) {
-      void queryClient.invalidateQueries({ queryKey: ["code-session", selectedSession.id] });
+      void queryClient.invalidateQueries({ queryKey: ["code-session", selectedSession.id] }, { cancelRefetch: false });
     }
   }, [
     selectedSession?.id,
@@ -1731,6 +1731,7 @@ export function App() {
     queryKey: ["owned-artifacts", selectedId],
     queryFn: () => api.listOwnedArtifacts({ session_id: selectedId ?? "" }),
     enabled: selectedSession !== null && selectedId !== draft?.id,
+    staleTime: 4000,
     placeholderData: keepPreviousData,
     refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 5000 : false,
   });
@@ -1942,11 +1943,11 @@ export function App() {
         // queued prompt so it uses continueSession rather than stale sendInput.
         if (!cancelled && (result.added > 0 || id === queuedSessionId && result.pilot_available === true)) {
           if (id === selectedIdRef.current && id !== queuedSessionId) {
-            await queryClient.invalidateQueries({ queryKey: ["code-session", id] });
+            await queryClient.invalidateQueries({ queryKey: ["code-session", id] }, { cancelRefetch: false });
           } else {
             await Promise.all([
-              queryClient.invalidateQueries({ queryKey: ["code-sessions"] }),
-              queryClient.invalidateQueries({ queryKey: ["code-session", id] }),
+              queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false }),
+              queryClient.invalidateQueries({ queryKey: ["code-session", id] }, { cancelRefetch: false }),
             ]);
           }
         }
@@ -1994,7 +1995,7 @@ export function App() {
           } catch { /* Reconnect on the next tick. */ }
           finally { syncingSessionsRef.current.delete(item.id); }
         }));
-        if (changed && !cancelled) await queryClient.invalidateQueries({ queryKey: ["code-sessions"] });
+        if (changed && !cancelled) await queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false });
       } finally { running = false; }
     };
     void syncOthers();
@@ -2340,7 +2341,10 @@ export function App() {
         );
         if (selectedIdRef.current === message.sessionId) setFilter("active");
       }
-      await Promise.all([sessionsQuery.refetch(), detailQuery.refetch()]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false }),
+        queryClient.invalidateQueries({ queryKey: ["code-session", message.sessionId] }, { cancelRefetch: false }),
+      ]);
       return { ok: true };
     } catch (error) {
       return { ok: false, error: "Direction could not be sent. Try again.", network: isNetworkFailure(error) };
@@ -2475,9 +2479,64 @@ export function App() {
         setStartingDraft(null);
         return { ok: false, error: response.error ?? "Companion could not be created.", network: response.retryable === true, pilotUnavailable: response.retryable === true };
       }
-      // Load the list first: selecting an id the list doesn't have yet lets
-      // auto-selection jump to the first session for a render.
-      await sessionsQuery.refetch();
+      const createdId = response.id;
+      const nowIso = new Date().toISOString();
+      const companion = companions.find((item) => item.id === queued.draft.companionId);
+      const initialStatus = response.start_status === "waking" ? ("running" as const) : ("queued" as const);
+      const seeded: Session = {
+        id: createdId,
+        title: queued.draft.companionName,
+        prompt: queued.prompt,
+        workspace_root: queued.workspacePath,
+        pilot_session_id: response.start_status === "waking" ? createdId : null,
+        model_id: companion?.model.preferredId ?? "",
+        reasoning_effort: (companion?.effort ?? "medium") as Session["reasoning_effort"],
+        status: initialStatus,
+        summary: null,
+        session_summary: null,
+        started_at: nowIso,
+        updated_at: nowIso,
+        finished_at: null,
+        archived: false,
+        archived_at: null,
+        restored_at: null,
+        needs_you: false,
+        output_revision: 0,
+        seen_output_revision: 0,
+        output_count: 1,
+        latest_output: null,
+        project_id: queued.draft.projectKey === "" ? null : queued.draft.projectKey,
+      };
+      // Seed the new session in both the list and detail caches immediately so
+      // selecting it transitions directly from startingDraft into the live
+      // conversation without flashing a "Loading output…" screen.
+      queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) => {
+        if (!old || old.sessions.some((item) => item.id === createdId)) return old;
+        return { ...old, sessions: [seeded, ...old.sessions] };
+      });
+      queryClient.setQueryData<ApiResponse<typeof api, "getSession">>(["code-session", createdId], (old) =>
+        old ?? {
+          session: seeded,
+          events: [
+            {
+              id: 0,
+              kind: "user",
+              content: queued.prompt,
+              created_at: nowIso,
+              system_is_error: false,
+              started_at: null,
+              finished_at: null,
+              tool_details: null,
+            },
+          ],
+        },
+      );
+      queryClient.setQueryData(["owned-artifacts", createdId], { ok: true, files: [] });
+      setSidePanels((current) => ({
+        ...current,
+        [createdId]: current[createdId] ?? { tabs: [], activeKey: null, loaded: true },
+      }));
+      void queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false });
       const viewing = selectedIdRef.current === queued.draft.id;
       setDraft((current) => (current?.id === queued.draft.id ? null : current));
       if (viewing) {
@@ -2485,8 +2544,9 @@ export function App() {
         setFilter("active");
         setMobileListOpen(false);
         setSelectedCompanionId(null);
-        setSelectedId(response.id);
+        setSelectedId(createdId);
       }
+      setStartingDraft(null);
       return { ok: true };
     } catch (error) {
       setStartingDraft(null);
@@ -3454,14 +3514,7 @@ export function App() {
               ) : selectedId === null ? (
                 <p className="detail-loading">Select a task to see its conversation.</p>
               ) : detailQuery.isPending || !detailSession ? (
-                <div className="detail-loading" role="status" aria-live="polite">
-                  <div className="boot-loader-box">
-                    <span>Loading output…</span>
-                    <div className="boot-progress-track" aria-hidden="true">
-                      <div className="boot-progress-fill detail-loading-progress-fill" />
-                    </div>
-                  </div>
-                </div>
+                <p className="detail-loading">Loading conversation…</p>
               ) : (
                 <>
                   {/* Side panel (terminal tabs) right of the transcript, stacked when narrow. */}

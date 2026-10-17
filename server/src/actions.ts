@@ -626,7 +626,7 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
       .where(and(eq(schema.sessions.id, row.id), eq(schema.sessions.status, "queued"),
         isNull(schema.sessions.pilotSessionId)))
       .returning({ id: schema.sessions.id });
-    if (updated[0]) ctx.invalidateQueries();
+    if (updated[0]) ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", row.id]] });
     return { started: updated.length, failed: 0 };
   } catch (error) {
     if (transientPilotStartError(error)) {
@@ -643,7 +643,7 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
         outputRevision: sql`${schema.sessions.outputRevision} + 1` })
       .where(and(eq(schema.sessions.id, row.id), eq(schema.sessions.status, "queued"),
         isNull(schema.sessions.pilotSessionId)));
-    ctx.invalidateQueries();
+    ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", row.id]] });
     return { started: 0, failed: 1 };
   }
 }
@@ -883,7 +883,7 @@ async function reconcileTranscripts(ctx: Ctx, opts: { pruneExceptTitle?: string 
     }
   }
 
-  if (restored > 0 || linked > 0 || pruned > 0) ctx.invalidateQueries();
+  if (restored > 0 || linked > 0 || pruned > 0) ctx.invalidateQueries({ queryKey: ["code-sessions"] });
   return { available: true, restored, linked, pruned, kept: [...keptIds], error: null };
 }
 
@@ -912,7 +912,7 @@ export const Actions = {
           { method: "POST", body: JSON.stringify({ from: "muse", to: args.to, text: args.text }) },
           z.object({ ok: z.boolean(), queued: z.boolean().optional(), to: z.object({ name: z.string() }).optional() }),
         );
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKey: ["code-sessions"] });
         return { ok: true, to: res.to?.name ?? args.to, queued: res.queued === true, error: null };
       } catch (error) {
         return { ok: false, to: null, queued: false, error: pilotRequestErrorText(error) };
@@ -956,7 +956,7 @@ export const Actions = {
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
         const res = await pilotRequest(baseUrl, "/assistant", { method: "POST", body: JSON.stringify(args) }, z.object({ name: z.string(), color: z.string(), avatar_data_url: z.string().nullable() }));
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKey: ["assistant-identity"] });
         return { ok: true, name: res.name, color: res.color, avatar_data_url: res.avatar_data_url, error: null };
       } catch (error) {
         return { ok: false, name: null, color: null, avatar_data_url: null, error: pilotRequestErrorText(error) };
@@ -1350,7 +1350,7 @@ export const Actions = {
           })),
         );
       }
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKey: ["code-models"] });
       return { ok: true, count: args.models.length };
     },
   }),
@@ -1381,7 +1381,7 @@ export const Actions = {
           isNull(schema.sessions.pilotSessionId)))
         .returning({ id: schema.sessions.id });
       if (!updated[0]) return { ok: false, error: "This session has already started or is not waiting to connect." };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
       return { ok: true, error: null };
     },
   }),
@@ -1666,7 +1666,7 @@ export const Actions = {
         .values({ id: args.project_id, name: args.name, description: args.description, createdAt: now, updatedAt: now })
         .returning({ id: schema.projects.id });
       if (!inserted[0]) return { ok: false, id: null, error: "Project was not created" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKey: ["code-projects"] });
       return { ok: true, id: inserted[0].id, error: null };
     },
   }),
@@ -1686,7 +1686,7 @@ export const Actions = {
         .where(eq(schema.projects.id, args.id))
         .returning({ id: schema.projects.id });
       if (updated.length === 0) return { ok: false, error: "Project not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKey: ["code-projects"] });
       return { ok: true, error: null };
     },
   }),
@@ -1706,7 +1706,7 @@ export const Actions = {
         .where(eq(schema.projects.id, args.id))
         .returning({ id: schema.projects.id });
       if (deleted.length === 0) return { ok: false, error: "Project not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-projects"], ["code-sessions"]] });
       return { ok: true, error: null };
     },
   }),
@@ -1742,7 +1742,7 @@ export const Actions = {
         .update(schema.projects)
         .set({ updatedAt: new Date() })
         .where(eq(schema.projects.id, args.project_id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKey: ["code-projects"] });
       return { ok: true, id: inserted[0].id, error: null };
     },
   }),
@@ -1757,7 +1757,7 @@ export const Actions = {
         .where(eq(schema.projectReferences.id, args.id))
         .returning({ id: schema.projectReferences.id });
       if (deleted.length === 0) return { ok: false, error: "Reference not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKey: ["code-projects"] });
       return { ok: true, error: null };
     },
   }),
@@ -1784,7 +1784,7 @@ export const Actions = {
         .where(eq(schema.sessions.id, args.session_id))
         .returning({ id: schema.sessions.id });
       if (updated.length === 0) return { ok: false, error: "Session not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
       return { ok: true, error: null };
     },
   }),
@@ -1934,7 +1934,7 @@ export const Actions = {
               ...(pilot.name ? { title: pilot.name } : {}),
             })
             .where(eq(schema.sessions.id, session.id));
-          ctx.invalidateQueries();
+          ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
           return {
             ok: true,
             id: session.id,
@@ -1956,7 +1956,7 @@ export const Actions = {
         await db.update(schema.sessions)
           .set({ pilotRetryAt: new Date(Date.now() + PILOT_START_RETRY_MS) })
           .where(eq(schema.sessions.id, session.id));
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
         return { ok: true, id: session.id, start_status: "waiting", error: null };
       } finally {
         release();
@@ -2003,7 +2003,7 @@ export const Actions = {
       await killSessionTerminal(ctx, session.id);
       await db.delete(schema.outputEvents).where(eq(schema.outputEvents.sessionId, session.id));
       await db.delete(schema.sessions).where(eq(schema.sessions.id, session.id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
       return { ok: true, error: null };
     },
   }),
@@ -2055,7 +2055,7 @@ export const Actions = {
         if (!updated.length) return { ok: false, error: args.archived ? "The session changed. Refresh and try again." : companionBusyMessage(session.title) };
         // Archiving ends the session's terminal (resuming starts a fresh one).
         if (args.archived) await killSessionTerminal(ctx, args.id);
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
         return { ok: true, error: null };
       } finally {
         release();
@@ -2082,7 +2082,7 @@ export const Actions = {
         .where(eq(schema.sessions.id, args.id))
         .returning({ id: schema.sessions.id });
       if (updated.length === 0) return { ok: false, error: "Session not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
       return { ok: true, error: null };
     },
   }),
@@ -2150,7 +2150,7 @@ export const Actions = {
           }
           return { ok: false, error: `Could not assign the agent: ${pilotRequestErrorText(error).slice(0, 200)}` };
         }
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
         return { ok: true, error: null };
       } finally {
         release();
@@ -2191,7 +2191,7 @@ export const Actions = {
           target: schema.sessions.id,
           set: { prompt: args.prompt, status: args.status },
         });
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
         return { ok: true, id: args.id };
       } finally {
         release();
@@ -2243,7 +2243,7 @@ export const Actions = {
           ...(countsAsUnread(args) ? { outputRevision: sql`${schema.sessions.outputRevision} + 1` } : {}),
         })
         .where(eq(schema.sessions.id, args.session_id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
       return { ok: true, id: event.id, error: null };
     },
   }),
@@ -2333,7 +2333,7 @@ export const Actions = {
           finishedAt: null,
         })
         .where(eq(schema.sessions.id, args.session_id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
       return { ok: true, id: event.id, error: null };
     },
   }),
@@ -2462,7 +2462,7 @@ export const Actions = {
               ...unarchive,
             })
             .where(eq(schema.sessions.id, args.session_id));
-          ctx.invalidateQueries();
+          ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
           return {
             ok: true,
             id: args.session_id,
@@ -2536,7 +2536,7 @@ export const Actions = {
               needsUserInput: session.needsUserInput,
             })
             .where(eq(schema.sessions.id, args.session_id));
-          ctx.invalidateQueries();
+          ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
           return {
             ok: false,
             id: null,
@@ -2545,7 +2545,7 @@ export const Actions = {
           };
         }
 
-        ctx.invalidateQueries();
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
         return {
           ok: true,
           id: args.session_id,
@@ -2560,7 +2560,7 @@ export const Actions = {
           if (reserved && !admitted) {
             await db.update(schema.sessions).set({ status: session.status, archived: session.archived, archivedAt: session.archivedAt })
               .where(eq(schema.sessions.id, session.id));
-            ctx.invalidateQueries();
+            ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
           }
         } finally {
           release();
@@ -2692,7 +2692,7 @@ export const Actions = {
       await db.update(schema.sessions)
         .set({ needsUserInput: false, updatedAt: answeredAt })
         .where(eq(schema.sessions.id, session.id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id], ["pending-user-inputs", session.id]] });
       return { ok: true, error: null };
     },
   }),
@@ -2741,7 +2741,7 @@ export const Actions = {
       await db.update(schema.sessions)
         .set({ needsUserInput: false })
         .where(eq(schema.sessions.id, session.id));
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id], ["pending-user-inputs", session.id]] });
       return { ok: true, error: null };
     },
   }),
@@ -3219,7 +3219,7 @@ export const Actions = {
         .where(eq(schema.sessions.id, args.id))
         .returning({ id: schema.sessions.id });
       if (updated.length === 0) return { ok: false, error: "Session not found" };
-      ctx.invalidateQueries();
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.id]] });
       return { ok: true, error: null };
     },
   }),
