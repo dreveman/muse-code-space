@@ -9,13 +9,36 @@ const ACTIVITY_RESET_THROTTLE_MS = 2_000;
 const ACTIVITY_EVENTS = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "focus"] as const;
 
 const motionSubscribers = new Set<(allowed: boolean) => void>();
+const slowConnectionSubscribers = new Set<(slow: boolean) => void>();
 let idleTimer: number | null = null;
 let lastActivityAt = 0;
 let userIdle = false;
 let lastNotifiedAllowed: boolean | null = null;
+let lastNotifiedSlow: boolean | null = null;
 let reducedMotionMedia: MediaQueryList | null = null;
 let resourceObserver: PerformanceObserver | null = null;
 const preloadedAnimations = new Set<string>();
+
+export function isAnimationPreloaded(url: string | undefined): boolean {
+  if (!url) return false;
+  if (preloadedAnimations.has(url)) return true;
+  if (typeof performance !== "undefined" && typeof performance.getEntriesByType === "function") {
+    const target = url.replace(/^\.\//, "/");
+    const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+    for (let i = resources.length - 1; i >= 0; i--) {
+      const entry = resources[i]!;
+      if (entry.duration > 0 && (entry.name.endsWith(target) || entry.name.endsWith(url))) {
+        preloadedAnimations.add(url);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function markAnimationPreloaded(url: string | undefined): void {
+  if (url) preloadedAnimations.add(url);
+}
 
 type NetworkInfo = {
   saveData?: boolean;
@@ -58,27 +81,39 @@ export function isSlowConnection(): boolean {
   return false;
 }
 
+export function subscribeSlowConnection(listener: (slow: boolean) => void): () => void {
+  slowConnectionSubscribers.add(listener);
+  listener(isSlowConnection());
+  return () => {
+    slowConnectionSubscribers.delete(listener);
+  };
+}
+
 export function useProgressiveCompanionImage(stillSource: string, animatedSource: string, motionEnabled: boolean): {
   source: string;
   onStillLoad: () => void;
   onError: () => void;
 } {
-  const [stillLoaded, setStillLoaded] = useState(() => preloadedAnimations.has(stillSource));
-  const [animatedReady, setAnimatedReady] = useState(() => preloadedAnimations.has(animatedSource));
+  const [stillLoaded, setStillLoaded] = useState(() => isAnimationPreloaded(stillSource));
+  const [animatedReady, setAnimatedReady] = useState(() => isAnimationPreloaded(animatedSource));
+  const [slowConnection, setSlowConnection] = useState(isSlowConnection);
   const [failedSource, setFailedSource] = useState<string | null>(null);
 
+  useEffect(() => subscribeSlowConnection(setSlowConnection), []);
+
   useEffect(() => {
-    setStillLoaded(preloadedAnimations.has(stillSource));
-    setAnimatedReady(preloadedAnimations.has(animatedSource));
+    setStillLoaded(isAnimationPreloaded(stillSource));
+    setAnimatedReady(isAnimationPreloaded(animatedSource));
     setFailedSource(null);
   }, [stillSource, animatedSource]);
 
   useEffect(() => {
     if (!motionEnabled || !stillLoaded || animatedSource === stillSource || failedSource === animatedSource) return;
-    if (preloadedAnimations.has(animatedSource)) {
+    if (isAnimationPreloaded(animatedSource)) {
       setAnimatedReady(true);
       return;
     }
+    if (slowConnection) return;
     let cancelled = false;
     let img: HTMLImageElement | null = null;
     const timer = window.setTimeout(() => {
@@ -87,7 +122,7 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
       img.decoding = "async";
       img.onload = () => {
         if (cancelled) return;
-        preloadedAnimations.add(animatedSource);
+        markAnimationPreloaded(animatedSource);
         setAnimatedReady(true);
       };
       img.onerror = () => {
@@ -104,14 +139,14 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
         img.onerror = null;
       }
     };
-  }, [motionEnabled, stillLoaded, animatedSource, stillSource, failedSource]);
+  }, [motionEnabled, stillLoaded, slowConnection, animatedSource, stillSource, failedSource]);
 
   const useAnimated = motionEnabled && animatedReady && failedSource !== animatedSource;
   const source = useAnimated ? animatedSource : stillSource;
   return {
     source,
     onStillLoad: () => {
-      preloadedAnimations.add(stillSource);
+      markAnimationPreloaded(stillSource);
       setStillLoaded(true);
     },
     onError: () => {
@@ -122,7 +157,6 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
 
 export function isIdleMotionAllowed(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
-  if (isSlowConnection()) return false;
   const reduced = reducedMotionMedia
     ? reducedMotionMedia.matches
     : window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -131,9 +165,15 @@ export function isIdleMotionAllowed(): boolean {
 
 function notifyMotionSubscribers() {
   const allowed = isIdleMotionAllowed();
-  if (allowed === lastNotifiedAllowed) return;
-  lastNotifiedAllowed = allowed;
-  for (const fn of motionSubscribers) fn(allowed);
+  if (allowed !== lastNotifiedAllowed) {
+    lastNotifiedAllowed = allowed;
+    for (const fn of motionSubscribers) fn(allowed);
+  }
+  const slow = isSlowConnection();
+  if (slow !== lastNotifiedSlow) {
+    lastNotifiedSlow = slow;
+    for (const fn of slowConnectionSubscribers) fn(slow);
+  }
 }
 
 function scheduleIdleTimeout() {
@@ -177,6 +217,7 @@ export function subscribeIdleMotion(listener: (allowed: boolean) => void): () =>
     lastActivityAt = Date.now();
     userIdle = false;
     lastNotifiedAllowed = isIdleMotionAllowed();
+    lastNotifiedSlow = isSlowConnection();
     reducedMotionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedMotionMedia.addEventListener("change", onVisibilityOrMediaChange);
     getNetworkConnection()?.addEventListener?.("change", onVisibilityOrMediaChange);
@@ -206,6 +247,7 @@ export function subscribeIdleMotion(listener: (allowed: boolean) => void): () =>
         idleTimer = null;
       }
       lastNotifiedAllowed = null;
+      lastNotifiedSlow = null;
       reducedMotionMedia?.removeEventListener("change", onVisibilityOrMediaChange);
       reducedMotionMedia = null;
       getNetworkConnection()?.removeEventListener?.("change", onVisibilityOrMediaChange);

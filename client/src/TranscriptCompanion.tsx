@@ -1,6 +1,13 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { companionArtwork } from "./companionArtwork";
-import { isIdleMotionAllowed, isSlowConnection, subscribeIdleMotion } from "./CompanionAvatar";
+import {
+  isAnimationPreloaded,
+  isIdleMotionAllowed,
+  isSlowConnection,
+  markAnimationPreloaded,
+  subscribeIdleMotion,
+  subscribeSlowConnection,
+} from "./CompanionAvatar";
 import { companionForName } from "./companionRoster";
 
 function CompanionPortrait({ source, initialSource, crossFade, onError }: {
@@ -37,6 +44,7 @@ function CompanionPortrait({ source, initialSource, crossFade, onError }: {
       style={{ opacity: layer === shown ? 1 : 0 }}
       onLoad={(event) => {
         loaded.current.add(layer);
+        markAnimationPreloaded(layer);
         if (layer !== source) return;
         // Establish the starting opacity even when the image is cached.
         void getComputedStyle(event.currentTarget).opacity;
@@ -61,6 +69,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   const [motionAllowed, setMotionAllowed] = useState(() =>
     !window.matchMedia("(prefers-reduced-motion: reduce)").matches && !document.hidden);
   const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
+  const [slowConnection, setSlowConnection] = useState(isSlowConnection);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -69,15 +78,18 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
     media.addEventListener("change", update);
     document.addEventListener("visibilitychange", update);
     const stopIdle = subscribeIdleMotion(setIdleMotionAllowed);
+    const stopSlow = subscribeSlowConnection(setSlowConnection);
     return () => {
       media.removeEventListener("change", update);
       document.removeEventListener("visibilitychange", update);
       stopIdle();
+      stopSlow();
     };
   }, []);
   const animation = starting ? "waking" : active ? "working" : "idle";
   const animatedSource = artwork && (animation === "idle" ? artwork.portraitIdle : artwork[animation]);
-  const canAnimate = (animation === "idle" ? idleMotionAllowed : motionAllowed && !isSlowConnection()) && visible && !archived;
+  const canLoadAnimated = !slowConnection || isAnimationPreloaded(animatedSource);
+  const canAnimate = (animation === "idle" ? idleMotionAllowed : motionAllowed) && canLoadAnimated && visible && !archived;
   const source = artwork && (canAnimate ? animatedSource : artwork.still);
   const imageSource = failedSource === source ? artwork?.still : source;
   const activityLabel = activity === "Thinking" ? "is thinking"
