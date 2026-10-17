@@ -66,9 +66,11 @@ test('GitHub tools get named adapters with details and failed tense from the out
  assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','inProgress')).name,'Listing Pull Requests');
  assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed')).showDuration,false,'instant PR lookups do not need a final time');
  assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed',JSON.stringify({state:'closed'}))).detail,'closed');
- const monitor=toolPresentation(item('mcp__code_space__github_monitor_pr','completed',JSON.stringify({number:6})));
- assert.equal(monitor.name,'Monitoring Pull Request');assert.equal(monitor.detail,'#6');assert.equal(monitor.showDuration,false);
- assert.equal(toolPresentation(item('mcp__code_space__github_monitor_pr','inProgress',JSON.stringify({number:6}))).name,'Starting Pull Request Monitor');
+ const monitor=toolPresentation(item('mcp__code_space__github_monitor_pr','completed',JSON.stringify({action:'subscribe',pr_ids:['#6','#7']})));
+ assert.equal(monitor.name,'Started monitoring');assert.equal(monitor.detail,'PR #6, PR #7');assert.equal(monitor.showDuration,false);
+ assert.equal(toolPresentation(item('mcp__code_space__github_monitor_pr','inProgress',JSON.stringify({number:6}))).name,'Starting monitoring');
+ assert.equal(toolPresentation(item('mcp__code_space__github_monitor_pr','inProgress',JSON.stringify({number:6}))).detail,'PR #6');
+ assert.equal(toolPresentation(item('mcp__code_space__github_monitor_pr','completed',JSON.stringify({action:'unsubscribe',pr_ids:['#6']}))).name,'Stopped monitoring');
 });
 
 test('only unknown tools with valid JSON output select syntax highlighting',()=>{

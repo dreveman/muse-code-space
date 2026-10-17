@@ -133,6 +133,37 @@ function githubPrDetail(args: Record<string, unknown> | null): string | null {
 function githubListDetail(args: Record<string, unknown> | null): string | null {
   return shortDetail(args?.repo) ?? (typeof args?.state === "string" && args.state !== "open" ? args.state : null);
 }
+function githubMonitorDetail(args: Record<string, unknown> | null): string | null {
+  if (!args) return null;
+  const rawList = [
+    ...(Array.isArray(args.pr_ids) ? args.pr_ids : []),
+    ...(Array.isArray(args.numbers) ? args.numbers : []),
+    ...(args.number !== undefined ? [args.number] : []),
+  ];
+  const labels: string[] = [];
+  for (const item of rawList) {
+    const num = typeof item === "number"
+      ? item
+      : typeof item === "string"
+        ? Number(item.trim().replace(/^.*#/, ""))
+        : NaN;
+    if (Number.isInteger(num) && num > 0) {
+      const label = `PR #${num}`;
+      if (!labels.includes(label)) labels.push(label);
+    }
+  }
+  return labels.length > 0 ? labels.join(", ") : null;
+}
+function githubMonitorLabel(ctx: ToolContext, args: Record<string, unknown> | null, failed: boolean): Pick<ToolPresentation, "name" | "detail"> {
+  const stopping = args?.stop === true || args?.action === "unsubscribe";
+  return githubAction(
+    stopping ? "Stopping monitoring" : "Starting monitoring",
+    stopping ? "Stopped monitoring" : "Started monitoring",
+    githubMonitorDetail(args),
+    ctx,
+    failed,
+  );
+}
 const adapters: readonly ToolAdapter[] = [
   { id: "bash", tools: new Set(["bash"]), label: (ctx, args) => ({ name: ctx.running ? "Running bash" : "Ran bash", detail: bashDescription(args?.description) }), view: "command", command: bashCommand, emphasizeName: nonzeroBashExit },
   { id: "read", tools: new Set(["read_file", "read"]), label: (ctx, args) => actionLabel("Reading", "Read", "Read failed", ctx, args), view: "file", showDuration: false, metric: fileStat },
@@ -144,7 +175,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating Pull Request", "Created Pull Request", shortDetail(args?.title), ctx, failed), view: "plain" },
   { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking Pull Request", "Checked Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
   { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing Pull Requests", "Listed Pull Requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
-  { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: (ctx, args, failed) => githubAction("Starting Pull Request Monitor", "Monitoring Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: githubMonitorLabel, view: "plain", showDuration: false },
 ];
 
 function compactTool(label: string): string {

@@ -885,7 +885,13 @@ async function runTurn(session: Session, text: string) {
     const fullOutput = editDiff ? "Applied patch to test.rs"
       : readTool ? (readTsTool ? "Read text file `alpha.ts`.\n1|const x: number = 3;\n2|console.log(x)" : "Read text file `test.rs`.\n1|ALPHA\n2|BETA\n3|GAMMA")
       : writeTool ? (writeTsTool ? `wrote ${Buffer.byteLength(tsWriteContent)} bytes to alpha.ts` : "wrote 17 bytes to test.rs")
-      : monitorTool ? "Monitoring dreveman/muse-code-space#6 — Number terminal tabs only when there is more than one (checks: 2 passed, 0 failed, 1 pending). Updates will be posted to this session as reviews, comments, and CI change; the Monitoring row in the transcript stays live until the PR merges or closes."
+      : monitorTool ? (
+        "Now monitoring 2 PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n" +
+        "Current state:\n" +
+        "  #6 — OPEN · CI: 2 passed, 1 running · 1 comment · dreveman/muse-code-space\n" +
+        "  #7 — DRAFT · CI: 3 passed · 0 comments · dreveman/muse-code-space\n\n" +
+        "Active subscriptions: #6, #7."
+      )
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
       : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
       : searchTool ? (searchBad ? "future search format" : searchEmpty ? "" : "alpha.txt-1-ALPHA before\nalpha.txt:2:MCS_SEARCH_PROBE first\nalpha.txt-3-ALPHA after\nbeta.txt-1-BETA before\nbeta.txt:2:MCS_SEARCH_PROBE second\nbeta.txt-3-BETA after")
@@ -897,7 +903,7 @@ async function runTurn(session: Session, text: string) {
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
       kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { number: 6 } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: ["#6", "#7"] } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },

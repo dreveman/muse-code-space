@@ -27,7 +27,7 @@ export function isAnimationPreloaded(url: string | undefined): boolean {
     const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
     for (let i = resources.length - 1; i >= 0; i--) {
       const entry = resources[i]!;
-      if (entry.duration > 0 && (entry.name.endsWith(target) || entry.name.endsWith(url))) {
+      if (entry.name.endsWith(target) || entry.name.endsWith(url)) {
         preloadedAnimations.add(url);
         return true;
       }
@@ -59,24 +59,6 @@ export function isSlowConnection(): boolean {
   if (conn) {
     if (conn.saveData === true) return true;
     if (conn.effectiveType === "slow-2g" || conn.effectiveType === "2g" || conn.effectiveType === "3g") return true;
-    if (typeof conn.downlink === "number" && conn.downlink > 0 && conn.downlink < 2) return true;
-    if (typeof conn.rtt === "number" && conn.rtt >= 150) return true;
-  }
-  if (typeof performance !== "undefined" && typeof performance.getEntriesByType === "function") {
-    const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
-    // Walk backward from the newest real HTTP network transfer so a fast recent
-    // request (after recovering from initial 3G/tunnel conditions) snaps out of
-    // slow mode, while ignoring browser-extension or memory-cached (0-byte) hits.
-    for (let i = resources.length - 1; i >= 0; i--) {
-      const entry = resources[i]!;
-      if (entry.duration <= 0) continue;
-      if (!entry.name.startsWith("http://") && !entry.name.startsWith("https://")) continue;
-      if (entry.name.includes("/__dev/events")) continue;
-      if (typeof entry.transferSize === "number" && entry.transferSize === 0) continue;
-      if (!/\.(js|css|png|webp)(\?|$)/.test(entry.name) && !entry.name.includes("/actions")) continue;
-      if (entry.duration < 250) return false;
-      if (entry.duration > 500) return true;
-    }
   }
   return false;
 }
@@ -94,7 +76,6 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
   onStillLoad: () => void;
   onError: () => void;
 } {
-  const [stillLoaded, setStillLoaded] = useState(() => isAnimationPreloaded(stillSource));
   const [animatedReady, setAnimatedReady] = useState(() => isAnimationPreloaded(animatedSource));
   const [slowConnection, setSlowConnection] = useState(isSlowConnection);
   const [failedSource, setFailedSource] = useState<string | null>(null);
@@ -102,13 +83,12 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
   useEffect(() => subscribeSlowConnection(setSlowConnection), []);
 
   useEffect(() => {
-    setStillLoaded(isAnimationPreloaded(stillSource));
     setAnimatedReady(isAnimationPreloaded(animatedSource));
     setFailedSource(null);
   }, [stillSource, animatedSource]);
 
   useEffect(() => {
-    if (!motionEnabled || !stillLoaded || animatedSource === stillSource || failedSource === animatedSource) return;
+    if (!motionEnabled || animatedSource === stillSource || failedSource === animatedSource) return;
     if (isAnimationPreloaded(animatedSource)) {
       setAnimatedReady(true);
       return;
@@ -130,7 +110,7 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
         setFailedSource(animatedSource);
       };
       img.src = animatedSource;
-    }, 150);
+    }, 50);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
@@ -139,7 +119,7 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
         img.onerror = null;
       }
     };
-  }, [motionEnabled, stillLoaded, slowConnection, animatedSource, stillSource, failedSource]);
+  }, [motionEnabled, slowConnection, animatedSource, stillSource, failedSource]);
 
   const useAnimated = motionEnabled && animatedReady && failedSource !== animatedSource;
   const source = useAnimated ? animatedSource : stillSource;
@@ -147,7 +127,6 @@ export function useProgressiveCompanionImage(stillSource: string, animatedSource
     source,
     onStillLoad: () => {
       markAnimationPreloaded(stillSource);
-      setStillLoaded(true);
     },
     onError: () => {
       if (useAnimated) setFailedSource(animatedSource);

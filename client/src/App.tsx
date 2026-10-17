@@ -640,6 +640,8 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
           {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !searchPreview && !agentList)) && (
             presentation.view === "command" && !showRawToolOutput && presentation.command !== null ? (
               <pre className="tool-command">{presentation.command}</pre>
+            ) : presentation.adapterId === "github-monitor-pr" && !showRawToolOutput ? (
+              <pre>{fullOutput ?? details?.output ?? (running ? "(waiting for output…)" : "")}</pre>
             ) : (
               <>
                 <pre>{presentation.view === "json" && !showRawToolOutput && jsonText
@@ -1675,9 +1677,11 @@ export function App() {
             if (
               item.status === syncedSession.status &&
               item.title === syncedSession.title &&
+              item.summary === syncedSession.summary &&
               item.session_summary === syncedSession.session_summary &&
               item.needs_you === syncedSession.needs_you &&
               item.archived === syncedSession.archived &&
+              item.output_revision === syncedSession.output_revision &&
               agentVisualStatus(item) === agentVisualStatus(syncedSession)
             ) {
               return item;
@@ -1709,7 +1713,7 @@ export function App() {
   useEffect(() => {
     if (!selectedSession || !detailLoadedSession || detailLoadedSession.id !== selectedSession.id) return;
     if (
-      selectedSession.output_revision !== detailLoadedSession.output_revision ||
+      selectedSession.output_revision > detailLoadedSession.output_revision ||
       selectedSession.status !== detailLoadedSession.status ||
       selectedSession.summary !== detailLoadedSession.summary
     ) {
