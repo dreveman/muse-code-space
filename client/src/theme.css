@@ -869,8 +869,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .side-tab-close { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; margin-right: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--side-dim); cursor: pointer; font: 18px/1 var(--sans); }
 .side-tab-close:hover { color: var(--side-fg); background: var(--side-hover); }
 .side-tab-label:focus-visible, .side-tab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.side-tab-panels { flex: 1 1 0; min-height: 0; display: flex; }
-.side-tab-panel { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.side-tab-panels { position: relative; flex: 1 1 0; min-height: 0; display: block; overflow: hidden; contain: strict; }
+.side-tab-panel { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; contain: strict; }
 .side-tab-panel[hidden] { display: none; }
 .file-tab-view { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .file-tab-toolbar { flex: 0 0 auto; min-height: 28px; padding: 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--side-dim); font: 11px/1.4 var(--mono); }
@@ -892,6 +892,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 /* wterm's own frame (radius, shadow) is for a floating demo; here it fills
    the pane, on the panel's background. Dark: wterm's default palette. */
 .terminal-panel-term.wterm { flex: 1 1 0; min-height: 0; border-radius: 0; box-shadow: none; padding: 8px 10px; --term-bg: var(--side-bg); --term-fg: #d4d4d4; --term-font-size: 13px; --term-row-height: 16px; }
+.terminal-panel-term .term-row { width: 100%; overflow: hidden; contain: strict; }
 :root[data-color-mode="light"] .side-panel {
   --side-bg: #f4f4f4;
   --side-fg: #171a18;

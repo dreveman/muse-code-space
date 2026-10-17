@@ -12,6 +12,7 @@ import { Terminal, useTerminal, type WTerm } from "@wterm/react";
 import "@wterm/react/css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { optimizeTerminalInstance } from "./terminalOptimizations";
 
 type Status = "starting" | "connected" | "reconnecting" | "exited" | "error";
 
@@ -224,7 +225,10 @@ export function TerminalView({ sessionId, terminalId, active, onOpened }: {
         aria-label="Terminal in the companion's working directory"
         onData={onData}
         onResize={onResize}
-        onReady={(wt) => setTerm(wt)}
+        onReady={(wt) => {
+          optimizeTerminalInstance(wt);
+          setTerm(wt);
+        }}
         onError={(e) => {
           setStatus("error");
           setError(`Terminal failed to load: ${String(e)}`);

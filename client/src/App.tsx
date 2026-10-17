@@ -3345,6 +3345,26 @@ export function App() {
     takeoverDisabledReason,
     detailSession?.id,
   ]);
+  const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
+  const detailSidePanel = useMemo(() => {
+    if (!hasSidePanel || !detailSessionIdForFiles || !detailSidePanelState) return null;
+    return (
+      <SidePanel
+        key={detailSessionIdForFiles}
+        sessionId={detailSessionIdForFiles}
+        state={detailSidePanelState}
+        onBack={() => setMobileSideOpen(false)}
+        onSelect={(key) => updateSidePanel(detailSessionIdForFiles, (state) => ({ ...state, activeKey: key }))}
+        onClose={(tab) => closeSideTab(detailSessionIdForFiles, tab)}
+        onTerminalOpened={(key, terminalId, number) =>
+          updateSidePanel(detailSessionIdForFiles, (state) => ({
+            ...state,
+            tabs: state.tabs.map((tab) => (tab.kind === "terminal" && tab.key === key ? { ...tab, terminalId, number } : tab)),
+          }))
+        }
+      />
+    );
+  }, [hasSidePanel, detailSessionIdForFiles, detailSidePanelState]);
 
   return (
     <div className="app-shell">
@@ -3659,22 +3679,7 @@ export function App() {
                       valueFromPointer={(clientX) => clientX - (detailSplitRef.current?.getBoundingClientRect().left ?? 0)}
                     />
                   )}
-                  {hasSidePanel && (
-                    <SidePanel
-                      key={detailSession.id}
-                      sessionId={detailSession.id}
-                      state={sidePanels[detailSession.id]!}
-                      onBack={() => setMobileSideOpen(false)}
-                      onSelect={(key) => updateSidePanel(detailSession.id, (state) => ({ ...state, activeKey: key }))}
-                      onClose={(tab) => closeSideTab(detailSession.id, tab)}
-                      onTerminalOpened={(key, terminalId, number) =>
-                        updateSidePanel(detailSession.id, (state) => ({
-                          ...state,
-                          tabs: state.tabs.map((tab) => (tab.kind === "terminal" && tab.key === key ? { ...tab, terminalId, number } : tab)),
-                        }))
-                      }
-                    />
-                  )}
+                  {detailSidePanel}
                   </div>
                 </>
               )}

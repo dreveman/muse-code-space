@@ -1225,12 +1225,34 @@ export const Actions = {
       if (denied) return { ok: false, error: denied, ...empty };
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
-        const out = await pilotRequest(
+        const outSchema = z.object({ data: z.string(), next: z.number(), exited: z.boolean(), exitCode: z.number().nullable(), truncated: z.boolean() });
+        let out = await pilotRequest(
           baseUrl,
           `/terminals/${encodeURIComponent(args.terminal_id)}/output?since=${args.since}&waitMs=${args.wait_ms}`,
           { method: "GET" },
-          z.object({ data: z.string(), next: z.number(), exited: z.boolean(), exitCode: z.number().nullable(), truncated: z.boolean() }),
+          outSchema,
         );
+        // Coalesce burst multi-write() TUI frames (e.g. htop header + process table)
+        // when the long-poll wakes on the initial small write chunk.
+        if (args.wait_ms > 0 && out.data && !out.exited && out.next - args.since < 2048) {
+          await new Promise((resolve) => setTimeout(resolve, 3));
+          const tail = await pilotRequest(
+            baseUrl,
+            `/terminals/${encodeURIComponent(args.terminal_id)}/output?since=${out.next}&waitMs=0`,
+            { method: "GET" },
+            outSchema,
+          ).catch(() => null);
+          if (tail && tail.data) {
+            const combined = Buffer.concat([Buffer.from(out.data, "base64"), Buffer.from(tail.data, "base64")]);
+            out = {
+              data: combined.toString("base64"),
+              next: tail.next,
+              exited: tail.exited,
+              exitCode: tail.exitCode,
+              truncated: out.truncated || tail.truncated,
+            };
+          }
+        }
         return { ok: true, error: null, data: out.data, next: out.next, exited: out.exited, exit_code: out.exitCode, truncated: out.truncated };
       } catch (error) {
         return { ...terminalFailure(error), ...empty };
