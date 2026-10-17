@@ -12,7 +12,9 @@ const motionSubscribers = new Set<(allowed: boolean) => void>();
 let idleTimer: number | null = null;
 let lastActivityAt = 0;
 let userIdle = false;
+let lastNotifiedAllowed: boolean | null = null;
 let reducedMotionMedia: MediaQueryList | null = null;
+let resourceObserver: PerformanceObserver | null = null;
 const preloadedAnimations = new Set<string>();
 
 type NetworkInfo = {
@@ -20,25 +22,37 @@ type NetworkInfo = {
   effectiveType?: string;
   downlink?: number;
   rtt?: number;
+  addEventListener?: (type: string, listener: () => void) => void;
+  removeEventListener?: (type: string, listener: () => void) => void;
 };
 
+function getNetworkConnection(): NetworkInfo | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  return (navigator as unknown as { connection?: NetworkInfo }).connection;
+}
+
 export function isSlowConnection(): boolean {
-  if (typeof navigator !== "undefined") {
-    const conn = (navigator as unknown as { connection?: NetworkInfo }).connection;
-    if (conn) {
-      if (conn.saveData === true) return true;
-      if (conn.effectiveType === "slow-2g" || conn.effectiveType === "2g" || conn.effectiveType === "3g") return true;
-      if (typeof conn.downlink === "number" && conn.downlink > 0 && conn.downlink < 2) return true;
-      if (typeof conn.rtt === "number" && conn.rtt >= 150) return true;
-    }
+  const conn = getNetworkConnection();
+  if (conn) {
+    if (conn.saveData === true) return true;
+    if (conn.effectiveType === "slow-2g" || conn.effectiveType === "2g" || conn.effectiveType === "3g") return true;
+    if (typeof conn.downlink === "number" && conn.downlink > 0 && conn.downlink < 2) return true;
+    if (typeof conn.rtt === "number" && conn.rtt >= 150) return true;
   }
   if (typeof performance !== "undefined" && typeof performance.getEntriesByType === "function") {
     const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
-    for (let i = 0; i < resources.length; i++) {
+    // Walk backward from the newest real HTTP network transfer so a fast recent
+    // request (after recovering from initial 3G/tunnel conditions) snaps out of
+    // slow mode, while ignoring browser-extension or memory-cached (0-byte) hits.
+    for (let i = resources.length - 1; i >= 0; i--) {
       const entry = resources[i]!;
-      if (/\.(js|css)(\?|$)/.test(entry.name) && entry.duration > 500) {
-        return true;
-      }
+      if (entry.duration <= 0) continue;
+      if (!entry.name.startsWith("http://") && !entry.name.startsWith("https://")) continue;
+      if (entry.name.includes("/__dev/events")) continue;
+      if (typeof entry.transferSize === "number" && entry.transferSize === 0) continue;
+      if (!/\.(js|css|png|webp)(\?|$)/.test(entry.name) && !entry.name.includes("/actions")) continue;
+      if (entry.duration < 250) return false;
+      if (entry.duration > 500) return true;
     }
   }
   return false;
@@ -117,6 +131,8 @@ export function isIdleMotionAllowed(): boolean {
 
 function notifyMotionSubscribers() {
   const allowed = isIdleMotionAllowed();
+  if (allowed === lastNotifiedAllowed) return;
+  lastNotifiedAllowed = allowed;
   for (const fn of motionSubscribers) fn(allowed);
 }
 
@@ -137,12 +153,11 @@ function scheduleIdleTimeout() {
 
 function onUserActivity() {
   const now = Date.now();
-  if (!userIdle && now - lastActivityAt < ACTIVITY_RESET_THROTTLE_MS) return;
+  if (!userIdle && lastNotifiedAllowed === true && now - lastActivityAt < ACTIVITY_RESET_THROTTLE_MS) return;
   lastActivityAt = now;
-  const wasIdle = userIdle;
   userIdle = false;
   scheduleIdleTimeout();
-  if (wasIdle) notifyMotionSubscribers();
+  notifyMotionSubscribers();
 }
 
 function onVisibilityOrMediaChange() {
@@ -161,8 +176,20 @@ export function subscribeIdleMotion(listener: (allowed: boolean) => void): () =>
   if (motionSubscribers.size === 0 && typeof window !== "undefined" && typeof document !== "undefined") {
     lastActivityAt = Date.now();
     userIdle = false;
+    lastNotifiedAllowed = isIdleMotionAllowed();
     reducedMotionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedMotionMedia.addEventListener("change", onVisibilityOrMediaChange);
+    getNetworkConnection()?.addEventListener?.("change", onVisibilityOrMediaChange);
+    if (typeof PerformanceObserver !== "undefined") {
+      try {
+        resourceObserver = new PerformanceObserver(() => {
+          notifyMotionSubscribers();
+        });
+        resourceObserver.observe({ type: "resource", buffered: false });
+      } catch {
+        resourceObserver = null;
+      }
+    }
     document.addEventListener("visibilitychange", onVisibilityOrMediaChange);
     for (const eventName of ACTIVITY_EVENTS) {
       window.addEventListener(eventName, onUserActivity, { passive: true, capture: true });
@@ -178,8 +205,12 @@ export function subscribeIdleMotion(listener: (allowed: boolean) => void): () =>
         window.clearTimeout(idleTimer);
         idleTimer = null;
       }
+      lastNotifiedAllowed = null;
       reducedMotionMedia?.removeEventListener("change", onVisibilityOrMediaChange);
       reducedMotionMedia = null;
+      getNetworkConnection()?.removeEventListener?.("change", onVisibilityOrMediaChange);
+      resourceObserver?.disconnect();
+      resourceObserver = null;
       document.removeEventListener("visibilitychange", onVisibilityOrMediaChange);
       for (const eventName of ACTIVITY_EVENTS) {
         window.removeEventListener(eventName, onUserActivity, { capture: true });
