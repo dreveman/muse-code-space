@@ -12,6 +12,11 @@
 // push notifications.
 
 // Muse presents these as mcp__code_space__send_message / list_agents.
+// When GitHub integration is set up, the same server also offers the
+// github_* tools from githubTools.mjs (gated per request, so enabling
+// GitHub later needs no session restart).
+import { GITHUB_TOOLS, isGitHubTool } from "./githubTools.mjs";
+
 export const MCP_SERVER_NAME = "code-space";
 
 // Built-in messaging is mandatory. A version/configuration of muse serve
@@ -72,7 +77,8 @@ const toolText = (text, isError = false) => ({ content: [{ type: "text", text }]
 /**
  * Handle one JSON-RPC message (or batch) for the agent behind `token`.
  * `deps`: { agentForToken(token) -> entry|undefined, listAgents(entry) -> string,
- *           sendMessage(entry, to, text) -> Promise<{ok, error?, to?, queued?}> }.
+ *           sendMessage(entry, to, text) -> Promise<{ok, error?, to?, queued?}>,
+ *           github?: { enabled() -> boolean, call(entry, name, args) -> Promise<{text, isError?}> } }.
  * Returns the response body (object/array) or null for notification-only input.
  */
 export async function handleMcpRequest(token, message, deps) {
@@ -92,11 +98,15 @@ export async function handleMcpRequest(token, message, deps) {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: MCP_SERVER_NAME, version: "1.0.0" },
-      instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there.",
+      instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there."
+        + (deps.github?.enabled() ? " GitHub tools (github_create_pr, github_pr_status, github_list_prs, github_monitor_pr) work through Code Space's GitHub broker; repo and branch default to your workspace checkout. github_monitor_pr watches a PR in the background and posts updates to this session." : ""),
     });
   }
   if (method === "ping") return ok(id, {});
-  if (method === "tools/list") return ok(id, { tools: MCP_TOOLS });
+  if (method === "tools/list") {
+    const tools = deps.github?.enabled() ? [...MCP_TOOLS, ...GITHUB_TOOLS] : MCP_TOOLS;
+    return ok(id, { tools });
+  }
   if (method === "tools/call") {
     const entry = deps.agentForToken(token);
     if (!entry) return ok(id, toolText("This agent isn't known to Code Space anymore (it may have been deleted).", true));
@@ -110,6 +120,11 @@ export async function handleMcpRequest(token, message, deps) {
       const result = await deps.sendMessage(entry, to, text);
       if (!result.ok) return ok(id, toolText(`Not delivered: ${result.error}`, true));
       return ok(id, toolText(`Delivered to ${result.to?.name ?? to}${result.queued ? " (queued behind its current turn)" : ""}.`));
+    }
+    if (isGitHubTool(name)) {
+      if (!deps.github) return ok(id, toolText("GitHub tools aren't available in this Code Space.", true));
+      const result = await deps.github.call(entry, name, args);
+      return ok(id, toolText(result.text, result.isError === true));
     }
     return rpcError(id, -32602, `unknown tool: ${name}`);
   }

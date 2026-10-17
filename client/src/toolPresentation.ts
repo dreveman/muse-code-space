@@ -115,6 +115,24 @@ function messageFailed(ctx: ToolContext): boolean {
   return !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ||
     /^Not delivered:/i.test(ctx.details?.output?.trim() ?? ""));
 }
+function shortDetail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text || /[\x00-\x1f\x7f]/.test(text)) return null;
+  return text.length > 90 ? `${text.slice(0, 87)}…` : text;
+}
+function githubAction(verb: string, past: string, detail: string | null, ctx: ToolContext, failed: boolean): Pick<ToolPresentation, "name" | "detail"> {
+  // GitHub tool errors carry a "Failed:" prefix (MCP isError does not
+  // reliably surface as a failed status), like send_message's marker.
+  const problem = failed || /^Failed:/i.test(ctx.details?.output?.trim() ?? "");
+  return { name: ctx.running ? verb : problem ? `${verb} failed` : past, detail };
+}
+function githubPrDetail(args: Record<string, unknown> | null): string | null {
+  return typeof args?.number === "number" && Number.isInteger(args.number) && args.number > 0 ? `#${args.number}` : null;
+}
+function githubListDetail(args: Record<string, unknown> | null): string | null {
+  return shortDetail(args?.repo) ?? (typeof args?.state === "string" && args.state !== "open" ? args.state : null);
+}
 const adapters: readonly ToolAdapter[] = [
   { id: "bash", tools: new Set(["bash"]), label: (ctx, args) => ({ name: ctx.running ? "Running bash" : "Ran bash", detail: bashDescription(args?.description) }), view: "command", command: bashCommand, emphasizeName: nonzeroBashExit },
   { id: "read", tools: new Set(["read_file", "read"]), label: (ctx, args) => actionLabel("Reading", "Read", "Read failed", ctx, args), view: "file", showDuration: false, metric: fileStat },
@@ -123,6 +141,10 @@ const adapters: readonly ToolAdapter[] = [
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
+  { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating Pull Request", "Created Pull Request", shortDetail(args?.title), ctx, failed), view: "plain" },
+  { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking Pull Request", "Checked Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing Pull Requests", "Listed Pull Requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: (ctx, args, failed) => githubAction("Starting Pull Request Monitor", "Monitoring Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
 ];
 
 function compactTool(label: string): string {

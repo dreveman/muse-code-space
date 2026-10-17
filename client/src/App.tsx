@@ -33,6 +33,7 @@ import { redundantSendToolIds } from "./messageToolVisibility";
 import { SessionMenu, type SessionMenuAction } from "./WireDebug";
 import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Dialogs";
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
+import { PrMonitorEvent } from "./PrMonitorEvent";
 import { NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
@@ -1016,6 +1017,8 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
         </div>
       ) : event.kind === "agents" ? (
         <AgentsEvent sessionId={detailSessionId} content={event.content} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} />
+      ) : event.kind === "pr_monitor" ? (
+        <PrMonitorEvent content={event.content} />
       ) : event.kind === "tool" ? (
         <ToolEvent sessionId={detailSessionId} workspaceRoot={detailWorkspaceRoot} eventId={event.id} text={content} details={event.tool_details} startedAt={event.started_at} finishedAt={event.finished_at} expandedByDefault={expandTools} showRawToolOutput={showRawToolOutput} onOpenFile={openFileTabForDetail} />
       ) : event.kind === "thinking" ? (

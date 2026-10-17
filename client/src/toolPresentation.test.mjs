@@ -53,6 +53,24 @@ test('every running tool gets a spinner; only finished opted-in tools show a tim
  assert.ok(app.includes('presentation.emphasizeName ? " tool-name-error" : ""') && /\.tool-name-error\s*\{[^}]*color:\s*var\(--terminal-error\)/.test(css), 'nonzero Bash exits color only the name red');
 });
 
+test('GitHub tools get named adapters with details and failed tense from the output marker',()=>{
+ const create=toolPresentation(item('mcp__code_space__github_create_pr','completed',JSON.stringify({title:'Fix the thing'}),'Created PR #7 Fix the thing'));
+ assert.equal(create.name,'Created Pull Request');assert.equal(create.detail,'Fix the thing');assert.equal(create.view,'plain');
+ assert.equal(toolPresentation(item('mcp__code_space__github_create_pr','inProgress',JSON.stringify({title:'Fix the thing'}))).name,'Creating Pull Request');
+ const createFailed=toolPresentation(item('mcp__code_space__github_create_pr','completed',JSON.stringify({title:'Fix the thing'}),'Failed: GitHub said: Validation Failed'));
+ assert.equal(createFailed.name,'Creating Pull Request failed','MCP isError output with the Failed: marker reads as failed even when status completed');
+ assert.deepEqual(toolPresentation(item('mcp__code_space__github_pr_status','completed',JSON.stringify({number:6,repo:'o/r'}))),{adapterId:'github-pr-status',name:'Checked Pull Request',detail:'#6',view:'plain',showDuration:false,metric:null,command:null,emphasizeName:false});
+ assert.equal(toolPresentation(item('mcp__code_space__github_pr_status','inProgress',JSON.stringify({number:6}))).name,'Checking Pull Request');
+ assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed',JSON.stringify({repo:'dreveman/muse-code-space'}))).name,'Listed Pull Requests');
+ assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed',JSON.stringify({repo:'dreveman/muse-code-space'}))).detail,'dreveman/muse-code-space');
+ assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','inProgress')).name,'Listing Pull Requests');
+ assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed')).showDuration,false,'instant PR lookups do not need a final time');
+ assert.equal(toolPresentation(item('mcp__code_space__github_list_prs','completed',JSON.stringify({state:'closed'}))).detail,'closed');
+ const monitor=toolPresentation(item('mcp__code_space__github_monitor_pr','completed',JSON.stringify({number:6})));
+ assert.equal(monitor.name,'Monitoring Pull Request');assert.equal(monitor.detail,'#6');assert.equal(monitor.showDuration,false);
+ assert.equal(toolPresentation(item('mcp__code_space__github_monitor_pr','inProgress',JSON.stringify({number:6}))).name,'Starting Pull Request Monitor');
+});
+
 test('only unknown tools with valid JSON output select syntax highlighting',()=>{
  assert.equal(toolPresentation(item('mystery','completed',null,'{"ok":true}')).view,'json');
  assert.equal(toolPresentation(item('mystery','completed',null,'42')).view,'json');

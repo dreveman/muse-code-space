@@ -35,7 +35,7 @@ const statusSchema = z.enum([
   "failed",
   "stopped",
 ]);
-const eventKindSchema = z.enum(["stdout", "stderr", "system", "result", "user", "tool", "agents", "message", "thinking"]);
+const eventKindSchema = z.enum(["stdout", "stderr", "system", "result", "user", "tool", "agents", "message", "thinking", "pr_monitor"]);
 const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
 const sessionResponseSchema = z.object({
@@ -179,6 +179,15 @@ const pilotPollResponseSchema = z.object({
     from: z.object({ kind: z.string(), name: z.string(), color: z.string().optional(), sessionId: z.string().nullable().optional() }).optional(),
     to: z.object({ kind: z.string(), name: z.string(), color: z.string().optional(), sessionId: z.string().nullable().optional() }).optional(),
     queued: z.boolean().optional(),
+    // pr_monitor: the pilot's background PR monitor row (upserted by id).
+    monitor: z.object({
+      id: z.string(), owner: z.string(), repo: z.string(), number: z.number().int(),
+      title: z.string(), url: z.string(), status: z.string(),
+      checks: z.object({ passed: z.number(), failed: z.number(), pending: z.number(), failing: z.array(z.string()) }),
+      approvals: z.number(), comments: z.number(),
+      changes: z.array(z.object({ at: z.string(), text: z.string() })),
+      startedAt: z.string(), updatedAt: z.string(),
+    }).optional(),
   })),
   latestSeq: z.number().int().nonnegative(),
   sessionId: z.string().optional(),
@@ -288,6 +297,14 @@ type PilotEvent = {
   from?: { kind: string; name: string; color?: string; sessionId?: string | null };
   to?: { kind: string; name: string; color?: string; sessionId?: string | null };
   queued?: boolean;
+  monitor?: {
+    id: string; owner: string; repo: string; number: number;
+    title: string; url: string; status: string;
+    checks: { passed: number; failed: number; pending: number; failing: string[] };
+    approvals: number; comments: number;
+    changes: Array<{ at: string; text: string }>;
+    startedAt: string; updatedAt: string;
+  };
 };
 type PilotPoll = {
   events: PilotEvent[];
@@ -3106,6 +3123,34 @@ export const Actions = {
         // rename): the app shows the same name.
         if (event.type === "name_changed" && event.name) {
           nameUpdate = event.name;
+          continue;
+        }
+
+        // PR monitor row: one upserted row per monitor. The pilot emits
+        // only on start and material changes, so each event is meaningful.
+        if (event.type === "pr_monitor" && event.monitor?.id) {
+          const content = JSON.stringify(event.monitor);
+          const existing = (await db
+            .select({ id: schema.outputEvents.id, content: schema.outputEvents.content })
+            .from(schema.outputEvents)
+            .where(and(eq(schema.outputEvents.sessionId, session.id), eq(schema.outputEvents.itemId, event.monitor.id)))
+            .limit(1))[0];
+          if (existing) {
+            if (existing.content !== content) {
+              await db.update(schema.outputEvents).set({ content }).where(eq(schema.outputEvents.id, existing.id));
+              outputChanges += 1;
+            }
+          } else {
+            await db.insert(schema.outputEvents).values({
+              sessionId: session.id,
+              kind: "pr_monitor",
+              content,
+              createdAt: event.at ? new Date(event.at) : new Date(),
+              itemId: event.monitor.id,
+            });
+            outputChanges += 1;
+          }
+          added += 1;
           continue;
         }
 

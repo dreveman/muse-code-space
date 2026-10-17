@@ -392,6 +392,9 @@ the actions call:
   `send-message-tool` previews an outgoing **To Pip** message. These are
   scripted transcript events, not delivery between two tasks. Add `slow` to
   either prompt to slow the script down.
+- `pr-monitor` previews PR monitoring: a `github_monitor_pr` tool call, then
+  the live Monitoring row — CI fails at ~3s (with the monitor's injected
+  turn) and the PR merges at ~6.5s, ending the row.
 - It's a test double. When the real pilot's API changes, update it too.
 
 **Where the app's data lives:** the dev server's DB is `.dev/app.db`, kept
@@ -600,6 +603,21 @@ interactive (TUI) sessions, so serve-hosted agents never get its
   - Its URL `/mcp/<token>` identifies the agent, so tool calls always know
     the sender. The tools are **`send_message(to, text)`** and
     **`list_agents()`** (`pilot/mcp.mjs`). There is no bash fallback.
+  - When GitHub integration is set up (a broker credential is
+    provisioned), the same server also offers **`github_create_pr`**,
+    **`github_pr_status`**, and **`github_list_prs`** (`pilot/githubTools.mjs`).
+    Calls run from the pilot through the local GitHub broker with the
+    session sentinel — agents never hold a credential — and repo/head
+    default to the session workspace's origin remote and current branch.
+    The gate is checked per request, so provisioning GitHub later lights
+    the tools up without restarting sessions.
+  - **`github_monitor_pr(number)`** starts background monitoring: the
+    pilot (`pilot/prMonitor.mjs`) polls the PR through the broker about
+    once a minute for reviews/approvals, new comments, CI transitions,
+    and merge/close, persisting monitors in `pr-monitors.json` so they
+    survive restarts. Material changes upsert a live `pr_monitor`
+    transcript row and deliver a turn to the owning session. Monitoring
+    stops when the PR merges or closes (or via `stop: true`).
   - During pilot startup the HTTP listener starts before sessions resume,
     so required MCP servers can connect; `/health` reports unhealthy and
     normal API routes return 503 until reconciliation finishes.

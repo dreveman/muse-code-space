@@ -107,3 +107,22 @@ test("transcript ids that could escape the state dir are rejected", () => {
     assert.equal(safeTranscriptId(bad), false, JSON.stringify(bad));
   }
 });
+
+test("pr_monitor events restore as one upserted row per monitor", () => {
+  const monitor = (status, passed) => ({
+    id: "mon-1", owner: "o", repo: "r", number: 3, title: "Work",
+    url: "https://github.com/o/r/pull/3", status,
+    checks: { passed, failed: 0, pending: 0, failing: [] },
+    approvals: 0, comments: 0, changes: [], startedAt: at(1), updatedAt: at(2),
+  });
+  const imported = transcriptToRows([
+    { seq: 1, type: "pr_monitor", at: at(1), monitor: monitor("monitoring", 1) },
+    { seq: 2, type: "pr_monitor", at: at(2), monitor: monitor("merged", 3) },
+    { seq: 3, type: "pr_monitor", at: at(3), monitor: { status: "monitoring" } },
+  ], FALLBACK);
+  const rows = imported.rows.filter((r) => r.kind === "pr_monitor");
+  assert.equal(rows.length, 1, "later polls replace the row instead of duplicating it");
+  assert.equal(rows[0].itemId, "mon-1");
+  assert.equal(JSON.parse(rows[0].content).status, "merged", "the latest snapshot wins");
+  assert.equal(JSON.parse(rows[0].content).checks.passed, 3);
+});
