@@ -40,7 +40,7 @@ function CompanionPortrait({ source, initialSource, crossFade, onError }: {
   }, [shown, source]);
   return <span className="transcript-companion-portrait" aria-hidden="true">
     {layers.map((layer) => <img key={layer} className="transcript-companion-image"
-      src={layer} width={64} height={64} alt="" decoding="async"
+      src={layer} width={64} height={64} alt="" decoding={isAnimationPreloaded(layer) ? "sync" : "async"}
       style={{ opacity: layer === shown ? 1 : 0 }}
       onLoad={(event) => {
         loaded.current.add(layer);
