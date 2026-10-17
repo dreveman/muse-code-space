@@ -65,6 +65,7 @@ test("menu exposes both saved view preferences and an accessible three-way color
   assert.ok(menu.includes('role={action.radio ? "menuitemradio"'));
   for (const option of ['value: "system"', 'value: "light"', 'value: "dark"']) assert.ok(menu.includes(option));
   assert.ok(menu.includes('checked: colorMode === option.value'));
+  assert.ok(menu.includes('if (action.checked === undefined) onDone();'), "checkbox and radio toggles keep the menu open");
 });
 
 test("tool previews expand with the preference, remain individually collapsible, never auto-fetch full output", () => {
