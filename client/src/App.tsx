@@ -1337,6 +1337,35 @@ export function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  useLayoutEffect(() => {
+    const element = layoutRef.current;
+    if (!isNarrow || mobileListOpen || !element) return;
+    const viewport = window.visualViewport;
+    const spaceRoot = document.querySelector<HTMLElement>("[data-generated-space-root]");
+    const measure = () => {
+      if (!viewport || viewport.scale !== 1) return;
+      if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      const height = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - element.getBoundingClientRect().top));
+      element.style.height = `${height}px`;
+      element.style.maxHeight = `${height}px`;
+      if (followTranscriptRef.current && terminalBodyRef.current) {
+        terminalBodyRef.current.scrollTop = terminalBodyRef.current.scrollHeight;
+      }
+    };
+    measure();
+    viewport?.addEventListener("resize", measure);
+    viewport?.addEventListener("scroll", measure);
+    window.addEventListener("resize", measure);
+    return () => {
+      viewport?.removeEventListener("resize", measure);
+      viewport?.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+      element.style.removeProperty("height");
+      element.style.removeProperty("max-height");
+    };
+  }, [isNarrow, mobileListOpen]);
+
   useEffect(() => { savePaneSizes(paneSizes); }, [paneSizes]);
   useEffect(() => {
     try { window.localStorage.setItem(SHOW_REASONING_KEY, String(showReasoning)); } catch { /* webview storage can be disabled */ }
