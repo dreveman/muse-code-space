@@ -55,7 +55,7 @@ function ActionMenuItem({ action, onDone }: { action: SessionMenuAction; onDone:
       aria-checked={action.checked}
       disabled={action.disabled}
       onClick={() => {
-        onDone();
+        if (action.checked === undefined) onDone();
         action.onActivate();
       }}
     >
