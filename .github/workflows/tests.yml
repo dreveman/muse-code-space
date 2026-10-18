@@ -25,6 +25,7 @@ jobs:
         run: |
           node --check pilot/pilot.mjs
           node --check pilot/repoSetup.mjs
+          node --check pilot/vcsSmartlog.mjs
           node --check pilot/terminals.mjs
           bash -n pilot/install.sh pilot/watchdog.sh web/stage-snapshot.sh
           python3 -m py_compile pilot/github_broker.py pilot/muse_relay.py pilot/setup_github_broker.py
@@ -42,7 +43,8 @@ jobs:
           files=()
           for f in client/src/*.test.mjs server/src/*.test.mjs web/*.test.mjs \
                    pilot/terminals.test.mjs pilot/files.test.mjs pilot/install.test.mjs \
-                   pilot/githubTools.test.mjs pilot/prMonitor.test.mjs pilot/repoSetup.test.mjs; do
+                   pilot/githubTools.test.mjs pilot/prMonitor.test.mjs pilot/repoSetup.test.mjs \
+                   pilot/vcsSmartlog.test.mjs; do
             [[ "$f" == *codeHighlight* ]] || files+=("$f")
           done
           node --test "${files[@]}"

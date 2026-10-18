@@ -223,7 +223,7 @@ button { color: inherit; }
 :root[data-color-mode="dark"] .chat-floating-toolbar :is(.terminal-toggle, .wire-settings-trigger, .mobile-back-button) { border-color: var(--border); }
 .chat-floating-toolbar :is(.terminal-toggle, .wire-settings-trigger, .mobile-back-button):hover { background: var(--surface-strong); }
 #agent-chat { position: relative; }
-#agent-chat::before { content: ""; position: absolute; inset: 0 0 auto; height: 86px; max-height: 35%; z-index: 3; pointer-events: none; background: linear-gradient(to bottom, var(--terminal-bg), color-mix(in srgb, var(--terminal-bg) 88%, transparent) 36%, transparent); }
+#agent-chat::before { content: ""; position: absolute; inset: 0 0 auto; height: 112px; max-height: 35%; z-index: 3; pointer-events: none; background: linear-gradient(to bottom, var(--terminal-bg) 18%, color-mix(in srgb, var(--terminal-bg) 86%, transparent) 58%, transparent); }
 .transcript-companion { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: min(140px, calc(100% - 208px)); display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--terminal-text); }
 .transcript-companion img { display: block; width: 64px; height: 64px; object-fit: contain; border: 0; border-radius: 7px; }
 .transcript-companion-portrait { display: grid; width: 64px; height: 64px; overflow: hidden; border-radius: 7px; }
@@ -235,9 +235,20 @@ button { color: inherit; }
 .transcript-companion-activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .transcript-companion-activity .working-spinner { width: 11px; height: 11px; }
 #agent-chat > .terminal-body { padding-top: 112px; }
-/* Fade above the input prompt (and floating repo control) while keeping the
-   final message fully visible when scrolled to the bottom. */
-#agent-chat > .terminal-body { mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+/* Fade at the top (under the floating companion/toolbar) and at the bottom
+   (starting above the floating GitHub / Smart Log bar) while keeping the
+   first and final messages fully visible at the scroll extremes. */
+#agent-chat > .terminal-body {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.15) 54px,
+    #000 108px,
+    #000 calc(100% - 56px),
+    rgba(0, 0, 0, 0.15) calc(100% - 22px),
+    transparent 100%
+  );
+}
 details { color: var(--dim); font-size: 13px; }
 summary { width: max-content; cursor: pointer; font: 600 11px var(--mono); }
 details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-height: 1.55; }
@@ -282,7 +293,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   scrollbar-gutter: stable;
   contain: strict;
 }
-.output-stream { padding: 6px 0 28px; }
+.output-stream { padding: 6px 0 46px; }
 .transcript-scroll-controls { position: relative; flex: 0 0 0; z-index: 3; contain: layout style; opacity: 0; pointer-events: none; }
 .transcript-scroll-controls.visible { opacity: 1; pointer-events: auto; }
 .scroll-to-bottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 17px; border: 1px solid color-mix(in srgb, #7db9ed 35%, var(--terminal-bg)); border-radius: 999px; background: color-mix(in srgb, #cce6ff 90%, var(--terminal-bg)); color: #162b3d; font: 600 12px/1.4 var(--sans); white-space: nowrap; cursor: pointer; }
@@ -618,6 +629,54 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .repo-picker-dismiss svg { width: 11px; height: 11px; flex: 0 0 auto; }
 .repo-picker-dismiss:hover:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 12%, transparent); color: var(--terminal-text); }
 .repo-row-status { flex: 1 1 auto; min-width: 0; text-align: right; color: var(--terminal-dim); font: 10px/1.35 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smartlog-trigger-wrap { margin-left: auto; flex: 0 0 auto; pointer-events: auto; }
+.smartlog-trigger { gap: 5px; }
+.smartlog-trigger:hover:not(:disabled),
+.smartlog-trigger.active { background: var(--terminal-faint); }
+.smartlog-trigger svg { width: 14px; height: 14px; flex: 0 0 auto; margin-right: 0; margin-left: 2px; }
+/* Smart Log side-panel tab (Agent Home 2.0 DAG rail & rows). */
+.smartlog-pane { height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: var(--text); font-family: var(--sans); }
+.smartlog-empty { margin: 0; padding: 16px; color: var(--dim); font: 12px/1.5 var(--sans); }
+.smartlog-graph { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 10px 12px 16px; }
+.smartlog-rail { display: flex; flex-direction: column; flex-shrink: 0; }
+.smartlog-rail-head { display: block; flex-shrink: 0; overflow: visible; }
+.smartlog-rail-tail { display: block; flex-grow: 1; min-height: 0; }
+.smartlog-stroke-rail { stroke: var(--dim); }
+.smartlog-stroke-head { stroke: #1d74f5; }
+:root[data-color-mode="dark"] .smartlog-stroke-head { stroke: #4ea1ff; }
+.smartlog-node-rail { fill: var(--dim); }
+.smartlog-node-head { fill: #1d74f5; stroke: #1d74f5; stroke-width: 1.5; }
+:root[data-color-mode="dark"] .smartlog-node-head { fill: #4ea1ff; stroke: #4ea1ff; }
+.smartlog-pill-row { position: relative; display: flex; min-width: 0; height: 26px; }
+.smartlog-you-are-here { position: absolute; top: 3px; padding: 2px 8px; border-radius: 999px; background: #1d74f5; color: #ffffff; font: 600 11px/1.3 var(--sans); white-space: nowrap; }
+:root[data-color-mode="dark"] .smartlog-you-are-here { background: #2d7ff9; }
+.smartlog-commit-row { display: flex; align-items: stretch; gap: 10px; min-width: 0; }
+.smartlog-commit-body { flex: 1 1 0; min-width: 0; margin-bottom: 10px; padding: 3px 6px; border-radius: 6px; }
+.smartlog-commit-body:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.smartlog-commit-line, .smartlog-public-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.smartlog-commit-title { font: 600 12px/1.35 var(--sans); overflow: hidden; text-overflow: ellipsis; }
+.smartlog-commit-title-inline { color: var(--dim); font: 12px/1.35 var(--sans); overflow: hidden; text-overflow: ellipsis; }
+.smartlog-commit-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; color: var(--dim); font: 11px/1.35 var(--sans); overflow: hidden; white-space: nowrap; }
+.smartlog-commit-hash { flex-shrink: 0; color: var(--dim); font: 11px/1.35 var(--mono); }
+.smartlog-commit-age { flex-shrink: 0; color: var(--dim); font: 11px/1.35 var(--sans); }
+.smartlog-bookmark-tag { flex-shrink: 0; max-width: 160px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--dim); font: 600 10px/1.35 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smartlog-uncommitted { flex: 1 1 0; min-width: 0; margin-bottom: 10px; padding: 4px 6px; border-radius: 6px; background: color-mix(in srgb, #1d74f5 6%, transparent); }
+.smartlog-uncommitted-summary { display: flex; align-items: center; gap: 7px; font: 600 11px/1.4 var(--sans); color: #1d74f5; }
+:root[data-color-mode="dark"] .smartlog-uncommitted-summary { color: #68b0ff; }
+.smartlog-dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.smartlog-uncommitted-label { flex: 1 1 auto; min-width: 0; }
+.smartlog-churn { flex-shrink: 0; font: 10px/1.3 var(--mono); }
+.smartlog-churn-add { color: var(--live); }
+.smartlog-churn-del { color: var(--error); }
+.smartlog-file-list { display: grid; gap: 1px; margin-top: 4px; }
+.smartlog-file-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: 11px/1.35 var(--mono); }
+.smartlog-file-row:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.smartlog-file-row:disabled { cursor: default; opacity: .7; }
+.smartlog-file-status { flex: 0 0 12px; font-weight: 700; color: #1d74f5; }
+:root[data-color-mode="dark"] .smartlog-file-status { color: #68b0ff; }
+.smartlog-file-path { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smartlog-file-toggle { width: max-content; margin-top: 2px; padding: 2px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: pointer; font: 11px/1.3 var(--sans); }
+.smartlog-file-toggle:hover { color: var(--text); }
 .repo-clone-inline { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 8px; padding: 2px 6px; pointer-events: auto; }
 .repo-clone-bar { width: 88px; height: 4px; flex: 0 0 auto; border-radius: 999px; background: color-mix(in srgb, var(--terminal-text) 14%, transparent); overflow: hidden; }
 .repo-clone-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width 220ms ease; }
@@ -756,7 +815,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
      the full height beside the transcript. */
   .workspace { width: 100%; padding: 0; height: 100dvh; display: flex; flex-direction: column; }
   .command-bar { margin-bottom: 12px; flex: 0 0 auto; }
-  .console-layout { grid-template-columns: clamp(220px, var(--sidebar-width, 316px), min(560px, calc(100% - 441px))) 1px minmax(0, 1fr); gap: 0; flex: 1 1 auto; min-height: 0; align-items: stretch; }
+  .console-layout { grid-template-columns: clamp(220px, var(--sidebar-width, 316px), min(560px, calc(100% - 441px))) 1px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 0; flex: 1 1 auto; min-height: 0; align-items: stretch; }
   .pane-divider { display: block; }
   .session-rail { min-height: 0; overflow-y: auto; padding: 14px 14px 14px 16px; }
   .detail-pane { min-height: 0; height: 100%; display: flex; flex-direction: column; }
@@ -958,6 +1017,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 @media (min-width: 780px) {
   .detail-split.with-side-panel {
     display: grid;
+    grid-template-rows: minmax(0, 1fr);
     grid-template-columns: minmax(0, var(--chat-width, 50%)) 1px minmax(0, 1fr);
     grid-template-columns: clamp(min(280px, calc((100% - 1px) / 2)), var(--chat-width, 50%), calc(100% - 1px - min(240px, calc((100% - 1px) / 2)))) 1px minmax(0, 1fr);
   }
@@ -983,7 +1043,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .side-tab:hover { color: var(--side-fg); }
 .side-tab.active { color: var(--side-fg); }
 .side-tab.active::after { content: ""; position: absolute; bottom: 0; left: 8px; right: 8px; height: 2px; background: var(--side-fg); pointer-events: none; }
-.side-tab-label { height: 100%; display: inline-flex; align-items: center; padding: 0 4px 0 8px; border: 0; background: transparent; color: inherit; cursor: pointer; font: 600 12px/1 var(--sans); white-space: nowrap; }
+.side-tab-label { height: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border: 0; background: transparent; color: inherit; cursor: pointer; font: 600 12px/1 var(--sans); white-space: nowrap; }
+.side-tab-label svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .side-tab-close { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; margin-right: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--side-dim); cursor: pointer; font: 18px/1 var(--sans); }
 .side-tab-close:hover { color: var(--side-fg); background: var(--side-hover); }
 .side-tab-label:focus-visible, .side-tab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

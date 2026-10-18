@@ -57,7 +57,7 @@
 .companion-contact small { overflow: hidden; color: var(--dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .companion-no-matches { padding: 10px; font-size: 13px; color: var(--dim); overflow-wrap: anywhere; }
 .companion-welcome { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.companion-welcome-content { display: flex; flex-direction: column; align-items: center; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 56px 24px 36px; mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.companion-welcome-content { display: flex; flex-direction: column; align-items: center; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 56px 24px 48px; mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), rgba(0, 0, 0, 0.15) calc(100% - 22px), transparent); }
 .companion-card-browser { position: relative; container-type: inline-size; width: min(calc(100% - 80px), 460px); flex: 0 0 auto; margin-block: auto; }
 .companion-card-navigation button { position: absolute; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 32px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: var(--surface); color: var(--dim); font-size: 26px; cursor: pointer; }
 .companion-card-navigation button:first-child { left: -40px; }

@@ -3000,6 +3000,25 @@ export function App() {
     });
     if (isNarrow) setMobileSideOpen(true);
   }, [isNarrow]);
+  const toggleSmartlogTab = useCallback((sessionId: string) => {
+    setSidePanels((current) => {
+      const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing = state.tabs.find((tab) => tab.kind === "smartlog");
+      const currentlyShowing = existing && state.activeKey === existing.key && (!isNarrow || mobileSideOpen);
+      if (currentlyShowing) {
+        const tabs = state.tabs.filter((tab) => tab.key !== existing.key);
+        const activeKey = tabs.at(-1)?.key ?? null;
+        if (tabs.length === 0) setMobileSideOpen(false);
+        return { ...current, [sessionId]: { ...state, tabs, activeKey } };
+      }
+      if (isNarrow) setMobileSideOpen(true);
+      if (existing) {
+        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: "smartlog", kind: "smartlog" };
+      return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [isNarrow, mobileSideOpen]);
   // Stable per-detail-session file opener so memoized tool rows keep an
   // identical onOpenFile prop across renders.
   const detailSessionIdForFiles = detailSession?.id ?? null;
@@ -3516,6 +3535,19 @@ export function App() {
     detailSession?.id,
   ]);
   const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
+  const smartlogTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailSidePanelState?.tabs.some((tab) => tab.kind === "smartlog" && tab.key === detailSidePanelState.activeKey),
+  );
+  const vcsSessionId = detailSession?.pilot_session_id ? detailSession.id : null;
+  const vcsStatusQuery = useQuery({
+    queryKey: ["session-vcs-status", vcsSessionId],
+    queryFn: () => api.getSessionVcsStatus({ session_id: vcsSessionId! }),
+    enabled: vcsSessionId !== null && vcsSessionId !== draft?.id,
+    refetchInterval: smartlogTabActive || liveWork ? 5000 : 15_000,
+    retry: false,
+  });
+  const detailWorkspaceShort = detailSession?.workspace_root ? shortenHomePaths(detailSession.workspace_root) : null;
   const detailSidePanel = useMemo(() => {
     if (!hasSidePanel || !detailSessionIdForFiles || !detailSidePanelState) return null;
     return (
@@ -3523,6 +3555,11 @@ export function App() {
         key={detailSessionIdForFiles}
         sessionId={detailSessionIdForFiles}
         state={detailSidePanelState}
+        vcsStatus={vcsStatusQuery.data ?? null}
+        vcsLoading={vcsStatusQuery.isFetching}
+        workspacePath={detailWorkspaceShort}
+        onRefreshVcs={() => { void vcsStatusQuery.refetch(); }}
+        onOpenFile={openFileTabForDetail}
         onBack={() => setMobileSideOpen(false)}
         onSelect={(key) => updateSidePanel(detailSessionIdForFiles, (state) => ({ ...state, activeKey: key }))}
         onClose={(tab) => closeSideTab(detailSessionIdForFiles, tab)}
@@ -3534,7 +3571,15 @@ export function App() {
         }
       />
     );
-  }, [hasSidePanel, detailSessionIdForFiles, detailSidePanelState]);
+  }, [
+    hasSidePanel,
+    detailSessionIdForFiles,
+    detailSidePanelState,
+    vcsStatusQuery.data,
+    vcsStatusQuery.isFetching,
+    detailWorkspaceShort,
+    openFileTabForDetail,
+  ]);
 
   return (
     <div className="app-shell">
@@ -3721,7 +3766,7 @@ export function App() {
                     ) : (
                     /* Shown for past sessions too: sending resumes them ("Resume & send"). */
                       <form ref={takeoverFormRef} className="terminal-prompt" onSubmit={submitTakeover}>
-                        {detailSession.repo_slug && (
+                        {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout) && (
                           <RepoPicker
                             repos={reposQuery.data?.repos ?? []}
                             githubEnabled={reposQuery.data?.github_enabled ?? true}
@@ -3729,7 +3774,10 @@ export function App() {
                             selected={detailSession.repo_slug}
                             mode="manage"
                             cloneProgress={detailSession.status === "queued" && detailSession.pilot_session_id === null ? (cloneProgressQuery.data ?? null) : null}
-                            workspacePath={detailSession.workspace_root ? shortenHomePaths(detailSession.workspace_root) : null}
+                            workspacePath={detailWorkspaceShort}
+                            vcsStatus={vcsStatusQuery.data ?? null}
+                            smartlogOpen={smartlogTabActive}
+                            onToggleSmartlog={() => toggleSmartlogTab(detailSession.id)}
                             phase={detailSession.status === "queued" && detailSession.pilot_session_id === null ? "starting" : "idle"}
                           />
                         )}

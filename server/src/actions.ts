@@ -1373,6 +1373,94 @@ export const Actions = {
     },
   }),
 
+  getSessionVcsStatus: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+    }),
+    response: z.object({
+      isGitCheckout: z.boolean(),
+      branch: z.string().nullable(),
+      headSha: z.string().nullable(),
+      uncommittedFileCount: z.number().int().nonnegative(),
+      totalAdditions: z.number().int().nonnegative(),
+      totalDeletions: z.number().int().nonnegative(),
+      files: z.array(z.object({
+        path: z.string(),
+        status: z.string(),
+        additions: z.number().nullable(),
+        deletions: z.number().nullable(),
+      })),
+      smartlogCommits: z.array(z.object({
+        hash: z.string(),
+        parents: z.array(z.string()),
+        phase: z.enum(["public", "draft"]),
+        isDot: z.boolean(),
+        title: z.string(),
+        author: z.string(),
+        date: z.string(),
+        bookmarks: z.array(z.string()),
+        remoteBookmarks: z.array(z.string()),
+      })),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const empty = {
+        isGitCheckout: false,
+        branch: null,
+        headSha: null,
+        uncommittedFileCount: 0,
+        totalAdditions: 0,
+        totalDeletions: 0,
+        files: [],
+        smartlogCommits: [],
+      };
+      try {
+        const db = ctx.db<typeof schema>();
+        const rows = await db
+          .select({ pilotSessionId: schema.sessions.pilotSessionId })
+          .from(schema.sessions)
+          .where(eq(schema.sessions.id, args.session_id))
+          .limit(1);
+        const pilotId = rows[0]?.pilotSessionId ?? null;
+        if (!pilotId) return empty;
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        return await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(pilotId)}/vcs-status`,
+          { method: "GET" },
+          z.object({
+            isGitCheckout: z.boolean(),
+            branch: z.string().nullable(),
+            headSha: z.string().nullable(),
+            uncommittedFileCount: z.number().int().nonnegative(),
+            totalAdditions: z.number().int().nonnegative(),
+            totalDeletions: z.number().int().nonnegative(),
+            files: z.array(z.object({
+              path: z.string(),
+              status: z.string(),
+              additions: z.number().nullable(),
+              deletions: z.number().nullable(),
+            })),
+            smartlogCommits: z.array(z.object({
+              hash: z.string(),
+              parents: z.array(z.string()),
+              phase: z.enum(["public", "draft"]),
+              isDot: z.boolean(),
+              title: z.string(),
+              author: z.string(),
+              date: z.string(),
+              bookmarks: z.array(z.string()),
+              remoteBookmarks: z.array(z.string()),
+            })),
+          }),
+          8_000,
+        );
+      } catch {
+        return empty;
+      }
+    },
+  }),
+
   getRepoCloneProgress: defineAction({
     request: z.object({
       session_id: z.string().min(1),

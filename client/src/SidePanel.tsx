@@ -4,10 +4,21 @@
 import "@wterm/react/css";
 import { Suspense, lazy, memo, useEffect, useRef, useState } from "react";
 import { FileTab } from "./FileTab";
+import { SmartLogIcon, SmartLogView } from "./SmartLogPanel";
+import type { SessionVcsStatus } from "./smartlogLayout";
 
 const LazyTerminalView = lazy(() =>
   import("./TerminalPanel").then((m) => ({ default: m.TerminalView })),
 );
+
+function TerminalTabIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+      <path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4" />
+    </svg>
+  );
+}
 
 /** Floating chat button: always opens a new terminal tab. */
 export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
@@ -19,17 +30,15 @@ export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
       aria-label="Open a new terminal"
       title="New terminal in the working directory"
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
-        <path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4" />
-      </svg>
+      <TerminalTabIcon />
     </button>
   );
 }
 
 export type SideTab =
   | { key: string; kind: "terminal"; terminalId: string | null; number: number | null }
-  | { key: string; kind: "file"; path: string };
+  | { key: string; kind: "file"; path: string }
+  | { key: string; kind: "smartlog" };
 
 export type SidePanelState = { tabs: SideTab[]; activeKey: string | null };
 
@@ -57,15 +66,33 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
 });
 
 export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
+  if (tab.kind === "smartlog") return "Smart Log";
   if (tab.kind === "file") return tab.path.split("/").at(-1) || tab.path;
   // A lone terminal is just "Terminal"; numbers only disambiguate when
   // there is more than one terminal tab.
   return terminalCount > 1 && tab.number !== null ? `Terminal ${tab.number}` : "Terminal";
 }
 
-export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpened, onBack }: {
+export function SidePanel({
+  sessionId,
+  state,
+  vcsStatus = null,
+  vcsLoading = false,
+  workspacePath = null,
+  onRefreshVcs,
+  onOpenFile,
+  onSelect,
+  onClose,
+  onTerminalOpened,
+  onBack,
+}: {
   sessionId: string;
   state: SidePanelState;
+  vcsStatus?: SessionVcsStatus | null;
+  vcsLoading?: boolean;
+  workspacePath?: string | null;
+  onRefreshVcs?: () => void;
+  onOpenFile?: (path: string) => void;
   onSelect: (key: string) => void;
   onClose: (tab: SideTab) => void;
   onTerminalOpened: (key: string, terminalId: string, number: number) => void;
@@ -96,7 +123,9 @@ export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpene
                 className="side-tab-label"
                 onClick={() => onSelect(tab.key)}
               >
-                {label}
+                {tab.kind === "terminal" && <TerminalTabIcon />}
+                {tab.kind === "smartlog" && <SmartLogIcon />}
+                <span>{label}</span>
               </button>
               <button
                 type="button"
@@ -132,6 +161,14 @@ export function SidePanel({ sessionId, state, onSelect, onClose, onTerminalOpene
                     onOpened={(terminalId, number) => onTerminalOpened(tab.key, terminalId, number)}
                   />
                 </Suspense>
+              ) : tab.kind === "smartlog" ? (
+                <SmartLogView
+                  status={vcsStatus}
+                  loading={vcsLoading}
+                  workspacePath={workspacePath}
+                  onRefresh={() => onRefreshVcs?.()}
+                  onOpenFile={onOpenFile}
+                />
               ) : <FileTab sessionId={sessionId} path={tab.path} />}
             </div>
           );
