@@ -370,7 +370,14 @@ How it maps to the real host:
 **Fake pilot** (`dev/fake-pilot.ts`) implements the parts of the pilot API
 the actions call:
 - `/health`, `/models`, `/sessions`, `/turns`, `/turns/interrupt`, `/poll`,
-  `/recover`, `/sessions/:id/tools/output`, `/user-inputs*` and `/debug/wire`.
+  `/recover`, `/sessions/:id/tools/output`, `/user-inputs*`, `/repos` and
+  `/debug/wire`.
+- `/repos` serves three sample repos for the composer's repo picker. A
+  `repo` on session start is validated and simulated: picking
+  `dreveman/fail-clone` (or any slug containing `fail`) returns the real
+  pilot's 422 `repo_clone_failed`; any other slug drops a `FAKE-CLONE.md`
+  marker into the workspace and rides the `session_started` meta. No git
+  or GitHub is involved.
 - Each prompt plays a scripted turn: tool call → answer →
   `turn_completed`.
 - `MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS=<ms>` holds starts/turns before

@@ -30,9 +30,10 @@ export async function pilotRequest<T>(
   path: string,
   init: RequestInit,
   responseSchema: { parse(value: unknown): T },
+  timeoutMs = 10_000,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     let response: Response;
     try {

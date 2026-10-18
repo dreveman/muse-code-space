@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
 import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
@@ -13,6 +13,10 @@ import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 // prompt: userMessage → toolCall (inProgress → completed) → agentMessage →
 // turn_completed, a few hundred ms apart. Prompt keywords change the script:
 //   "fail"   → turn_error instead of an answer
+// Repo picks (`repo` on POST /sessions, from the composer's repo picker):
+// a slug containing "fail" simulates a clone failure (422 repo_clone_failed,
+// like the real pilot); any other slug "clones" instantly — the workspace
+// gets a FAKE-CLONE.md marker and the slug rides the session_started meta.
 //   "slow"   → 10s between steps (exercise spinners / interrupt)
 //   "ask"    → a user_input request the UI must answer before the turn ends
 //   "receive-message" → an incoming message from Pip (Juno when testing as Pip)
@@ -60,6 +64,8 @@ type Session = {
   /** Muse's name for the agent (session/rename); kept as given here. */
   name?: string;
   workspaceRoot?: string;
+  /** Repo picked in the composer (`owner/repo`); simulated clone target. */
+  repo?: string;
   appSessionId?: string;
   initialTurnId?: string | null;
   modelId: string;
@@ -97,12 +103,12 @@ const wire: Array<{ at: string; dir: string; method: string; ms?: number; ok?: b
 function saveState() {
   if (!STATE_FILE) return;
   const serializedFiles = [...sessionFiles.entries()].map(([id, map]) => [id, [...map.entries()]] as const);
-  const data = { seq, assistant, toolOutputs: [...toolOutputs], sessionFiles: serializedFiles, sessions: [...sessions.values()].map(({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events }) => ({ id, title, name, workspaceRoot, appSessionId, initialTurnId, modelId, events })) };
+  const data = { seq, assistant, toolOutputs: [...toolOutputs], sessionFiles: serializedFiles, sessions: [...sessions.values()].map(({ id, title, name, workspaceRoot, repo, appSessionId, initialTurnId, modelId, events }) => ({ id, title, name, workspaceRoot, repo, appSessionId, initialTurnId, modelId, events })) };
   writeFileSync(STATE_FILE, JSON.stringify(data));
 }
 function loadState() {
   if (!STATE_FILE || !existsSync(STATE_FILE)) return;
-  const data = JSON.parse(readFileSync(STATE_FILE, "utf8")) as { seq: number; assistant?: typeof assistant; toolOutputs?: Array<[string, string]>; sessionFiles?: Array<[string, Array<[string, string]>]>; sessions: Array<Pick<Session, "id" | "title" | "name" | "workspaceRoot" | "appSessionId" | "initialTurnId" | "modelId" | "events">> };
+  const data = JSON.parse(readFileSync(STATE_FILE, "utf8")) as { seq: number; assistant?: typeof assistant; toolOutputs?: Array<[string, string]>; sessionFiles?: Array<[string, Array<[string, string]>]>; sessions: Array<Pick<Session, "id" | "title" | "name" | "workspaceRoot" | "repo" | "appSessionId" | "initialTurnId" | "modelId" | "events">> };
   seq = data.seq;
   if (data.assistant) {
     assistant.name = data.assistant.name;
@@ -1059,6 +1065,17 @@ Bun.serve({
       return json(200, { content: chunk.toString("utf8"), encoding: "utf8", byteLen: chunk.length,
         offsetBytes: body.offsetBytes, eof: body.offsetBytes + chunk.length >= bytes.length, mediaType: ref.startsWith("patch-") ? "application/json" : "text/plain" });
     }
+    if (path === "/repos" && req.method === "GET") {
+      // Sample list so the composer's repo picker can be exercised locally.
+      return json(200, {
+        enabled: true,
+        repos: [
+          { slug: "dreveman/muse-code-space", name: "muse-code-space", owner: "dreveman", private: false, description: "Sample repo for local UI work", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/muse-code-space" },
+          { slug: "dreveman/sample-private", name: "sample-private", owner: "dreveman", private: true, description: null, default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/sample-private" },
+          { slug: "dreveman/fail-clone", name: "fail-clone", owner: "dreveman", private: false, description: "Picking this simulates a failed clone", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/fail-clone" },
+        ],
+      });
+    }
     if (path === "/sessions" && req.method === "GET") {
       return json(200, [...sessions.values()].map((s) => ({ sessionId: s.id, title: s.title, name: s.name ?? null, modelId: s.modelId, status: s.openTurn ? "running" : "idle" })));
     }
@@ -1080,11 +1097,28 @@ Bun.serve({
       if (HOME && workspaceRoot && !workspaceRoot.startsWith(`${HOME}/`)) {
         return json(500, { error: `fake pilot: workspaceRoot ${workspaceRoot} is not under ${HOME}` });
       }
+      // Repo pick (real pilot: pilot/repoSetup.mjs clones before starting).
+      // Simulated: validated, a "fail" slug fails like a bad clone, any
+      // other slug drops a marker into the workspace instead of cloning.
+      const repo = body.repo === undefined || body.repo === null ? null : String(body.repo);
+      if (repo !== null && !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/.test(repo)) {
+        return json(400, { error: "Pick a repository as owner/repo or a github.com URL.", code: "invalid_repo" });
+      }
+      if (repo !== null && repo.toLowerCase().includes("fail")) {
+        return json(422, { error: `Could not clone ${repo}: simulated clone failure (fake pilot)`, code: "repo_clone_failed" });
+      }
+      if (repo !== null && workspaceRoot) {
+        try {
+          mkdirSync(workspaceRoot, { recursive: true });
+          writeFileSync(`${workspaceRoot}/FAKE-CLONE.md`, `Fake clone of ${repo} (fake pilot — no git ran).\n`);
+        } catch { /* the marker is a testing aid; the session still starts */ }
+      }
       const session: Session = {
         id: `fake-${crypto.randomUUID()}`,
         title: String(body.title ?? "untitled"),
         ...(typeof body.name === "string" && body.name ? { name: body.name } : {}),
         ...(typeof body.workspaceRoot === "string" ? { workspaceRoot: body.workspaceRoot } : {}),
+        ...(repo !== null ? { repo } : {}),
         ...(appSessionId ? { appSessionId } : {}),
         initialTurnId: null,
         modelId: String(body.modelId || (MODELS.find((m) => m.isDefault) ?? MODELS[0]!).modelId),
@@ -1100,6 +1134,7 @@ Bun.serve({
           name: session.name ?? session.title,
           modelId: session.modelId,
           workspaceRoot: session.workspaceRoot ?? null,
+          repo: session.repo ?? null,
           appSessionId: session.appSessionId ?? null,
           createdAt: new Date().toISOString(),
         },

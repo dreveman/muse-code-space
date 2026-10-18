@@ -23,6 +23,7 @@ import { parseToolDetails, toolDetailsFromItem } from "./toolDetails";
 import { ownedArtifactPaths } from "./ownedArtifacts";
 import { validateAssistantAvatar } from "./assistantAvatar.mjs";
 import { pilotRequest, isPilotUnavailable, readPilotModels } from "./pilotRequest";
+import { parseRepoSlug } from "./repoSlug";
 import { companionModelAccess, modelUpgradeMessage, PAID_COMPANION_MODELS } from "./companionModels";
 import { transcriptToRows, type TranscriptImport } from "./transcriptRestore";
 import * as schema from "./schema";
@@ -61,6 +62,7 @@ const sessionResponseSchema = z.object({
   output_count: z.number(),
   latest_output: z.string().nullable(),
   project_id: z.string().nullable(),
+  repo_slug: z.string().nullable(),
 });
 
 const eventResponseSchema = z.object({
@@ -522,7 +524,7 @@ async function pilotSessionIdFor(db: ReturnType<Parameters<typeof Actions.getSes
 }
 
 type PilotStartRow = Pick<typeof schema.sessions.$inferSelect,
-  "id" | "title" | "prompt" | "workspaceRoot" | "modelId" | "requestedModelId" | "reasoningEffort">;
+  "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "modelId" | "requestedModelId" | "reasoningEffort">;
 
 async function requirePaidModelAccess(baseUrl: string, modelId: string) {
   if (!Object.hasOwn(PAID_COMPANION_MODELS, modelId)) return;
@@ -560,9 +562,13 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
         workspaceName: row.id, // stable idempotency key in the pilot
         workspaceRoot: row.workspaceRoot ?? defaultWorkspaceRoot(row.id),
         generatedWorkspace: row.workspaceRoot === null || isGeneratedWorkspaceRoot(row.id, row.workspaceRoot, WORKSPACE_ROOT),
+        // The pilot clones this into the workspace before the first turn.
+        ...(row.repoSlug ? { repo: row.repoSlug } : {}),
       }),
     },
     pilotSessionResponseSchema,
+    // A clone can take far longer than the usual 10s admission budget.
+    row.repoSlug ? 120_000 : 10_000,
   );
 }
 
@@ -616,7 +622,9 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
 
   const lease = await db
     .update(schema.sessions)
-    .set({ pilotRetryAt: new Date(Date.now() + PILOT_START_LEASE_MS) })
+    // A repo clone can hold the start attempt well past the usual lease;
+    // the pilot dedupes by workspaceName, so a longer lease is safe.
+    .set({ pilotRetryAt: new Date(Date.now() + (row.repoSlug ? 150_000 : PILOT_START_LEASE_MS)) })
     .where(and(eq(schema.sessions.id, row.id), eq(schema.sessions.status, "queued"),
       isNull(schema.sessions.pilotSessionId),
       or(isNull(schema.sessions.pilotRetryAt), lte(schema.sessions.pilotRetryAt, now))))
@@ -1322,6 +1330,47 @@ export const Actions = {
     },
   }),
 
+  // Repos the composer's repo picker can offer. The pilot asks the GitHub
+  // broker; "not set up" is a normal empty answer, never an error, so the
+  // picker can still accept a pasted owner/repo or github.com URL.
+  listRepos: defineAction({
+    request: z.object({}),
+    response: z.object({
+      github_enabled: z.boolean(),
+      repos: z.array(z.object({
+        slug: z.string(),
+        name: z.string(),
+        owner: z.string(),
+        private: z.boolean(),
+        description: z.string().nullable(),
+        default_branch: z.string().nullable(),
+        updated_at: z.string().nullable(),
+        html_url: z.string(),
+      })),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        return await pilotRequest(baseUrl, "/repos", { method: "GET" }, z.object({
+          enabled: z.boolean(),
+          repos: z.array(z.object({
+            slug: z.string(),
+            name: z.string(),
+            owner: z.string(),
+            private: z.boolean(),
+            description: z.string().nullable(),
+            default_branch: z.string().nullable(),
+            updated_at: z.string().nullable(),
+            html_url: z.string(),
+          })),
+        }).transform((value) => ({ github_enabled: value.enabled, repos: value.repos })), 20_000);
+      } catch {
+        return { github_enabled: false, repos: [] };
+      }
+    },
+  }),
+
   listModels: defineAction({
     request: z.object({}),
     response: z.object({ models: z.array(modelResponseSchema), access_checked: z.boolean() }),
@@ -1475,6 +1524,7 @@ export const Actions = {
             output_count: countRows[0]?.value ?? 0,
             latest_output: latest ? latest.slice(0, 220) : null,
             project_id: row.projectId ?? null,
+            repo_slug: row.repoSlug ?? null,
           };
         }),
       );
@@ -1543,6 +1593,7 @@ export const Actions = {
           output_count: events.length,
           latest_output: latest ? latest.slice(0, 220) : null,
           project_id: row.projectId ?? null,
+          repo_slug: row.repoSlug ?? null,
         },
         events: events.map((event) => ({
           id: event.id,
@@ -1814,6 +1865,9 @@ export const Actions = {
       prompt: z.string().trim().min(1).max(20000),
       workspaceRoot: z.string().trim().min(1).max(2000),
       project_id: z.string().trim().min(1).max(200).nullable().optional(),
+      // Repo picked before the first message (`owner/repo` or a github.com
+      // URL); the pilot clones it into the workspace before starting.
+      repo: z.string().trim().min(1).max(300).nullable().optional(),
     }).strict(),
     response: createSessionResponseSchema,
     privileged: [privileged.resolvePilotUrl],
@@ -1826,6 +1880,15 @@ export const Actions = {
           id: null,
           start_status: null,
           error: workspace.error,
+        };
+      }
+      const repoSlug = args.repo == null ? null : parseRepoSlug(args.repo);
+      if (args.repo != null && !repoSlug) {
+        return {
+          ok: false,
+          id: null,
+          start_status: null,
+          error: "Pick a repository as owner/repo or a github.com URL.",
         };
       }
       // Generated short paths cannot accidentally be assigned to two app
@@ -1892,6 +1955,7 @@ export const Actions = {
             prompt,
             projectId,
             workspaceRoot: workspace.path,
+            repoSlug,
             status: "queued",
             startedAt: now,
             updatedAt: now,
@@ -1935,6 +1999,7 @@ export const Actions = {
             title: agentName,
             prompt,
             workspaceRoot: workspace.path,
+            repoSlug,
             modelId,
             requestedModelId: modelId,
             reasoningEffort: effort,

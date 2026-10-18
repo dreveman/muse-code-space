@@ -27,6 +27,7 @@ fail() { echo "[install] ERROR: $*" >&2; exit 1; }
 
 # ---- prerequisites (agent must fix these first; see docs/PILOT.md) ----
 command -v node >/dev/null || fail "node not found"
+command -v git >/dev/null || fail "git not found (agents and the repo picker clone with it)"
 command -v python3 >/dev/null || fail "python3 not found"
 command -v curl >/dev/null || fail "curl not found"
 MUSE_BIN="${MUSE_CODE_SPACE_MUSE_BIN:-}"
@@ -99,7 +100,7 @@ fi
 
 # ---- deploy files (code only; state/ and logs stay untouched) ----
 mkdir -p "$RUNTIME/state"
-for f in pilot.mjs terminals.mjs files.mjs mcp.mjs githubTools.mjs prMonitor.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
+for f in pilot.mjs terminals.mjs files.mjs mcp.mjs githubTools.mjs prMonitor.mjs repoSetup.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
   cp "$REPO_DIR/$f" "$RUNTIME/$f" || fail "copy $f"
 done
 cp "$REPO_DIR/../server/src/assistantAvatar.mjs" "$RUNTIME/assistant-avatar.mjs" || fail "copy shared avatar validator"

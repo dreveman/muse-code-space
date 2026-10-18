@@ -14,6 +14,7 @@ the runtime dir only holds state, logs, and `node_modules`.
 | `pilot/files.mjs` | `<runtime>/` | Bounded read-only file tabs under a session workspace |
 | `pilot/muse_relay.py` | `<runtime>/muse_relay.py` | credential relay (vendored, see below) |
 | `pilot/github_broker.py` | `<runtime>/github_broker.py` | GitHub credential broker (see GitHub broker below) |
+| `pilot/repoSetup.mjs` | `<runtime>/repoSetup.mjs` | Repo picker: list broker-visible repos, clone a pick into a new workspace |
 | `pilot/watchdog.sh` | `<runtime>/watchdog.sh` | cron watchdog, single-supervisor rule |
 | `pilot/systemd/muse-code-space-pilot.service` | `/etc/systemd/system/` | project pilot unit (`@PILOT_DIR@` etc.) |
 | `pilot/systemd/muse-code-space-relay.service` | `/etc/systemd/system/` | project relay unit (configurable port) |
@@ -103,6 +104,20 @@ Prerequisites the installer will NOT create (human/owner steps):
   duplicates when a response is lost. An explicit rejection fails visibly,
   with a Retry start button. See `docs/LOCAL_DEVELOPMENT.md` restart tests
   8–9.
+
+## Repo picker (clone before the first turn)
+
+The composer's repo row (above a new companion's first prompt) offers the
+repos the broker credential can see via `GET /repos` (user/PAT repos from
+`/user/repos`, GitHub App installs from `/installation/repositories`), plus
+a pasted `owner/repo` or github.com URL. The pick rides `POST /sessions` as
+`repo`; the pilot clones it into the companion's fresh workspace
+(`pilot/repoSetup.mjs`) before starting the session, through the broker
+gitconfig when GitHub is provisioned and plain https otherwise. No pick
+keeps the blank generated workspace. A retry that finds the same repo
+already cloned reuses it; any other content in the workspace is refused.
+The app stores the slug on the session (`sessions.repo_slug`, migration
+0025) so queued first-prompt retries clone the same repo.
 
 ## Supervision rules (learned from the 2026-09-30 incident)
 
