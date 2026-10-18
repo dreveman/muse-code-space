@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { parseRepoSlug } from "../../server/src/repoSlug";
-import { filterRepos, repoStatusText, repoTriggerLabel, type RepoOption } from "./repoPicker";
+import { filterRepos, repoStatusText, repoTriggerLabel, type RepoOption } from "./repoOptions";
 
 function RepoIcon() {
   return (
