@@ -1,10 +1,10 @@
 // Run: node --test client/src/repoPicker.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { filterRepos, repoStatusText, repoTriggerLabel } from "./repoPicker.ts";
+import { filterRepos, repoStatusText, repoTriggerLabel } from "./repoOptions.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(path.join(root, "App.tsx"), "utf8");
@@ -30,6 +30,20 @@ test("the row status says what happens on start", () => {
   assert.match(repoStatusText("o/r", "idle"), /clones into the new workspace/);
   assert.match(repoStatusText("o/r", "starting"), /Cloning o\/r/);
   assert.match(repoStatusText("o/r", "queued"), /Queued/);
+});
+
+test("helper module names differ by more than case (macOS filesystems are case-insensitive)", () => {
+  // "./repoPicker" resolved to RepoPicker.tsx itself on APFS, breaking the
+  // dev-server build. The helpers live in repoOptions.ts so no two modules
+  // in this directory are distinguished only by letter case.
+  assert.ok(existsSync(path.join(root, "repoOptions.ts")));
+  assert.ok(!existsSync(path.join(root, "repoPicker.ts")), "repoPicker.ts collides with RepoPicker.tsx on case-insensitive filesystems");
+  const names = new Map();
+  for (const name of readdirSync(root)) {
+    const key = name.toLowerCase();
+    assert.ok(!names.has(key), `${name} differs from ${names.get(key)} only by case`);
+    names.set(key, name);
+  }
 });
 
 test("the repo row sits above the first-message composer and travels with the draft", () => {
