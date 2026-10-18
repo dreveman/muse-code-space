@@ -22,7 +22,9 @@ for (const v of ["LOCAL_SESSION_MESSAGING", "EXTERNAL_AGENT_INGRESS"]) {
 // API:
 //   GET  /health                      -> { ok, sessions }
 //   GET  /models                      -> live MSP model/list catalog
-//   POST /sessions                     { title?, name?, prompt?, modelId?, reasoningEffort?, workspaceName?, workspaceRoot? } -> { sessionId, turnId, modelId, name }
+//   GET  /repos                        -> { enabled, repos: [{ slug, name, owner, private, ... }] } (GitHub repos the broker can see)
+//   POST /sessions                     { title?, name?, prompt?, modelId?, reasoningEffort?, workspaceName?, workspaceRoot?, repo? } -> { sessionId, turnId, modelId, name }
+
 //                                      (modelId omitted -> the serve host catalog's default model)
 //   POST /sessions/:id/turns          { text, ifBusy?, reasoningEffort?, modelId? } -> { turnId, admitMs, modelSwitched, modelId } (fast; ms)
 //   POST /sessions/:id/turns/interrupt -> { ok, turnId? } (priority lane; the turn ends on turn/completed with terminal cancelled)
@@ -41,7 +43,7 @@ import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-cod
 import { createServer } from "node:http";
 import { get as httpsGet, request as httpsRequest } from "node:https";
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync } from "node:fs";
 import { createHash, getRandomValues } from "node:crypto";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -49,6 +51,7 @@ import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from 
 import { readWorkspaceFile } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
+import { ensureRepoCloned, listGitHubRepos, parseRepoInput } from "./repoSetup.mjs";
 import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
@@ -1082,6 +1085,32 @@ function gitRead(workspaceRoot, args) {
   });
 }
 
+// Clone a picked repo into a new companion's workspace. Through the
+// broker gitconfig when GitHub is provisioned (private repos work and no
+// real credential reaches this process); plain https otherwise, which
+// covers public repos. Failures are truncated: git stderr can be verbose.
+function gitCloneRepo(cloneUrl, dir) {
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      ...(existsSync(GITHUB_BROKER_CONFIG) ? githubSessionEnv() : {}),
+      GIT_TERMINAL_PROMPT: "0",
+    };
+    execFile("git", ["clone", "--", cloneUrl, dir], { timeout: 120_000, maxBuffer: 1_000_000, env }, (error, _stdout, stderr) => {
+      if (!error) { resolve(); return; }
+      const detail = String(stderr ?? "").trim().split("\n").filter(Boolean).at(-1) ?? error.message;
+      reject(new Error(detail.slice(0, 240)));
+    });
+  });
+}
+
+function workspaceEntries(dir) {
+  try { return readdirSync(dir); } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function githubGitContext(workspaceRoot) {
   if (!workspaceRoot) return {};
   const [remote, branch] = await Promise.all([
@@ -1615,10 +1644,29 @@ async function createPilotSession(body) {
     }
   }
   if (!entry) {
+    const repoPick = body.repo === undefined || body.repo === null ? null : parseRepoInput(body.repo);
+    if (body.repo !== undefined && body.repo !== null && !repoPick) {
+      return { code: 400, body: { error: "Pick a repository as owner/repo or a github.com URL.", code: "invalid_repo" } };
+    }
     // Direct pilot callers also get a short, stable directory without
     // leaking their mutable title or the full workspaceName into the path.
     const wsDir = body.workspaceRoot ?? defaultWorkspacePath(appSessionId);
-    if (!createWorkspacePath(wsDir, !body.workspaceRoot || body.generatedWorkspace === true)) {
+    if (repoPick) {
+      // Clone before the session starts so the agent opens in the repo,
+      // not an empty folder it must clone into by hand. A retry that finds
+      // the same repo already cloned reuses it.
+      try {
+        await ensureRepoCloned({
+          dir: wsDir,
+          repo: repoPick,
+          gitClone: gitCloneRepo,
+          gitOrigin: (dir) => gitRead(dir, ["config", "--get", "remote.origin.url"]),
+          listDir: workspaceEntries,
+        });
+      } catch (error) {
+        return { code: 422, body: { error: `Could not clone ${repoPick.slug}: ${String(error?.message ?? error).slice(0, 300)}`, code: "repo_clone_failed" } };
+      }
+    } else if (!createWorkspacePath(wsDir, !body.workspaceRoot || body.generatedWorkspace === true)) {
       return { code: 409, body: { error: "generated working directory already exists; start a new companion", code: "workspace_conflict" } };
     }
     const meta = {
@@ -1627,6 +1675,7 @@ async function createPilotSession(body) {
       modelId: body.modelId || (await defaultModelId()),
       createdAt: new Date().toISOString(),
       workspaceRoot: wsDir,
+      repo: repoPick?.slug ?? null,
       appSessionId,
       initialTurnId: null,
     };
@@ -1763,6 +1812,19 @@ const server = createServer(async (req, res) => {
         return json(res, 200, result);
       } catch (e) {
         return json(res, 500, { error: `model/list failed: ${String(e).slice(0, 300)}` });
+      }
+    }
+
+    // Repos the repo picker offers: what the GitHub broker credential can
+    // see. GitHub is optional, so "not set up" is a 200 with enabled:false.
+    if (req.method === "GET" && path === "/repos") {
+      try {
+        return json(res, 200, await listGitHubRepos({
+          enabled: () => existsSync(GITHUB_BROKER_CONFIG),
+          brokerRequest: githubBrokerRequest,
+        }));
+      } catch (error) {
+        return json(res, 502, { error: String(error?.message ?? error).slice(0, 300), code: "repo_list_failed" });
       }
     }
 

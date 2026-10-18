@@ -21,6 +21,7 @@ import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSession
 import { newSessionIdentity } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
+import { RepoPicker } from "./RepoPicker";
 import { completeMention, matchingAgents, mentionAtCursor, type MentionAgent } from "./agentMentions";
 import { PaneDivider } from "./PaneDivider";
 import { chatWidthBounds, clampChatShare, clampSidebarWidth, DEFAULT_CHAT_SHARE, DEFAULT_SIDEBAR_WIDTH, DIVIDER_WIDTH, loadPaneSizes, savePaneSizes, sidebarWidthBounds } from "./layoutSizing";
@@ -118,6 +119,9 @@ type NewSessionDraft = {
   id: string;
   projectKey: string;
   workspaceRoot: string;
+  // Repo picked above the first-message prompt (`owner/repo`); cloned into
+  // workspaceRoot by the pilot on start. Null: blank generated workspace.
+  repoSlug: string | null;
   companionId: string;
   companionName: string;
 };
@@ -145,7 +149,7 @@ function QueuedEcho({ text, onCancel, sending = false }: { text: string; onCance
 }
 
 function makeNewSessionDraft(companion: (typeof companions)[number], projectKey = ""): NewSessionDraft {
-  return { ...newSessionIdentity(crypto.randomUUID(), Date.now()), projectKey, companionId: companion.id, companionName: companion.name };
+  return { ...newSessionIdentity(crypto.randomUUID(), Date.now()), projectKey, repoSlug: null, companionId: companion.id, companionName: companion.name };
 }
 
 
@@ -1477,6 +1481,16 @@ export function App() {
     refetchInterval: 15_000,
   });
   const projects = projectsQuery.data?.projects ?? [];
+  // Repos for the first-message repo picker. Fetched only while a new
+  // companion draft is on screen; the server answers an empty list (never
+  // an error) when GitHub isn't set up, and pasting still works.
+  const reposQuery = useQuery({
+    queryKey: ["github-repos"],
+    queryFn: () => api.listRepos({}),
+    enabled: draft !== null || selectedCompanionId !== null,
+    staleTime: 60_000,
+    retry: false,
+  });
   const sessions = sessionsQuery.data?.sessions ?? [];
   const sessionQuery = sessions.length > 1 ? sessionFilterInput : "";
   const selectedCompanion = companions.find((companion) => companion.id === selectedCompanionId) ?? null;
@@ -2542,6 +2556,7 @@ export function App() {
         prompt: queued.prompt,
         workspaceRoot: queued.workspacePath,
         project_id: queued.draft.projectKey === "" ? null : queued.draft.projectKey,
+        repo: queued.draft.repoSlug,
       });
       if (!response.ok || !response.id) {
         setStartingDraft(null);
@@ -2556,6 +2571,7 @@ export function App() {
         title: queued.draft.companionName,
         prompt: queued.prompt,
         workspace_root: queued.workspacePath,
+        repo_slug: queued.draft.repoSlug,
         pilot_session_id: response.start_status === "waking" ? createdId : null,
         model_id: companion?.model.preferredId ?? "",
         reasoning_effort: (companion?.effort ?? "medium") as Session["reasoning_effort"],
@@ -3109,6 +3125,15 @@ export function App() {
   const firstMessageComposer = (startingDraft?.draft.id === selectedId || selectedCompanion !== null) ? (
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
+      <RepoPicker
+        repos={reposQuery.data?.repos ?? []}
+        githubEnabled={reposQuery.data?.github_enabled ?? false}
+        loading={reposQuery.isFetching}
+        selected={startingDraft?.draft.id === selectedId ? startingDraft.draft.repoSlug : draft?.repoSlug ?? null}
+        disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
+        phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
+        onChoose={(slug) => setDraft((current) => (current ? { ...current, repoSlug: slug } : current))}
+      />
       <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
         <label className="sr-only" htmlFor="draft-input">
           First message

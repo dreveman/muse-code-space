@@ -6,6 +6,11 @@ export const sessions = sqliteTable("sessions", {
   title: text("title").notNull(),
   prompt: text("prompt").notNull(),
   workspaceRoot: text("workspace_root"),
+  // Repo picked in the composer before the first message (`owner/repo`).
+  // Stored so a queued first-prompt retry clones the same repo; the pilot
+  // clones it into workspaceRoot before the session starts. Null: the
+  // companion starts in a blank generated folder.
+  repoSlug: text("repo_slug"),
   status: text("status", {
     enum: ["queued", "running", "succeeded", "failed", "stopped"],
   })
