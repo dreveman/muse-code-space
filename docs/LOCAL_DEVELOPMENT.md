@@ -372,7 +372,10 @@ the actions call:
 - `/health`, `/models`, `/sessions`, `/turns`, `/turns/interrupt`, `/poll`,
   `/recover`, `/sessions/:id/tools/output`, `/user-inputs*`, `/repos` and
   `/debug/wire`.
-- `/repos` serves three sample repos for the composer's repo picker. A
+- `/repos` serves three sample repos for the composer's repo picker. Set
+  `MUSE_CODE_SPACE_FAKE_PILOT_GITHUB=disconnected` to return
+  `{ enabled: false, repos: [] }` and exercise the
+  `Connect GitHub · Work on your repos` button state. A
   `repo` on session start is validated and simulated: picking
   `dreveman/fail-clone` (or any slug containing `fail`) returns the real
   pilot's 422 `repo_clone_failed`; any other slug drops a `FAKE-CLONE.md`
@@ -842,7 +845,11 @@ under `~/.config/muse-code-space-pilot` (no relay, no
   at boot and refuses every turn with `relay_down`. With it, `/health` reports
   `"relay": "disabled"`. The pilot warns at boot if
   `~/.config/muse-code-space-pilot/muse/settings.json` still points Muse at
-  the relay.
+  the relay. When `MUSE_CODE_SPACE_RELAY_URL=none` (or
+  `MUSE_CODE_SPACE_GITHUB_BROKER_URL=none`) is set and no broker config exists,
+  the pilot also uses your local `gh` and `git` commands directly for `/repos`,
+  repo cloning, and session GitHub MCP tools (pass
+  `MUSE_CODE_SPACE_GITHUB_BROKER_URL=disconnected` to test the not-connected state).
 - Run it from a normal terminal: inside a sandboxed agent shell `muse serve`
   exits with `sandbox-exec: sandbox_apply: Operation not permitted`
   (nested sandboxing), which is the harness, not the pilot.

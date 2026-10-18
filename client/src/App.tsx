@@ -1487,8 +1487,18 @@ export function App() {
   const reposQuery = useQuery({
     queryKey: ["github-repos"],
     queryFn: () => api.listRepos({}),
-    enabled: draft !== null || selectedCompanionId !== null,
+    enabled: draft !== null || selectedCompanionId !== null || selectedId !== null,
     staleTime: 60_000,
+    retry: false,
+  });
+  const cloningSessionId = startingDraft?.draft.repoSlug
+    ? startingDraft.draft.id
+    : null;
+  const cloneProgressQuery = useQuery({
+    queryKey: ["repo-clone-progress", cloningSessionId],
+    queryFn: () => api.getRepoCloneProgress({ session_id: cloningSessionId! }),
+    enabled: cloningSessionId !== null,
+    refetchInterval: 400,
     retry: false,
   });
   const sessions = sessionsQuery.data?.sessions ?? [];
@@ -1956,7 +1966,7 @@ export function App() {
       direction.length
     ) / 4,
   );
-  const sessionActive = detailSession ? !detailSession.archived && isTurnLive(detailSession.status) : false;
+  const sessionActive = detailSession && detailSession.id !== draft?.id ? !detailSession.archived && isTurnLive(detailSession.status) : false;
   const awaitingPilot = detailSession?.status === "queued" && detailSession.pilot_session_id === null;
   const failedPilotStart = detailSession?.status === "failed" && detailSession.pilot_session_id === null;
   // A workflow's child agents keep running after the turn that launched them
@@ -2595,25 +2605,30 @@ export function App() {
       // selecting it transitions directly from startingDraft into the live
       // conversation without flashing a "Loading output…" screen.
       queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) => {
-        if (!old || old.sessions.some((item) => item.id === createdId)) return old;
+        if (!old) return old;
+        if (old.sessions.some((item) => item.id === createdId)) {
+          return { ...old, sessions: old.sessions.map((item) => (item.id === createdId ? seeded : item)) };
+        }
         return { ...old, sessions: [seeded, ...old.sessions] };
       });
       queryClient.setQueryData<ApiResponse<typeof api, "getSession">>(["code-session", createdId], (old) =>
-        old ?? {
-          session: seeded,
-          events: [
-            {
-              id: 0,
-              kind: "user",
-              content: queued.prompt,
-              created_at: nowIso,
-              system_is_error: false,
-              started_at: null,
-              finished_at: null,
-              tool_details: null,
+        old && old.events.length > 1
+          ? old
+          : {
+              session: seeded,
+              events: [
+                {
+                  id: 0,
+                  kind: "user",
+                  content: queued.prompt,
+                  created_at: nowIso,
+                  system_is_error: false,
+                  started_at: null,
+                  finished_at: null,
+                  tool_details: null,
+                },
+              ],
             },
-          ],
-        },
       );
       queryClient.setQueryData(["owned-artifacts", createdId], { ok: true, files: [] });
       setSidePanels((current) => ({
@@ -3127,10 +3142,13 @@ export function App() {
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
       <RepoPicker
         repos={reposQuery.data?.repos ?? []}
-        githubEnabled={reposQuery.data?.github_enabled ?? false}
+        githubEnabled={reposQuery.data?.github_enabled ?? true}
         loading={reposQuery.isFetching}
         selected={startingDraft?.draft.id === selectedId ? startingDraft.draft.repoSlug : draft?.repoSlug ?? null}
         disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
+        mode={startingDraft?.draft.id === selectedId ? "manage" : "pick"}
+        cloneProgress={startingDraft?.draft.id === selectedId ? (cloneProgressQuery.data ?? null) : null}
+        workspacePath={startingDraft?.draft.id === selectedId ? shortenHomePaths(startingDraft.workspacePath) : null}
         phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
         onChoose={(slug) => setDraft((current) => (current ? { ...current, repoSlug: slug } : current))}
       />
@@ -3703,6 +3721,18 @@ export function App() {
                     ) : (
                     /* Shown for past sessions too: sending resumes them ("Resume & send"). */
                       <form ref={takeoverFormRef} className="terminal-prompt" onSubmit={submitTakeover}>
+                        {detailSession.repo_slug && (
+                          <RepoPicker
+                            repos={reposQuery.data?.repos ?? []}
+                            githubEnabled={reposQuery.data?.github_enabled ?? true}
+                            loading={reposQuery.isFetching}
+                            selected={detailSession.repo_slug}
+                            mode="manage"
+                            cloneProgress={detailSession.status === "queued" && detailSession.pilot_session_id === null ? (cloneProgressQuery.data ?? null) : null}
+                            workspacePath={detailSession.workspace_root ? shortenHomePaths(detailSession.workspace_root) : null}
+                            phase={detailSession.status === "queued" && detailSession.pilot_session_id === null ? "starting" : "idle"}
+                          />
+                        )}
                         {companionBusyElsewhere && <p className="task-resume-notice" role="status">
                           {detailAgentName} is on another task. Pick another companion below to resume.
                         </p>}
