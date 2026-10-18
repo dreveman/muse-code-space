@@ -42,16 +42,16 @@ for (const v of ["LOCAL_SESSION_MESSAGING", "EXTERNAL_AGENT_INGRESS"]) {
 import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-code/sdk";
 import { createServer } from "node:http";
 import { get as httpsGet, request as httpsRequest } from "node:https";
-import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync, rmSync } from "node:fs";
 import { createHash, getRandomValues } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
 import { readWorkspaceFile } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
-import { ensureRepoCloned, listGitHubRepos, parseRepoInput } from "./repoSetup.mjs";
+import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
 import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
@@ -1027,12 +1027,79 @@ const brokerProber = setInterval(async () => {
 }, 15000);
 if (typeof brokerProber.unref === "function") brokerProber.unref();
 
-// Session GitHub tools (githubTools.mjs) run through the broker with the
-// session sentinel; "set up" means a broker credential is provisioned —
-// the same signal install.sh keys on. Checked per call, so provisioning
-// GitHub later lights the tools up without a pilot restart.
+// Session GitHub tools (githubTools.mjs) and repo picker (repoSetup.mjs)
+// run through the loopback broker on the VM (`github-broker.json` present).
+// For local development (`MUSE_CODE_SPACE_GITHUB_BROKER_URL=none`, or when
+// `MUSE_CODE_SPACE_RELAY_URL=none` and no broker config exists), the pilot
+// falls back to local `gh` and `git` commands unless explicitly disabled
+// with `MUSE_CODE_SPACE_GITHUB_BROKER_URL=disconnected`.
 const GITHUB_BROKER_CONFIG = process.env.MUSE_CODE_SPACE_GITHUB_BROKER_CONFIG ?? `${HOME}/.config/muse-code-space-pilot/github-broker.json`;
+const GITHUB_BROKER_MODE = (process.env.MUSE_CODE_SPACE_GITHUB_BROKER_URL ?? "").trim().toLowerCase();
+const GITHUB_DISCONNECTED = ["0", "false", "off", "disconnected", "disabled"].includes(GITHUB_BROKER_MODE);
 const GITHUB_SENTINEL = "broker-provided-sentinel";
+
+let ghCliReadyCache = null;
+let ghCliCheckedAt = 0;
+function checkGhCliReady() {
+  return new Promise((resolve) => {
+    execFile("gh", ["auth", "status"], { timeout: 5000 }, (error) => {
+      ghCliReadyCache = !error;
+      ghCliCheckedAt = Date.now();
+      resolve(ghCliReadyCache);
+    });
+  });
+}
+if (!GITHUB_DISCONNECTED && (GITHUB_BROKER_MODE === "none" || GITHUB_BROKER_MODE === "gh" || !RELAY_ENABLED)) {
+  void checkGhCliReady();
+}
+
+function useDirectGhCli() {
+  if (GITHUB_DISCONNECTED) return false;
+  if (GITHUB_BROKER_MODE === "none" || GITHUB_BROKER_MODE === "gh") return true;
+  return !RELAY_ENABLED && !existsSync(GITHUB_BROKER_CONFIG);
+}
+
+function isGitHubEnabled() {
+  if (GITHUB_DISCONNECTED) return false;
+  if (!useDirectGhCli() && existsSync(GITHUB_BROKER_CONFIG)) return true;
+  if (useDirectGhCli()) {
+    if (Date.now() - ghCliCheckedAt > 30_000) void checkGhCliReady();
+    return ghCliReadyCache !== false;
+  }
+  return false;
+}
+
+function ghCliRequest(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const args = ["api", "--include", "--method", method, "-H", "Accept: application/vnd.github+json", path];
+    if (body !== undefined) args.push("--input", "-");
+    const child = execFile("gh", args, { timeout: 15_000, maxBuffer: 2_000_000 }, (_error, stdout, stderr) => {
+      const output = String(stdout ?? "");
+      const splitMatch = output.match(/\r?\n\r?\n/);
+      if (!splitMatch || splitMatch.index === undefined) {
+        if (_error) {
+          ghCliReadyCache = false;
+          reject(new Error(String(stderr || _error.message || "gh api failed").trim().slice(0, 240)));
+          return;
+        }
+        resolve({ status: 0, json: null });
+        return;
+      }
+      ghCliReadyCache = true;
+      ghCliCheckedAt = Date.now();
+      const head = output.slice(0, splitMatch.index);
+      const rawBody = output.slice(splitMatch.index + splitMatch[0].length);
+      const statusMatch = head.match(/^HTTP\/[^\s]+\s+(\d{3})/m);
+      const status = statusMatch ? Number(statusMatch[1]) : (_error ? 500 : 200);
+      let json = null;
+      try { json = JSON.parse(rawBody); } catch { /* non-JSON stays null */ }
+      resolve({ status, json });
+    });
+    if (body !== undefined && child.stdin) {
+      child.stdin.end(JSON.stringify(body));
+    }
+  });
+}
 
 function githubBrokerRequestOnce(method, path, body) {
   return new Promise((resolve, reject) => {
@@ -1065,6 +1132,9 @@ function githubBrokerRequestOnce(method, path, body) {
 }
 
 async function githubBrokerRequest(method, path, body) {
+  if (useDirectGhCli()) {
+    return ghCliRequest(method, path, body);
+  }
   // The broker occasionally returns a transient 502 on connect; one retry
   // for idempotent reads absorbs it (writes are never replayed).
   const attempts = method === "GET" ? 2 : 1;
@@ -1085,20 +1155,51 @@ function gitRead(workspaceRoot, args) {
   });
 }
 
+// Active repository clones keyed by workspaceName (appSessionId), exposed via
+// GET /repos/clone-progress so the UI can show a live progress bar during
+// large clones. `inFlightSessionStarts` deduplicates concurrent POST /sessions
+// calls for the same workspaceName while a clone is still running.
+const activeClones = new Map();
+const inFlightSessionStarts = new Map();
+
 // Clone a picked repo into a new companion's workspace. Through the
 // broker gitconfig when GitHub is provisioned (private repos work and no
 // real credential reaches this process); plain https otherwise, which
 // covers public repos. Failures are truncated: git stderr can be verbose.
-function gitCloneRepo(cloneUrl, dir) {
+function gitCloneRepo(cloneUrl, dir, onProgress) {
   return new Promise((resolve, reject) => {
     const env = {
       ...process.env,
-      ...(existsSync(GITHUB_BROKER_CONFIG) ? githubSessionEnv() : {}),
+      ...(!useDirectGhCli() && existsSync(GITHUB_BROKER_CONFIG) ? githubSessionEnv() : {}),
       GIT_TERMINAL_PROMPT: "0",
     };
-    execFile("git", ["clone", "--", cloneUrl, dir], { timeout: 120_000, maxBuffer: 1_000_000, env }, (error, _stdout, stderr) => {
-      if (!error) { resolve(); return; }
-      const detail = String(stderr ?? "").trim().split("\n").filter(Boolean).at(-1) ?? error.message;
+    const child = spawn("git", ["clone", "--progress", "--", cloneUrl, dir], {
+      env,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderrTail = "";
+    let progressState = { phase: "Cloning", percent: null, transferred: null };
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("git clone timed out after 120s"));
+    }, 120_000);
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
+      stderrTail = (stderrTail + text).slice(-4000);
+      progressState = parseGitCloneProgress(text, progressState);
+      if (typeof onProgress === "function") onProgress(progressState);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(new Error(String(error?.message ?? error).slice(0, 240)));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = stderrTail.trim().split(/[\r\n]+/).filter(Boolean).at(-1) ?? `git clone exited with status ${code}`;
       reject(new Error(detail.slice(0, 240)));
     });
   });
@@ -1152,7 +1253,7 @@ const prMonitors = createPrMonitorRegistry({
 });
 
 const githubToolset = createGitHubToolset({
-  enabled: () => existsSync(GITHUB_BROKER_CONFIG),
+  enabled: isGitHubEnabled,
   brokerRequest: githubBrokerRequest,
   gitContext: githubGitContext,
   monitors: prMonitors,
@@ -1548,15 +1649,25 @@ const mcpDeps = {
 // transcript file (events-<id>.jsonl). Refuses while a turn is running. The
 // MSP has no session-delete verb, so muse serve's own session store is left
 // alone; the pilot simply never resumes the session again.
-function deleteSession(id) {
+function isOwnedWorkspacePath(wsDir) {
+  if (typeof wsDir !== "string" || !wsDir.trim()) return false;
+  const root = resolve(WORKSPACES);
+  const target = resolve(wsDir);
+  const rel = relative(root, target);
+  return Boolean(rel) && !rel.startsWith("..") && !rel.includes("/") && !rel.includes("\\");
+}
+
+function deleteSession(id, requestedWorkspaceRoot = null) {
   const entry = resolveEntry(id);
   const logId = entry?.logId ?? id;
   for (const t of openTurns.values()) {
     if (t.logId === logId) return { ok: false, code: "turn_running", error: "a turn is running; stop it before deleting the session" };
   }
   let existed = false;
+  let metaWorkspaceRoot = entry?.meta?.workspaceRoot ?? null;
   for (const [backendId, candidate] of sessions) {
     if (candidate.logId === logId) {
+      if (!metaWorkspaceRoot && candidate.meta?.workspaceRoot) metaWorkspaceRoot = candidate.meta.workspaceRoot;
       sessions.delete(backendId);
       existed = true;
     }
@@ -1564,7 +1675,10 @@ function deleteSession(id) {
   // Drop only this entry: the file can hold sessions that aren't loaded
   // (e.g. unrecovered), which saveRegistry() would otherwise lose.
   const registry = loadRegistry();
-  if (registry[logId]) existed = true;
+  if (registry[logId]) {
+    if (!metaWorkspaceRoot && registry[logId]?.workspaceRoot) metaWorkspaceRoot = registry[logId].workspaceRoot;
+    existed = true;
+  }
   if (existed) {
     delete registry[logId];
     for (const { meta, logId: liveId } of sessions.values()) registry[liveId] = meta;
@@ -1583,6 +1697,15 @@ function deleteSession(id) {
   if (existsSync(eventPath(logId))) {
     unlinkSync(eventPath(logId));
     existed = true;
+  }
+  const wsDir = metaWorkspaceRoot ?? (typeof requestedWorkspaceRoot === "string" && requestedWorkspaceRoot.trim() ? requestedWorkspaceRoot.trim() : null);
+  if (wsDir && isOwnedWorkspacePath(wsDir) && existsSync(wsDir)) {
+    try {
+      rmSync(wsDir, { recursive: true, force: true });
+      existed = true;
+    } catch (error) {
+      return { ok: false, code: "workspace_delete_failed", error: `could not delete working directory: ${String(error?.message ?? error).slice(0, 200)}` };
+    }
   }
   if (existed) log("deleted session", logId);
   return { ok: true, sessionId: logId, existed };
@@ -1628,6 +1751,22 @@ function createWorkspacePath(path, generated) {
 
 async function createPilotSession(body) {
   const appSessionId = typeof body.workspaceName === "string" && body.workspaceName.trim() ? body.workspaceName.trim() : null;
+  if (appSessionId && inFlightSessionStarts.has(appSessionId)) {
+    return inFlightSessionStarts.get(appSessionId);
+  }
+  const promise = createPilotSessionInner(body, appSessionId);
+  if (appSessionId) {
+    inFlightSessionStarts.set(appSessionId, promise);
+    promise.finally(() => {
+      if (inFlightSessionStarts.get(appSessionId) === promise) {
+        inFlightSessionStarts.delete(appSessionId);
+      }
+    });
+  }
+  return promise;
+}
+
+async function createPilotSessionInner(body, appSessionId) {
   let entry = appSessionId
     ? [...sessions.values()].find((candidate) => candidate.meta?.appSessionId === appSessionId)
     : undefined;
@@ -1655,6 +1794,14 @@ async function createPilotSession(body) {
       // Clone before the session starts so the agent opens in the repo,
       // not an empty folder it must clone into by hand. A retry that finds
       // the same repo already cloned reuses it.
+      const cloneKey = appSessionId || wsDir;
+      activeClones.set(cloneKey, {
+        repo: repoPick.slug,
+        phase: "Connecting to GitHub",
+        percent: null,
+        transferred: null,
+        startedAt: Date.now(),
+      });
       try {
         await ensureRepoCloned({
           dir: wsDir,
@@ -1662,9 +1809,20 @@ async function createPilotSession(body) {
           gitClone: gitCloneRepo,
           gitOrigin: (dir) => gitRead(dir, ["config", "--get", "remote.origin.url"]),
           listDir: workspaceEntries,
+          onProgress: (progress) => {
+            activeClones.set(cloneKey, {
+              repo: repoPick.slug,
+              phase: progress.phase,
+              percent: progress.percent,
+              transferred: progress.transferred,
+              startedAt: Date.now(),
+            });
+          },
         });
       } catch (error) {
         return { code: 422, body: { error: `Could not clone ${repoPick.slug}: ${String(error?.message ?? error).slice(0, 300)}`, code: "repo_clone_failed" } };
+      } finally {
+        activeClones.delete(cloneKey);
       }
     } else if (!createWorkspacePath(wsDir, !body.workspaceRoot || body.generatedWorkspace === true)) {
       return { code: 409, body: { error: "generated working directory already exists; start a new companion", code: "workspace_conflict" } };
@@ -1817,10 +1975,27 @@ const server = createServer(async (req, res) => {
 
     // Repos the repo picker offers: what the GitHub broker credential can
     // see. GitHub is optional, so "not set up" is a 200 with enabled:false.
+    if (req.method === "GET" && path === "/repos/clone-progress") {
+      const workspaceName = url.searchParams.get("workspaceName") ?? "";
+      const progress = activeClones.get(workspaceName) ?? null;
+      return json(res, 200, progress
+        ? {
+            active: true,
+            repo: progress.repo,
+            phase: progress.phase,
+            percent: progress.percent,
+            transferred: progress.transferred,
+          }
+        : { active: false, repo: null, phase: null, percent: null, transferred: null });
+    }
+
     if (req.method === "GET" && path === "/repos") {
       try {
+        if (useDirectGhCli() && ghCliReadyCache === null) {
+          await checkGhCliReady();
+        }
         return json(res, 200, await listGitHubRepos({
-          enabled: () => existsSync(GITHUB_BROKER_CONFIG),
+          enabled: isGitHubEnabled,
           brokerRequest: githubBrokerRequest,
         }));
       } catch (error) {
@@ -1929,7 +2104,7 @@ const server = createServer(async (req, res) => {
     // DELETE /sessions/:id -> { ok, sessionId, existed } (idempotent) | 409 turn_running
     const mDelete = path.match(/^\/sessions\/([^/]+)$/);
     if (req.method === "DELETE" && mDelete) {
-      const result = deleteSession(decodeURIComponent(mDelete[1]));
+      const result = deleteSession(decodeURIComponent(mDelete[1]), url.searchParams.get("workspaceRoot"));
       return json(res, result.ok ? 200 : 409, result);
     }
 

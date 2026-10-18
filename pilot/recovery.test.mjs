@@ -351,10 +351,13 @@ test("health reports the pilot's home folder", () => {
 
 // ---- DELETE /sessions/:id ----
 
-test("deleteSession forgets the session and its transcript, keeps others", () => {
+test("deleteSession forgets the session, its transcript, and its working directory, keeps others", () => {
   const registryPath = path.join(stateDir, "sessions.json");
+  const wsDir = t.defaultWorkspacePath("del-1");
+  mkdirSync(wsDir, { recursive: true });
+  writeFileSync(path.join(wsDir, "file.txt"), "hello\n");
   const other = { title: "keep me", modelId: "m" };
-  t.wireSession({ sessionId: "backend-del-1", onApproval() {} }, { title: "bye", modelId: "m" }, "del-1");
+  t.wireSession({ sessionId: "backend-del-1", onApproval() {} }, { title: "bye", modelId: "m", workspaceRoot: wsDir }, "del-1");
   // Written after wireSession (which rewrites the registry from memory): an
   // unloaded entry like keep-1 must survive the delete.
   const onDisk = JSON.parse(readFileSync(registryPath, "utf8"));
@@ -369,6 +372,7 @@ test("deleteSession forgets the session and its transcript, keeps others", () =>
   assert.equal(t.aliases.has("del-1"), false);
   assert.equal(t.pendingSeeds.has("del-1"), false);
   assert.equal(existsSync(path.join(stateDir, "events-del-1.jsonl")), false, "transcript file removed");
+  assert.equal(existsSync(wsDir), false, "working directory removed");
   const registry = JSON.parse(readFileSync(registryPath, "utf8"));
   assert.equal(registry["del-1"], undefined);
   assert.deepEqual(registry["keep-1"], other, "unloaded sessions in the registry survive");

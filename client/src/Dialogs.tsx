@@ -54,12 +54,11 @@ export function ConfirmDeleteDialog({ title, busy, error, onCancel, onConfirm }:
   return (
     <DialogShell role="alertdialog" labelledBy="delete-dialog-title" describedBy="delete-dialog-body" busy={busy} onCancel={onCancel}>
       <h2 id="delete-dialog-title">Delete task permanently?</h2>
-      <p id="delete-dialog-body">
-        The task “{title}” and its conversation will be deleted.
-        <br />
-        <strong>This can’t be undone.</strong>
-      </p>
-      <p className="confirm-dialog-note">Files in the task’s working directory are kept.</p>
+      <div id="delete-dialog-body">
+        <p>The task “{title}” and its conversation will be deleted.</p>
+        <p className="confirm-dialog-note">The task’s working directory and its files will also be deleted.</p>
+        <p className="confirm-dialog-warning"><strong>This can’t be undone.</strong></p>
+      </div>
       {error && <p className="confirm-dialog-error" role="alert">{error}</p>}
       <div className="confirm-dialog-actions">
         <button type="button" className="confirm-dialog-cancel" onClick={onCancel} disabled={busy} data-autofocus>

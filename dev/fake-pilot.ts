@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
 import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
@@ -44,6 +45,13 @@ const STATE_FILE = process.env.MUSE_CODE_SPACE_FAKE_PILOT_STATE;
 // MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS=<ms>: hold starts/turns
 // before admitting the turn — a slow pilot, to test the UI's "Sending" state.
 const ADMIT_DELAY_MS = Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS ?? 0);
+const activeClones = new Map<string, { repo: string; phase: string; percent: number | null; transferred: string | null }>();
+// MUSE_CODE_SPACE_FAKE_PILOT_GITHUB=connected|disconnected: defaults to
+// connected; set to "disconnected" (or "0" / "false" / "off" / "none") to
+// test the "Connect GitHub · Work on your repos" state in the repo picker.
+const GITHUB_ENABLED = !["0", "false", "off", "disconnected", "none"].includes(
+  (process.env.MUSE_CODE_SPACE_FAKE_PILOT_GITHUB ?? "connected").trim().toLowerCase(),
+);
 
 type Event = { seq: number; type: string; at: string; [key: string]: unknown };
 type PendingInput = {
@@ -1065,12 +1073,26 @@ Bun.serve({
       return json(200, { content: chunk.toString("utf8"), encoding: "utf8", byteLen: chunk.length,
         offsetBytes: body.offsetBytes, eof: body.offsetBytes + chunk.length >= bytes.length, mediaType: ref.startsWith("patch-") ? "application/json" : "text/plain" });
     }
+    if (path === "/repos/clone-progress" && req.method === "GET") {
+      const workspaceName = url.searchParams.get("workspaceName") ?? "";
+      const progress = activeClones.get(workspaceName) ?? null;
+      return json(200, progress
+        ? { active: true, repo: progress.repo, phase: progress.phase, percent: progress.percent, transferred: progress.transferred }
+        : { active: false, repo: null, phase: null, percent: null, transferred: null });
+    }
     if (path === "/repos" && req.method === "GET") {
+      if (!GITHUB_ENABLED) {
+        return json(200, { enabled: false, repos: [] });
+      }
       // Sample list so the composer's repo picker can be exercised locally.
       return json(200, {
         enabled: true,
         repos: [
+          { slug: "google/perfetto", name: "perfetto", owner: "google", private: false, description: "Performance instrumentation and tracing for Android, Linux and Chrome", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/google/perfetto" },
+          { slug: "dreveman/perfetto-gpu-compute-injection", name: "perfetto-gpu-compute-injection", owner: "dreveman", private: false, description: "GPU compute injection tools for Perfetto", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/perfetto-gpu-compute-injection" },
           { slug: "dreveman/muse-code-space", name: "muse-code-space", owner: "dreveman", private: false, description: "Sample repo for local UI work", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/muse-code-space" },
+          { slug: "dreveman/agentprof", name: "agentprof", owner: "dreveman", private: false, description: "Agent profiling utilities", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/agentprof" },
+          { slug: "dreveman/pi-iterm2", name: "pi-iterm2", owner: "dreveman", private: false, description: "iTerm2 integration for pi", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/pi-iterm2" },
           { slug: "dreveman/sample-private", name: "sample-private", owner: "dreveman", private: true, description: null, default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/sample-private" },
           { slug: "dreveman/fail-clone", name: "fail-clone", owner: "dreveman", private: false, description: "Picking this simulates a failed clone", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/fail-clone" },
         ],
@@ -1106,6 +1128,24 @@ Bun.serve({
       }
       if (repo !== null && repo.toLowerCase().includes("fail")) {
         return json(422, { error: `Could not clone ${repo}: simulated clone failure (fake pilot)`, code: "repo_clone_failed" });
+      }
+      if (repo !== null) {
+        const cloneKey = appSessionId ?? workspaceRoot ?? repo;
+        const steps: Array<{ phase: string; percent: number | null; transferred: string | null; delayMs: number }> = [
+          { phase: "Enumerating objects", percent: null, transferred: null, delayMs: 450 },
+          { phase: "Receiving objects", percent: 24, transferred: "6.40 MiB", delayMs: 650 },
+          { phase: "Receiving objects", percent: 62, transferred: "16.80 MiB", delayMs: 650 },
+          { phase: "Receiving objects", percent: 91, transferred: "24.50 MiB", delayMs: 550 },
+          { phase: "Resolving deltas", percent: 100, transferred: "26.90 MiB", delayMs: 400 },
+        ];
+        try {
+          for (const step of steps) {
+            activeClones.set(cloneKey, { repo, phase: step.phase, percent: step.percent, transferred: step.transferred });
+            await sleep(step.delayMs);
+          }
+        } finally {
+          activeClones.delete(cloneKey);
+        }
       }
       if (repo !== null && workspaceRoot) {
         try {
@@ -1201,9 +1241,19 @@ Bun.serve({
     if (!m) return json(404, { error: "not found" });
     if (req.method === "DELETE" && !m[2]) {
       const id = decodeURIComponent(m[1]!);
-      const existing = sessions.get(id);
+      const existing = sessions.get(id) ?? [...sessions.values()].find((s) => s.appSessionId === id);
       if (existing?.openTurn) return json(409, { ok: false, code: "turn_running", error: "a turn is running; stop it before deleting the session" });
-      sessions.delete(id);
+      if (existing) sessions.delete(existing.id);
+      const wsDir = existing?.workspaceRoot ?? url.searchParams.get("workspaceRoot");
+      const baseHome = HOME ?? process.env.HOME;
+      if (wsDir && baseHome) {
+        const root = resolve(`${baseHome}/workspace/code`);
+        const target = resolve(wsDir);
+        const rel = relative(root, target);
+        if (rel && !rel.startsWith("..") && !rel.includes("/") && !rel.includes("\\") && existsSync(target)) {
+          try { rmSync(target, { recursive: true, force: true }); } catch { /* ignore in fake pilot */ }
+        }
+      }
       saveState();
       return json(200, { ok: true, sessionId: id, existed: !!existing });
     }

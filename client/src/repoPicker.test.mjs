@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { filterRepos, repoStatusText, repoTriggerLabel } from "./repoOptions.ts";
+import { TOP_REPO_LIMIT, filterRepos, repoStatusText, repoTriggerLabel, visibleTopRepos } from "./repoOptions.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(path.join(root, "App.tsx"), "utf8");
@@ -23,11 +23,30 @@ test("filterRepos matches owner/repo case-insensitively and keeps order", () => 
   assert.deepEqual(filterRepos(REPOS, "nope"), []);
 });
 
+test("visibleTopRepos defaults to the top 5 and expands with Show more or a filter query", () => {
+  const many = Array.from({ length: 7 }, (_, i) => ({
+    ...REPOS[0],
+    slug: `dreveman/repo-${i + 1}`,
+    name: `repo-${i + 1}`,
+  }));
+  const collapsed = visibleTopRepos(many, "", false);
+  assert.equal(collapsed.shown.length, TOP_REPO_LIMIT);
+  assert.equal(collapsed.hasMore, true);
+  const expanded = visibleTopRepos(many, "", true);
+  assert.equal(expanded.shown.length, 7);
+  assert.equal(expanded.hasMore, true);
+  const filtered = visibleTopRepos(many, "repo-7", false);
+  assert.deepEqual(filtered.shown.map((r) => r.slug), ["dreveman/repo-7"]);
+  assert.equal(filtered.hasMore, false);
+});
+
 test("the row status says what happens on start", () => {
-  assert.equal(repoTriggerLabel(null), "No repo");
+  assert.equal(repoTriggerLabel(null), "Select repository");
+  assert.equal(repoTriggerLabel(null, false), "Connect GitHub");
   assert.equal(repoTriggerLabel("o/r"), "o/r");
-  assert.match(repoStatusText(null, "idle"), /Blank workspace/);
-  assert.match(repoStatusText("o/r", "idle"), /clones into the new workspace/);
+  assert.equal(repoTriggerLabel("o/r", false), "o/r");
+  assert.equal(repoStatusText(null, "idle"), "");
+  assert.equal(repoStatusText("o/r", "idle"), "");
   assert.match(repoStatusText("o/r", "starting"), /Cloning o\/r/);
   assert.match(repoStatusText("o/r", "queued"), /Queued/);
 });

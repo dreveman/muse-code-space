@@ -1341,6 +1341,7 @@ export const Actions = {
         slug: z.string(),
         name: z.string(),
         owner: z.string(),
+        owner_avatar_url: z.string().nullable().optional(),
         private: z.boolean(),
         description: z.string().nullable(),
         default_branch: z.string().nullable(),
@@ -1358,6 +1359,7 @@ export const Actions = {
             slug: z.string(),
             name: z.string(),
             owner: z.string(),
+            owner_avatar_url: z.string().nullable().optional(),
             private: z.boolean(),
             description: z.string().nullable(),
             default_branch: z.string().nullable(),
@@ -1367,6 +1369,35 @@ export const Actions = {
         }).transform((value) => ({ github_enabled: value.enabled, repos: value.repos })), 20_000);
       } catch {
         return { github_enabled: false, repos: [] };
+      }
+    },
+  }),
+
+  getRepoCloneProgress: defineAction({
+    request: z.object({
+      session_id: z.string().min(1),
+    }),
+    response: z.object({
+      active: z.boolean(),
+      repo: z.string().nullable(),
+      phase: z.string().nullable(),
+      percent: z.number().nullable(),
+      transferred: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const query = new URLSearchParams({ workspaceName: args.session_id }).toString();
+        return await pilotRequest(baseUrl, `/repos/clone-progress?${query}`, { method: "GET" }, z.object({
+          active: z.boolean(),
+          repo: z.string().nullable(),
+          phase: z.string().nullable(),
+          percent: z.number().nullable(),
+          transferred: z.string().nullable(),
+        }), 5_000);
+      } catch {
+        return { active: false, repo: null, phase: null, percent: null, transferred: null };
       }
     },
   }),
@@ -1957,6 +1988,7 @@ export const Actions = {
             workspaceRoot: workspace.path,
             repoSlug,
             status: "queued",
+            pilotRetryAt: new Date(Date.now() + (repoSlug ? 150_000 : PILOT_START_LEASE_MS)),
             startedAt: now,
             updatedAt: now,
             archived: false,
@@ -2057,7 +2089,12 @@ export const Actions = {
     async handler(ctx, args) {
       const db = ctx.db<typeof schema>();
       const rows = await db
-        .select({ id: schema.sessions.id, status: schema.sessions.status, pilotSessionId: schema.sessions.pilotSessionId })
+        .select({
+          id: schema.sessions.id,
+          status: schema.sessions.status,
+          pilotSessionId: schema.sessions.pilotSessionId,
+          workspaceRoot: schema.sessions.workspaceRoot,
+        })
         .from(schema.sessions)
         .where(eq(schema.sessions.id, args.id))
         .limit(1);
@@ -2066,23 +2103,29 @@ export const Actions = {
       if (session.status === "queued" || session.status === "running") {
         return { ok: false, error: "Stop this session before deleting it." };
       }
-      if (session.pilotSessionId) {
+      // Its terminal (if one was opened) goes before removing the workspace.
+      await killSessionTerminal(ctx, session.id);
+      if (session.pilotSessionId || session.workspaceRoot) {
         try {
           const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+          const targetId = session.pilotSessionId ?? session.id;
+          const query = session.workspaceRoot
+            ? `?${new URLSearchParams({ workspaceRoot: session.workspaceRoot }).toString()}`
+            : "";
           await pilotRequest(
             baseUrl,
-            `/sessions/${encodeURIComponent(session.pilotSessionId)}`,
+            `/sessions/${encodeURIComponent(targetId)}${query}`,
             { method: "DELETE" },
             z.object({ ok: z.boolean() }),
           );
         } catch (error) {
           const code = (error as Error & { code?: string }).code;
           if (code === "turn_running") return { ok: false, error: "Stop this session before deleting it." };
-          return { ok: false, error: `Couldn't delete the session transcript (${pilotRequestErrorText(error).slice(0, 200)}). Nothing was deleted; try again.` };
+          if (session.pilotSessionId) {
+            return { ok: false, error: `Couldn't delete the session transcript (${pilotRequestErrorText(error).slice(0, 200)}). Nothing was deleted; try again.` };
+          }
         }
       }
-      // Its terminal (if one was opened) goes too.
-      await killSessionTerminal(ctx, session.id);
       await db.delete(schema.outputEvents).where(eq(schema.outputEvents.sessionId, session.id));
       await db.delete(schema.sessions).where(eq(schema.sessions.id, session.id));
       ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });

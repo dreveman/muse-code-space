@@ -53,39 +53,80 @@ export function originSlug(remote) {
 }
 
 function mapRepo(raw) {
-  if (!raw || typeof raw.full_name !== "string") return null;
-  const parsed = parseRepoInput(raw.full_name);
+  const fullName = typeof raw?.full_name === "string" ? raw.full_name : typeof raw?.nameWithOwner === "string" ? raw.nameWithOwner : null;
+  if (!fullName) return null;
+  const parsed = parseRepoInput(fullName);
   if (!parsed) return null;
+  const defaultBranch = typeof raw.default_branch === "string"
+    ? raw.default_branch
+    : typeof raw?.defaultBranchRef?.name === "string"
+      ? raw.defaultBranchRef.name
+      : null;
+  const updatedAt = typeof raw.updated_at === "string"
+    ? raw.updated_at
+    : typeof raw.updatedAt === "string"
+      ? raw.updatedAt
+      : null;
+  const htmlUrl = typeof raw.html_url === "string"
+    ? raw.html_url
+    : typeof raw.url === "string"
+      ? raw.url
+      : `https://github.com/${parsed.slug}`;
+  const ownerAvatarUrl = typeof raw?.owner?.avatarUrl === "string"
+    ? raw.owner.avatarUrl
+    : typeof raw?.owner?.avatar_url === "string"
+      ? raw.owner.avatar_url
+      : `https://github.com/${encodeURIComponent(parsed.owner)}.png?size=64`;
   return {
     slug: parsed.slug,
     name: parsed.repo,
     owner: parsed.owner,
-    private: raw.private === true,
+    owner_avatar_url: ownerAvatarUrl,
+    private: raw.private === true || raw.isPrivate === true,
     description: typeof raw.description === "string" ? raw.description : null,
-    default_branch: typeof raw.default_branch === "string" ? raw.default_branch : null,
-    updated_at: typeof raw.updated_at === "string" ? raw.updated_at : null,
-    html_url: typeof raw.html_url === "string" ? raw.html_url : `https://github.com/${parsed.slug}`,
+    default_branch: defaultBranch,
+    updated_at: updatedAt,
+    html_url: htmlUrl,
   };
 }
 
+const TOP_REPOS_QUERY =
+  "query { viewer { topRepositories(first: 50, orderBy: {field: PUSHED_AT, direction: DESC}) { nodes { full_name: nameWithOwner private: isPrivate description defaultBranchRef { name } updated_at: updatedAt html_url: url owner { avatarUrl(size: 64) } } } } }";
+
 /**
- * Repos the broker credential can see. User/PAT credentials answer
- * /user/repos; GitHub App installation tokens answer
- * /installation/repositories instead, so fall back when the first route
- * does not return a list.
+ * Repos the broker credential can see. Queries GitHub's GraphQL
+ * `viewer.topRepositories` first (matching github.com's "Top repositories"
+ * list), then falls back to `/user/repos` and `/installation/repositories`.
  */
 export async function listGitHubRepos({ enabled, brokerRequest }) {
   if (!enabled()) return { enabled: false, repos: [] };
   const attempts = [
-    { path: "/user/repos?per_page=100&sort=updated&direction=desc", pick: (json) => (Array.isArray(json) ? json : null) },
-    { path: "/installation/repositories?per_page=100", pick: (json) => (Array.isArray(json?.repositories) ? json.repositories : null) },
+    {
+      method: "POST",
+      path: "/graphql",
+      body: { query: TOP_REPOS_QUERY },
+      pick: (json) => (Array.isArray(json?.data?.viewer?.topRepositories?.nodes) ? json.data.viewer.topRepositories.nodes : null),
+      keepOrder: true,
+    },
+    {
+      method: "GET",
+      path: "/user/repos?per_page=100&sort=updated&direction=desc",
+      pick: (json) => (Array.isArray(json) ? json : null),
+      keepOrder: false,
+    },
+    {
+      method: "GET",
+      path: "/installation/repositories?per_page=100",
+      pick: (json) => (Array.isArray(json?.repositories) ? json.repositories : null),
+      keepOrder: false,
+    },
   ];
   let lastStatus = 0;
   for (const attempt of attempts) {
-    const result = await brokerRequest("GET", attempt.path);
+    const result = await brokerRequest(attempt.method, attempt.path, attempt.body);
     lastStatus = result.status;
     const raw = result.status >= 200 && result.status < 300 ? attempt.pick(result.json) : null;
-    if (!raw) continue;
+    if (!raw || raw.length === 0) continue;
     const seen = new Set();
     const repos = [];
     for (const item of raw) {
@@ -94,10 +135,40 @@ export async function listGitHubRepos({ enabled, brokerRequest }) {
       seen.add(repo.slug.toLowerCase());
       repos.push(repo);
     }
-    repos.sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
+    if (!attempt.keepOrder) {
+      repos.sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
+    }
     return { enabled: true, repos: repos.slice(0, 100) };
   }
+  if (lastStatus >= 200 && lastStatus < 300) {
+    return { enabled: true, repos: [] };
+  }
   throw new Error(`GitHub repo list failed (HTTP ${lastStatus || "no response"}).`);
+}
+
+/**
+ * Parse a chunk of `git clone --progress` stderr output into the latest
+ * `{ phase, percent, transferred }` snapshot.
+ */
+export function parseGitCloneProgress(chunk, previous = null) {
+  if (typeof chunk !== "string" || !chunk) return previous;
+  let state = previous ? { ...previous } : { phase: "Cloning", percent: null, transferred: null };
+  const lines = chunk.split(/[\r\n]+/);
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/^remote:\s*/i, "").trim();
+    if (!line) continue;
+    const match = line.match(
+      /^(Enumerating objects|Counting objects|Compressing objects|Receiving objects|Resolving deltas|Updating files):\s*(?:(\d{1,3})%\s*(?:\([^)]*\))?)?(?:,?\s*([^|]+?))?(?:\s*\|.*)?$/i,
+    );
+    if (match) {
+      const phase = match[1];
+      const percent = match[2] !== undefined ? Math.min(100, Math.max(0, Number(match[2]))) : state.percent;
+      const cleaned = match[3] ? match[3].replace(/,?\s*done\.?$/i, "").trim() : "";
+      const transferred = cleaned && !/^\d+$/.test(cleaned) ? cleaned : state.transferred;
+      state = { phase, percent, transferred };
+    }
+  }
+  return state;
 }
 
 /**
@@ -105,7 +176,7 @@ export async function listGitHubRepos({ enabled, brokerRequest }) {
  * already cloned there. Any other content is a hard error: a generated
  * workspace must never absorb an unrelated checkout.
  */
-export async function ensureRepoCloned({ dir, repo, gitClone, gitOrigin, listDir }) {
+export async function ensureRepoCloned({ dir, repo, gitClone, gitOrigin, listDir, onProgress }) {
   const entries = listDir(dir);
   if (entries && entries.includes(".git")) {
     const existing = originSlug(await gitOrigin(dir));
@@ -115,6 +186,6 @@ export async function ensureRepoCloned({ dir, repo, gitClone, gitOrigin, listDir
   if (entries && entries.length > 0) {
     throw new Error("This companion's working directory is not empty and is not the picked repository. Start a new companion.");
   }
-  await gitClone(repo.cloneUrl, dir);
+  await gitClone(repo.cloneUrl, dir, onProgress);
   return { cloned: true, reused: false };
 }

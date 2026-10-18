@@ -1,7 +1,7 @@
 // Run: node --test pilot/repoSetup.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureRepoCloned, listGitHubRepos, originSlug, parseRepoInput } from "./repoSetup.mjs";
+import { ensureRepoCloned, listGitHubRepos, originSlug, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
 
 test("parseRepoInput accepts owner/repo and github.com URLs", () => {
   const expected = {
@@ -47,7 +47,34 @@ function fakeBroker(routes) {
   };
 }
 
-test("listGitHubRepos maps and dedupes /user/repos", async () => {
+test("listGitHubRepos prefers GraphQL viewer.topRepositories and preserves its rank order", async () => {
+  const { brokerRequest, calls } = fakeBroker({
+    "/graphql": {
+      status: 200,
+      json: {
+        data: {
+          viewer: {
+            topRepositories: {
+              nodes: [
+                { nameWithOwner: "google/perfetto", isPrivate: false, updatedAt: "2026-01-01T00:00:00Z", defaultBranchRef: { name: "main" } },
+                { nameWithOwner: "dreveman/muse-code-space", isPrivate: true, updatedAt: "2026-02-01T00:00:00Z", description: "Code Space" },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+  const result = await listGitHubRepos({ enabled: () => true, brokerRequest });
+  assert.equal(result.enabled, true);
+  assert.deepEqual(result.repos.map((r) => r.slug), ["google/perfetto", "dreveman/muse-code-space"]);
+  assert.equal(result.repos[0].default_branch, "main");
+  assert.equal(result.repos[1].private, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0], "POST /graphql");
+});
+
+test("listGitHubRepos maps and dedupes /user/repos when GraphQL topRepositories is unavailable", async () => {
   const { brokerRequest, calls } = fakeBroker({
     "/user/repos?per_page=100&sort=updated&direction=desc": {
       status: 200,
@@ -64,7 +91,7 @@ test("listGitHubRepos maps and dedupes /user/repos", async () => {
   assert.deepEqual(result.repos.map((r) => r.slug), ["o/new", "o/old"]);
   assert.equal(result.repos[0].private, true);
   assert.equal(result.repos[0].html_url, "https://github.com/o/new");
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test("listGitHubRepos falls back to installation repositories for App tokens", async () => {
@@ -125,4 +152,13 @@ test("ensureRepoCloned reuses the same repo on retry and refuses any other conte
     gitOrigin: async () => null,
     listDir: () => ["notes.txt"],
   }), /not empty/);
+});
+
+test("parseGitCloneProgress extracts phase, percentage, and transfer size from git stderr", () => {
+  let state = parseGitCloneProgress("Cloning into '/tmp/ws'...\nremote: Enumerating objects: 4120, done.\n");
+  assert.deepEqual(state, { phase: "Enumerating objects", percent: null, transferred: null });
+  state = parseGitCloneProgress("Receiving objects:  42% (1730/4120), 14.20 MiB | 9.10 MiB/s\r", state);
+  assert.deepEqual(state, { phase: "Receiving objects", percent: 42, transferred: "14.20 MiB" });
+  state = parseGitCloneProgress("Resolving deltas:  85% (885/1041)\r", state);
+  assert.deepEqual(state, { phase: "Resolving deltas", percent: 85, transferred: "14.20 MiB" });
 });
