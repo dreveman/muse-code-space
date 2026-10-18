@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
+import { readGitVcsStatus } from "../pilot/vcsSmartlog.mjs";
 import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 
 // Fake pilot for local UI/action testing — no muse, no VM, no credentials.
@@ -1260,6 +1262,79 @@ Bun.serve({
     const session = sessions.get(decodeURIComponent(m[1]!));
     if (!session) return json(404, { error: "unknown session", code: "unknown_session" });
     const sub = m[2] ?? "";
+
+    if (sub === "/vcs-status" && req.method === "GET") {
+      const wsDir = session.workspaceRoot ?? null;
+      if (wsDir && existsSync(`${wsDir}/.git`)) {
+        const status = await readGitVcsStatus({
+          dir: wsDir,
+          gitExec: (args: string[]) =>
+            new Promise<string | null>((resolveExec) => {
+              execFile("git", ["-C", wsDir, ...args], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
+                resolveExec(error ? null : String(stdout ?? ""));
+              });
+            }),
+        });
+        return json(200, status);
+      }
+      if (session.repo) {
+        const now = Date.now();
+        return json(200, {
+          isGitCheckout: true,
+          branch: "main",
+          headSha: "7968c761b40f",
+          uncommittedFileCount: 1,
+          totalAdditions: 12,
+          totalDeletions: 3,
+          files: [{ path: "alpha.ts", status: "M", additions: 12, deletions: 3 }],
+          smartlogCommits: [
+            {
+              hash: "7968c761b40f",
+              parents: ["6b17a1b40f5c"],
+              phase: "draft",
+              isDot: true,
+              title: "Refine repo picker UI and add clone progress bar",
+              author: "David Reveman",
+              date: new Date(now - 10 * 60_000).toISOString(),
+              bookmarks: ["main"],
+              remoteBookmarks: [],
+            },
+            {
+              hash: "6b17a1b40f5c",
+              parents: ["a012e84fa2ff"],
+              phase: "draft",
+              isDot: false,
+              title: "Add repo picker for new companions",
+              author: "David Reveman",
+              date: new Date(now - 45 * 60_000).toISOString(),
+              bookmarks: [],
+              remoteBookmarks: [],
+            },
+            {
+              hash: "a012e84fa2ff",
+              parents: [],
+              phase: "public",
+              isDot: false,
+              title: "Initial repository checkout",
+              author: "David Reveman",
+              date: new Date(now - 4 * 3600_000).toISOString(),
+              bookmarks: [],
+              remoteBookmarks: ["origin/main"],
+            },
+          ],
+        });
+      }
+      return json(200, {
+        isGitCheckout: false,
+        branch: null,
+        headSha: null,
+        uncommittedFileCount: 0,
+        totalAdditions: 0,
+        totalDeletions: 0,
+        files: [],
+        smartlogCommits: [],
+      });
+    }
 
     if (sub === "/files/read" && req.method === "POST") {
       const requestedPath = typeof body.path === "string" ? body.path : "";

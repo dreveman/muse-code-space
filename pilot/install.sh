@@ -100,7 +100,7 @@ fi
 
 # ---- deploy files (code only; state/ and logs stay untouched) ----
 mkdir -p "$RUNTIME/state"
-for f in pilot.mjs terminals.mjs files.mjs mcp.mjs githubTools.mjs prMonitor.mjs repoSetup.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
+for f in pilot.mjs terminals.mjs files.mjs mcp.mjs githubTools.mjs prMonitor.mjs repoSetup.mjs vcsSmartlog.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
   cp "$REPO_DIR/$f" "$RUNTIME/$f" || fail "copy $f"
 done
 cp "$REPO_DIR/../server/src/assistantAvatar.mjs" "$RUNTIME/assistant-avatar.mjs" || fail "copy shared avatar validator"

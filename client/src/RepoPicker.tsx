@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ExpandButton } from "./MoreCompanionsButton";
+import { SmartLogIcon } from "./SmartLogPanel";
 import {
   formatCloneProgressLabel,
   repoOwnerAvatarUrl,
@@ -9,6 +10,7 @@ import {
   type RepoCloneProgress,
   type RepoOption,
 } from "./repoOptions";
+import { smartlogCheckoutLabel, type SessionVcsStatus } from "./smartlogLayout";
 
 function RepoIcon() {
   return (
@@ -42,6 +44,9 @@ export function RepoPicker({
   mode = "pick",
   cloneProgress = null,
   workspacePath = null,
+  vcsStatus = null,
+  smartlogOpen = false,
+  onToggleSmartlog,
   onChoose,
 }: {
   repos: readonly RepoOption[];
@@ -53,6 +58,9 @@ export function RepoPicker({
   mode?: "pick" | "manage";
   cloneProgress?: RepoCloneProgress | null;
   workspacePath?: string | null;
+  vcsStatus?: SessionVcsStatus | null;
+  smartlogOpen?: boolean;
+  onToggleSmartlog?: () => void;
   onChoose?: (slug: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -115,7 +123,8 @@ export function RepoPicker({
     window.setTimeout(() => setCopiedField((current) => (current === field ? null : current)), 1500);
   };
 
-  if (mode === "manage" && !selected) return null;
+  const checkoutLabel = smartlogCheckoutLabel(vcsStatus);
+  if (mode === "manage" && !selected && !checkoutLabel) return null;
 
   const statusText = repoStatusText(selected, phase, cloneProgress);
   if (showConnectPrompt && connectDismissed) {
@@ -135,6 +144,7 @@ export function RepoPicker({
 
   return (
     <div className="repo-row">
+      {(mode === "pick" || selected) && (
       <div className="repo-picker-wrap" ref={wrapRef}>
         <div className="repo-picker-control">
           <button ref={triggerRef} type="button" className="repo-picker-trigger"
@@ -268,6 +278,7 @@ export function RepoPicker({
           </div>
         )}
       </div>
+      )}
       {cloning ? (
         <div className="repo-clone-inline" role="progressbar"
           aria-label={`Cloning ${selected}`}
@@ -281,6 +292,21 @@ export function RepoPicker({
         </div>
       ) : (
         statusText && <span className="repo-row-status" role="status">{statusText}</span>
+      )}
+      {checkoutLabel && onToggleSmartlog && (
+        <div className="smartlog-trigger-wrap">
+          <button
+            type="button"
+            className={`repo-picker-trigger smartlog-trigger${smartlogOpen ? " active" : ""}`}
+            aria-label={smartlogOpen ? "Close Smart Log" : "Open Smart Log"}
+            aria-pressed={smartlogOpen}
+            title={smartlogOpen ? "Close Smart Log" : "Open Smart Log"}
+            onClick={onToggleSmartlog}
+          >
+            <span className="repo-picker-name">{checkoutLabel}</span>
+            <SmartLogIcon />
+          </button>
+        </div>
       )}
     </div>
   );

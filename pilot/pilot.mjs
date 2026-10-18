@@ -52,6 +52,7 @@ import { readWorkspaceFile } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
+import { readGitVcsStatus } from "./vcsSmartlog.mjs";
 import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
@@ -1149,8 +1150,16 @@ async function githubBrokerRequest(method, path, body) {
 
 function gitRead(workspaceRoot, args) {
   return new Promise((resolve) => {
-    execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000 }, (error, stdout) => {
+    execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
       resolve(error ? null : stdout.trim() || null);
+    });
+  });
+}
+
+function gitReadRaw(workspaceRoot, args) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
+      resolve(error ? null : String(stdout ?? ""));
     });
   });
 }
@@ -2106,6 +2115,33 @@ const server = createServer(async (req, res) => {
     if (req.method === "DELETE" && mDelete) {
       const result = deleteSession(decodeURIComponent(mDelete[1]), url.searchParams.get("workspaceRoot"));
       return json(res, result.ok ? 200 : 409, result);
+    }
+
+    // GET /sessions/:id/vcs-status -> { isGitCheckout, branch, headSha, uncommittedFileCount, totalAdditions, totalDeletions, files, smartlogCommits }
+    const mVcsStatus = path.match(/^\/sessions\/([^/]+)\/vcs-status$/);
+    if (req.method === "GET" && mVcsStatus) {
+      const id = decodeURIComponent(mVcsStatus[1]);
+      const entry = resolveEntry(id);
+      const registry = entry ? null : loadRegistry();
+      const meta = entry?.meta ?? registry?.[id] ?? null;
+      const wsDir = meta?.workspaceRoot ?? null;
+      if (!wsDir || !existsSync(wsDir)) {
+        return json(res, 200, {
+          isGitCheckout: false,
+          branch: null,
+          headSha: null,
+          uncommittedFileCount: 0,
+          totalAdditions: 0,
+          totalDeletions: 0,
+          files: [],
+          smartlogCommits: [],
+        });
+      }
+      const status = await readGitVcsStatus({
+        dir: wsDir,
+        gitExec: (args) => gitReadRaw(wsDir, args),
+      });
+      return json(res, 200, status);
     }
 
     const mRecover = path.match(/^\/sessions\/([^/]+)\/recover$/);
