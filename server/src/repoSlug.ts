@@ -9,7 +9,7 @@ const OWNER_REPO = /^([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)\/([A-Za-z0-9._-]
 function fromParts(owner: string, repo: string): string | null {
   const cleanRepo = repo.replace(/\.git$/, "");
   if (!owner || !cleanRepo || cleanRepo === "." || cleanRepo === "..") return null;
-  const match = OWNER_REPO.exec(`${owner}/${cleanRepo}`);
+  const match = `${owner}/${cleanRepo}`.match(OWNER_REPO);
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
