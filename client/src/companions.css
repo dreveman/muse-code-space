@@ -8,7 +8,10 @@
 .available-companions-toggle { width: 100%; margin-bottom: 8px; }
 .companion-contact-list[hidden] { display: none; }
 .more-companions-button { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--dim); font: 11px var(--sans); cursor: pointer; }
-.more-companions-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.more-companions-button:active { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .more-companions-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+}
 .more-companions-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .more-companions-button[aria-expanded="true"] svg { transform: rotate(180deg); }
 .session-list:has(.session-group) + .available-companions { margin-top: 16px; }
@@ -40,7 +43,10 @@
   text-align: left;
   cursor: pointer;
 }
-.companion-contact:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.companion-contact:active { background: color-mix(in srgb, var(--text) 5%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .companion-contact:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+}
 .companion-contact:disabled { cursor: default; opacity: .6; }
 .companion-contact[aria-current] {
   border-color: hsl(var(--companion-hue) 40% 55% / .4);
@@ -52,12 +58,13 @@
 .companion-lock { display: inline-block; width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; color: var(--dim); }
 .companion-access-notice { display: grid; justify-items: center; gap: 6px; margin: 14px 0; color: var(--dim); font: 12px/1.5 var(--sans); text-align: center; }
 .companion-access-notice .companion-lock { margin-left: 0; margin-right: 3px; }
-.companion-access-notice a { color: var(--text); text-underline-offset: 3px; }
+.companion-access-notice a { display: inline-flex; align-items: center; gap: 5px; color: var(--text); text-underline-offset: 3px; }
+.companion-access-notice a svg { width: 12px; height: 12px; flex: 0 0 auto; }
 .companion-access-notice a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .companion-contact small { overflow: hidden; color: var(--dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .companion-no-matches { padding: 10px; font-size: 13px; color: var(--dim); overflow-wrap: anywhere; }
 .companion-welcome { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-.companion-welcome-content { display: flex; flex-direction: column; align-items: center; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 56px 24px 48px; mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), rgba(0, 0, 0, 0.15) calc(100% - 22px), transparent); }
+.companion-welcome-content { display: flex; flex-direction: column; align-items: center; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 56px 24px 56px; mask-image: linear-gradient(to bottom, #000 calc(100% - 52px), rgba(0, 0, 0, 0.2) calc(100% - 24px), transparent); }
 .companion-card-browser { position: relative; container-type: inline-size; width: min(calc(100% - 80px), 460px); flex: 0 0 auto; margin-block: auto; }
 .companion-card-navigation button { position: absolute; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 32px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: var(--surface); color: var(--dim); font-size: 26px; cursor: pointer; }
 .companion-card-navigation button:first-child { left: -40px; }
@@ -73,7 +80,10 @@
 .composer-companion-trigger svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .composer-companion-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .composer-companion-style { flex: 0 0 auto; }
-.composer-companion-trigger:hover { background: var(--terminal-faint); }
+.composer-companion-trigger:active { background: var(--terminal-faint); }
+@media (hover: hover) and (pointer: fine) {
+  .composer-companion-trigger:hover { background: var(--terminal-faint); }
+}
 .composer-companion-trigger:focus-visible, .companion-menu-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .composer-companion-trigger:disabled { opacity: .5; cursor: default; }
 .companion-menu { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 10; width: 380px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 160px); display: flex; flex-direction: column; overflow: hidden; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-strong); color: var(--text); box-shadow: 0 8px 24px rgb(0 0 0 / .1); }
@@ -85,7 +95,10 @@
 .companion-menu-list { display: grid; flex: 0 1 auto; gap: 2px; padding: 3px; min-height: 0; max-height: min(320px, 40dvh); overflow-y: auto; overscroll-behavior: contain; }
 .companion-menu > .more-companions-button { flex: 0 0 auto; }
 .companion-menu-option { display: flex; align-items: center; gap: 11px; width: 100%; padding: 7px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.companion-menu-option:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.companion-menu-option:active { background: color-mix(in srgb, var(--text) 6%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .companion-menu-option:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+}
 .companion-menu-option:disabled { opacity: .55; cursor: default; }
 .companion-menu-upgrade { text-decoration: none; }
 .companion-menu-option img { flex: 0 0 auto; border-radius: 11px; }
@@ -177,7 +190,7 @@
   .session-rail { padding: 16px; }
   /* This container is exactly the remaining space above the unchanged prompt.
      All companions use its size, never the height of their individual copy. */
-  .companion-welcome-content { container: companion-space / size; overflow-y: auto; padding: 56px 8px 12px; }
+  .companion-welcome-content { container: companion-space / size; overflow-y: auto; padding: 56px 8px 56px; }
   .companion-card-browser { width: min(calc(100% - 88px), 460px); height: min(476px, 100cqh); }
   .companion-card-navigation button { width: 40px; height: 44px; }
   .companion-card-navigation button:first-child { left: -46px; }

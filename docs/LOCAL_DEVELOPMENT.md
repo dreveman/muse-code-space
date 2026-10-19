@@ -402,9 +402,11 @@ the actions call:
   `send-message-tool` previews an outgoing **To Pip** message. These are
   scripted transcript events, not delivery between two tasks. Add `slow` to
   either prompt to slow the script down.
-- `pr-monitor` previews PR monitoring: a `github_monitor_pr` tool call, then
-  the live Monitoring row — CI fails at ~3s (with the monitor's injected
-  turn) and the PR merges at ~6.5s, ending the row.
+- `create-pr` (or `create-prs` / `create-pr 3`) previews creating one or more
+  pull requests via `github_create_pr`. `monitor-pr` (or `monitor-prs`)
+  previews PR monitoring: a `github_monitor_pr` tool call for the session's
+  created PRs, then live Monitoring rows — CI fails at ~3s (with the
+  monitor's injected turn) and the PRs merge at ~6.5s, ending the rows.
 - It's a test double. When the real pilot's API changes, update it too.
 
 **Where the app's data lives:** the dev server's DB is `.dev/app.db`, kept

@@ -78,6 +78,7 @@ type Session = {
   repo?: string;
   appSessionId?: string;
   initialTurnId?: string | null;
+  nextPrNumber?: number;
   modelId: string;
   events: Event[];
   openTurn: string | null;
@@ -147,19 +148,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Background workflows: runId -> timers + state (so cancel can stop them).
 const workflows = new Map<string, { sessionId: string; timers: Timer[]; itemId: string; cancelled: boolean }>();
 
-// Simulated PR monitoring ("pr-monitor" prompt keyword): the github_monitor_pr
-// tool call starts it, then pr_monitor events update the transcript row —
-// CI fails (with the monitor's injected turn), then the PR merges. Mirrors
-// pilot/prMonitor.mjs payloads so the UI row can be exercised locally.
-function startFakePrMonitor(session: Session) {
-  const monitorId = crypto.randomUUID();
-  const base = {
-    id: monitorId, owner: "dreveman", repo: "muse-code-space", number: 6,
-    title: "Number terminal tabs only when there is more than one",
-    url: "https://github.com/dreveman/muse-code-space/pull/6",
-    approvals: 0, comments: 1,
-    startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  };
+// Simulated PR monitoring ("monitor-pr" / "monitor-prs" prompt keyword): the
+// github_monitor_pr tool call starts it, then pr_monitor events update each
+// monitored PR's transcript row — CI fails (with the monitor's injected turn),
+// then the PR merges. Mirrors pilot/prMonitor.mjs payloads so the UI row can
+// be exercised locally.
+function startFakePrMonitor(session: Session, prNumbers: number[] = [6, 7]) {
+  const slug = session.repo ?? "dreveman/muse-code-space";
+  const [owner = "dreveman", repo = "muse-code-space"] = slug.split("/");
   const emit = (monitor: Record<string, unknown>) => push(session, "pr_monitor", { monitor });
   const monitorTurn = (text: string, reply: string) => {
     const hostTurn = crypto.randomUUID();
@@ -170,22 +166,56 @@ function startFakePrMonitor(session: Session) {
     push(session, "turn_completed", { turnId: hostTurn, outcome: { status: "completed" } });
     if (session.openTurn === hostTurn) session.openTurn = null;
   };
-  emit({ ...base, status: "monitoring", checks: { passed: 2, failed: 0, pending: 1, failing: [] }, changes: [] });
+  const monitors = prNumbers.map((num, idx) => ({
+    id: crypto.randomUUID(),
+    owner,
+    repo,
+    number: num,
+    title: idx === 0
+      ? "Number terminal tabs only when there is more than one"
+      : `Follow-up stack change (#${num})`,
+    url: `https://github.com/${slug}/pull/${num}`,
+    approvals: idx === 0 ? 0 : 1,
+    comments: idx === 0 ? 1 : 0,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }));
+
+  for (const base of monitors) {
+    emit({ ...base, status: "monitoring", checks: { passed: 2, failed: 0, pending: 1, failing: [] }, changes: [] });
+  }
+  const first = monitors[0]!;
   setTimeout(() => {
-    emit({ ...base, status: "monitoring", checks: { passed: 2, failed: 1, pending: 0, failing: ["typecheck"] },
-      changes: [{ at: new Date().toISOString(), text: "CI check failed: typecheck" }] });
-    monitorTurn("[GitHub PR monitor] dreveman/muse-code-space#6: CI check failed: typecheck. https://github.com/dreveman/muse-code-space/pull/6",
-      "I see the typecheck failure — taking a look now.");
+    emit({
+      ...first,
+      updatedAt: new Date().toISOString(),
+      status: "monitoring",
+      checks: { passed: 2, failed: 1, pending: 0, failing: ["typecheck"] },
+      changes: [{ at: new Date().toISOString(), text: "CI check failed: typecheck" }],
+    });
+    monitorTurn(
+      `[GitHub PR monitor] ${slug}#${first.number}: CI check failed: typecheck. ${first.url}`,
+      "I see the typecheck failure — taking a look now.",
+    );
   }, 3000);
   setTimeout(() => {
-    emit({ ...base, status: "merged", checks: { passed: 3, failed: 0, pending: 0, failing: [] },
-      changes: [
-        { at: new Date().toISOString(), text: "CI check failed: typecheck" },
-        { at: new Date().toISOString(), text: "All checks passed (3 checks)" },
-        { at: new Date().toISOString(), text: "PR was merged" },
-      ] });
-    monitorTurn("[GitHub PR monitor] dreveman/muse-code-space#6: PR was merged. https://github.com/dreveman/muse-code-space/pull/6",
-      "All done — PR #6 is merged and monitoring has ended.");
+    for (const base of monitors) {
+      emit({
+        ...base,
+        updatedAt: new Date().toISOString(),
+        status: "merged",
+        checks: { passed: 3, failed: 0, pending: 0, failing: [] },
+        changes: [
+          ...(base.number === first.number ? [{ at: new Date().toISOString(), text: "CI check failed: typecheck" }] : []),
+          { at: new Date().toISOString(), text: "All checks passed (3 checks)" },
+          { at: new Date().toISOString(), text: "PR was merged" },
+        ],
+      });
+    }
+    monitorTurn(
+      `[GitHub PR monitor] ${slug}#${first.number}: PR was merged. ${first.url}`,
+      `All done — ${monitors.map((m) => `PR #${m.number}`).join(" and ")} merged and monitoring has ended.`,
+    );
   }, 6500);
 }
 
@@ -888,7 +918,24 @@ async function runTurn(session: Session, text: string) {
     const tsWriteContent = "const x: number = 3;\n";
     const jsonTool = /\bjson-tool\b/i.test(text);
     const listAgentsTool = /\blist-agents-tool\b/i.test(text);
-    const monitorTool = /\bpr-monitor\b/i.test(text);
+    const monitorTool = /\b(?:monitor-prs?|pr-monitor)\b/i.test(text);
+    const createPrMatch = text.match(/\bcreate-prs?(?:\s+(\d+))?\b/i);
+    const createPrTool = createPrMatch !== null;
+    const createPrCount = createPrMatch?.[1] ? Math.min(8, Math.max(1, Number(createPrMatch[1]))) : /\bcreate-prs\b/i.test(text) ? 3 : 1;
+    const allocPrNumber = () => {
+      const next = session.nextPrNumber ?? 6;
+      session.nextPrNumber = next + 1;
+      return next;
+    };
+    const firstCreatedPrNumber = createPrTool ? allocPrNumber() : 6;
+    const prRepoSlug = session.repo ?? "dreveman/muse-code-space";
+    const monitoredPrNumbers = (() => {
+      const createdCount = (session.nextPrNumber ?? 6) - 6;
+      if (createdCount > 0) {
+        return Array.from({ length: createdCount }, (_, i) => 6 + i);
+      }
+      return /\bmonitor-prs\b/i.test(text) ? [6, 7] : [6];
+    })();
     const sendMessageTool = /\bsend-message-(?:tool|fail)\b/i.test(text);
     const sendMessageFail = /\bsend-message-fail\b/i.test(text);
     const receiveMessage = /\breceive-message\b/i.test(text);
@@ -902,11 +949,17 @@ async function runTurn(session: Session, text: string) {
       : readTool ? (readTsTool ? "Read text file `alpha.ts`.\n1|const x: number = 3;\n2|console.log(x)" : "Read text file `test.rs`.\n1|ALPHA\n2|BETA\n3|GAMMA")
       : writeTool ? (writeTsTool ? `wrote ${Buffer.byteLength(tsWriteContent)} bytes to alpha.ts` : "wrote 17 bytes to test.rs")
       : monitorTool ? (
-        "Now monitoring 2 PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n" +
+        `Now monitoring ${monitoredPrNumbers.length} PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n` +
         "Current state:\n" +
-        "  #6 — OPEN · CI: 2 passed, 1 running · 1 comment · dreveman/muse-code-space\n" +
-        "  #7 — DRAFT · CI: 3 passed · 0 comments · dreveman/muse-code-space\n\n" +
-        "Active subscriptions: #6, #7."
+        monitoredPrNumbers
+          .map((num, idx) => `  #${num} — ${idx === 0 ? "OPEN · CI: 2 passed, 1 running · 1 comment" : "DRAFT · CI: 3 passed · 0 comments"} · ${prRepoSlug}`)
+          .join("\n") +
+        `\n\nActive subscriptions: ${monitoredPrNumbers.map((n) => `#${n}`).join(", ")}.`
+      )
+      : createPrTool ? (
+        `Created PR #${firstCreatedPrNumber} Improve repository picker and Smart Log (#${firstCreatedPrNumber})\n` +
+        `https://github.com/${prRepoSlug}/pull/${firstCreatedPrNumber}\n` +
+        `pr-${firstCreatedPrNumber} → main`
       )
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
       : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
@@ -918,8 +971,8 @@ async function runTurn(session: Session, text: string) {
     if (editDiff) toolOutputs.set(patchRefId, patchJson);
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
-      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: ["#6", "#7"] } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },
@@ -951,7 +1004,29 @@ async function runTurn(session: Session, text: string) {
         to: { kind: "agent", name: "pip", sessionId: "fake-pip" }, text: "Please run tests", queued: false,
       })] : []),
       () => push(session, "item", { item: toolItem(bashNonzero ? "failed" : "completed") }),
-      ...(monitorTool ? [() => startFakePrMonitor(session)] : []),
+      ...(createPrTool && createPrCount > 1 ? [() => {
+        for (let i = 1; i < createPrCount; i++) {
+          const num = allocPrNumber();
+          const createId = crypto.randomUUID();
+          const createOut = `Created PR #${num} Follow-up stack change (#${num})\nhttps://github.com/${prRepoSlug}/pull/${num}\npr-${num} → pr-${num - 1}`;
+          const createRef = `out-${crypto.randomUUID()}`;
+          toolOutputs.set(createRef, createOut);
+          push(session, "item", {
+            item: {
+              kind: "toolCall",
+              itemId: createId,
+              tool: "mcp__code_space__github_create_pr",
+              status: "completed",
+              recordedAt: new Date().toISOString(),
+              args: JSON.stringify({ title: `Follow-up stack change (#${num})`, head: `pr-${num}`, base: `pr-${num - 1}` }),
+              visibleOutput: createOut,
+              truncated: false,
+              outputRef: { id: createRef, byteLen: Buffer.byteLength(createOut), availability: "available", mediaType: "text/plain" },
+            },
+          });
+        }
+      }] : []),
+      ...(monitorTool ? [() => startFakePrMonitor(session, monitoredPrNumbers)] : []),
     ];
     if (/\bthinking\b/i.test(text)) {
       const reasoningId = crypto.randomUUID();
@@ -1086,17 +1161,21 @@ Bun.serve({
       if (!GITHUB_ENABLED) {
         return json(200, { enabled: false, repos: [] });
       }
-      // Sample list so the composer's repo picker can be exercised locally.
+      const fakeAvatar = (label: string, bg: string) =>
+        `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="${bg}"/><text x="16" y="21" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">${label}</text></svg>`)}`;
+      const octoAvatar = fakeAvatar("O", "#2da44e");
+      const acmeAvatar = fakeAvatar("A", "#0969da");
+      // Offline-safe sample list so the composer's repo picker can be exercised without network.
       return json(200, {
         enabled: true,
         repos: [
-          { slug: "google/perfetto", name: "perfetto", owner: "google", private: false, description: "Performance instrumentation and tracing for Android, Linux and Chrome", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/google/perfetto" },
-          { slug: "dreveman/perfetto-gpu-compute-injection", name: "perfetto-gpu-compute-injection", owner: "dreveman", private: false, description: "GPU compute injection tools for Perfetto", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/perfetto-gpu-compute-injection" },
-          { slug: "dreveman/muse-code-space", name: "muse-code-space", owner: "dreveman", private: false, description: "Sample repo for local UI work", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/muse-code-space" },
-          { slug: "dreveman/agentprof", name: "agentprof", owner: "dreveman", private: false, description: "Agent profiling utilities", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/agentprof" },
-          { slug: "dreveman/pi-iterm2", name: "pi-iterm2", owner: "dreveman", private: false, description: "iTerm2 integration for pi", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/pi-iterm2" },
-          { slug: "dreveman/sample-private", name: "sample-private", owner: "dreveman", private: true, description: null, default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/sample-private" },
-          { slug: "dreveman/fail-clone", name: "fail-clone", owner: "dreveman", private: false, description: "Picking this simulates a failed clone", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/dreveman/fail-clone" },
+          { slug: "octocat/hello-world", name: "hello-world", owner: "octocat", owner_avatar_url: octoAvatar, private: false, description: "Sample fake repository for local UI work", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/octocat/hello-world" },
+          { slug: "octocat/spoon-knife", name: "spoon-knife", owner: "octocat", owner_avatar_url: octoAvatar, private: false, description: "Forking and pull request test repository", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/octocat/spoon-knife" },
+          { slug: "acme/code-space", name: "code-space", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Simulated workspace UI and pilot daemon", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/code-space" },
+          { slug: "acme/design-tokens", name: "design-tokens", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Shared color and typography tokens", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/design-tokens" },
+          { slug: "acme/trace-viewer", name: "trace-viewer", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Offline trace visualization components", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/trace-viewer" },
+          { slug: "acme/sample-private", name: "sample-private", owner: "acme", owner_avatar_url: acmeAvatar, private: true, description: "Private sample repository (simulated)", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/sample-private" },
+          { slug: "acme/fail-clone", name: "fail-clone", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Picking this simulates a failed clone", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/fail-clone" },
         ],
       });
     }

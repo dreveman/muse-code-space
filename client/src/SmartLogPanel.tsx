@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, memo, useMemo, useState } from "react";
 import { formatRelativeTime } from "./sessionList";
 import {
   SMARTLOG_CELL_WIDTH,
@@ -334,7 +334,7 @@ function SmartLogUncommittedBlock({
   );
 }
 
-export function SmartLogView({
+export const SmartLogView = memo(function SmartLogView({
   status,
   loading,
   workspacePath,
@@ -347,6 +347,14 @@ export function SmartLogView({
   onRefresh: () => void;
   onOpenFile?: (path: string) => void;
 }) {
+  const { rows, maxLanes } = useMemo(() => {
+    if (!status || !status.isGitCheckout) return { rows: [], maxLanes: 1 };
+    const visibleCommits = filterSmartlogForDisplay(status.smartlogCommits);
+    const computed = computeSmartlogLayout(visibleCommits);
+    const lanes = computed.reduce((max, row) => Math.max(max, row.totalLanes), 1);
+    return { rows: computed, maxLanes: lanes };
+  }, [status]);
+
   const nowMs = Date.now();
   if (!status && loading) {
     return (
@@ -363,9 +371,6 @@ export function SmartLogView({
     );
   }
 
-  const visibleCommits = filterSmartlogForDisplay(status.smartlogCommits);
-  const rows = computeSmartlogLayout(visibleCommits);
-  const maxLanes = rows.reduce((max, row) => Math.max(max, row.totalLanes), 1);
   const isDirty = status.uncommittedFileCount > 0;
 
   return (
@@ -499,4 +504,4 @@ export function SmartLogView({
       )}
     </div>
   );
-}
+});

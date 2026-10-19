@@ -19,8 +19,9 @@ type UserInputQuestionShape,
 import { buildProjectBriefing, withProjectBriefing } from "./projectBriefing";
 import { isGeneratedWorkspaceRoot, shortWorkspaceToken } from "./generatedWorkspace";
 import { countsAsUnread } from "./transcriptVisibility";
-import { parseToolDetails, toolDetailsFromItem } from "./toolDetails";
+import { parseToolDetails, toolDetailsFromItem, type ToolDetails } from "./toolDetails";
 import { ownedArtifactPaths } from "./ownedArtifacts";
+import { ownedPullRequestsFromEvents } from "./ownedPullRequests";
 import { validateAssistantAvatar } from "./assistantAvatar.mjs";
 import { pilotRequest, isPilotUnavailable, readPilotModels } from "./pilotRequest";
 import { parseRepoSlug } from "./repoSlug";
@@ -38,6 +39,21 @@ const statusSchema = z.enum([
 ]);
 const eventKindSchema = z.enum(["stdout", "stderr", "system", "result", "user", "tool", "agents", "message", "thinking", "pr_monitor"]);
 const reasoningEffortSchema = z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+
+const ownedPrSchema = z.object({
+  key: z.string(),
+  repo: z.string(),
+  number: z.number(),
+  title: z.string().nullable(),
+  url: z.string(),
+  branchLine: z.string().nullable(),
+  draft: z.boolean(),
+  state: z.enum(["open", "merged", "closed"]),
+  checks: z.enum(["pending", "success", "failure", "none"]).nullable(),
+  checksSummary: z.string().nullable(),
+  latestChange: z.string().nullable(),
+  monitoring: z.boolean(),
+});
 
 const sessionResponseSchema = z.object({
   id: z.string(),
@@ -63,6 +79,7 @@ const sessionResponseSchema = z.object({
   latest_output: z.string().nullable(),
   project_id: z.string().nullable(),
   repo_slug: z.string().nullable(),
+  owned_prs: z.array(ownedPrSchema).optional(),
 });
 
 const eventResponseSchema = z.object({
@@ -1602,6 +1619,43 @@ export const Actions = {
         .orderBy(desc(schema.sessions.updatedAt))
         .limit(args.limit);
 
+      const sessionIds = rows.map((row) => row.id);
+      const prEventRows = sessionIds.length > 0
+        ? await db
+            .select({
+              sessionId: schema.outputEvents.sessionId,
+              kind: schema.outputEvents.kind,
+              content: schema.outputEvents.content,
+              toolDetails: schema.outputEvents.toolDetails,
+            })
+            .from(schema.outputEvents)
+            .where(
+              and(
+                inArray(schema.outputEvents.sessionId, sessionIds),
+                or(
+                  eq(schema.outputEvents.kind, "pr_monitor"),
+                  and(
+                    eq(schema.outputEvents.kind, "tool"),
+                    sql`${schema.outputEvents.toolDetails} LIKE '%github.com/%/pull/%'`,
+                  ),
+                ),
+              ),
+            )
+            .orderBy(asc(schema.outputEvents.id))
+        : [];
+      const prEventsBySession = new Map<string, Array<{ kind: string; content: string; tool_details: ToolDetails | null }>>();
+      for (const ev of prEventRows) {
+        let list = prEventsBySession.get(ev.sessionId);
+        if (!list) {
+          list = [];
+          prEventsBySession.set(ev.sessionId, list);
+        }
+        list.push({
+          kind: ev.kind,
+          content: ev.content,
+          tool_details: ev.kind === "tool" ? parseToolDetails(ev.toolDetails) : null,
+        });
+      }
 
       const sessions = await Promise.all(
         rows.map(async (row) => {
@@ -1620,6 +1674,7 @@ export const Actions = {
             .orderBy(desc(schema.outputEvents.id))
             .limit(1);
           const latest = previewText(latestRows[0]);
+          const ownedPrs = ownedPullRequestsFromEvents(prEventsBySession.get(row.id) ?? []);
           return {
             id: row.id,
             title: row.title,
@@ -1644,6 +1699,7 @@ export const Actions = {
             latest_output: latest ? latest.slice(0, 220) : null,
             project_id: row.projectId ?? null,
             repo_slug: row.repoSlug ?? null,
+            owned_prs: ownedPrs,
           };
         }),
       );
@@ -2136,7 +2192,7 @@ export const Actions = {
               ...(pilot.name ? { title: pilot.name } : {}),
             })
             .where(eq(schema.sessions.id, session.id));
-          ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
+          ctx.invalidateQueries({ queryKeys: [["code-sessions"]] });
           return {
             ok: true,
             id: session.id,

@@ -172,9 +172,9 @@ const adapters: readonly ToolAdapter[] = [
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
-  { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating Pull Request", "Created Pull Request", shortDetail(args?.title), ctx, failed), view: "plain" },
-  { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking Pull Request", "Checked Pull Request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
-  { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing Pull Requests", "Listed Pull Requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating pull request", "Created pull request", shortDetail(args?.title), ctx, failed), view: "plain" },
+  { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking pull request", "Checked pull request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
+  { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing pull requests", "Listed pull requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
   { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: githubMonitorLabel, view: "plain", showDuration: false },
 ];
 
