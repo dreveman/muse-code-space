@@ -12,6 +12,13 @@ export type RepoOption = {
   html_url: string;
 };
 
+/** Inline SVG data URI fallback avatar with the owner's initial (offline-safe). */
+export function repoOwnerFallbackAvatar(owner: string): string {
+  const initial = (owner.trim()[0] ?? "G").toUpperCase().replace(/[^A-Z0-9]/g, "G");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#57606a"/><text x="16" y="21" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">${initial}</text></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 /** Avatar URL for a repository's owner (user or organization). */
 export function repoOwnerAvatarUrl(repo: Pick<RepoOption, "owner" | "owner_avatar_url">): string {
   if (repo.owner_avatar_url) return repo.owner_avatar_url;

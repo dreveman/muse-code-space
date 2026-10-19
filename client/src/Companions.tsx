@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { companionDefinitions, companionRoleTitle } from "./companionRoster";
 import { companionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
@@ -66,7 +66,7 @@ function CompanionConfiguration({ companion }: { companion: Companion }) {
   </>;
 }
 
-function CompanionCard({ companion, visible, models }: { companion: Companion; visible: boolean; models?: readonly { id: string }[] }) {
+const CompanionCard = memo(function CompanionCard({ companion, visible, models }: { companion: Companion; visible: boolean; models?: readonly { id: string }[] }) {
   const cardRef = useRef<HTMLElement>(null);
   const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -129,7 +129,7 @@ function CompanionCard({ companion, visible, models }: { companion: Companion; v
       </section>
     </article>
   );
-}
+});
 
 export function CompanionContact({ companion, selected, disabled, models, onSelect }: {
   companion: Companion;

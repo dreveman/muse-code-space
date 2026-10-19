@@ -10,22 +10,35 @@ function SparkleIcon() {
   );
 }
 
-function SyncArrowsIcon() {
+export function PrMonitoringSyncIcon({ className = "pr-monitor-spinner" }: { className?: string }) {
   return (
-    <svg className="pr-monitor-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4.3 9.2A8.2 8.2 0 0 1 19.3 8.3" />
-      <path d="M19.5 4.9v3.5H16" />
-      <path d="M19.7 14.8A8.2 8.2 0 0 1 4.7 15.7" />
-      <path d="M4.5 19.1v-3.5H8" />
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.8 7.5a5.2 5.2 0 0 1 8.9-3.2L13 5.6" />
+      <path d="M13.2 2.8v2.8h-2.8" />
+      <path d="M13.2 8.5a5.2 5.2 0 0 1-8.9 3.2L3 10.4" />
+      <path d="M2.8 13.2v-2.8h2.8" />
     </svg>
   );
 }
 
-function MonitorDocIcon() {
+export function PullRequestIcon({ merged = false, className }: { merged?: boolean; className?: string }) {
+  if (merged) {
+    return (
+      <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="5.25" cy="3.5" r="1.75" />
+        <circle cx="5.25" cy="12.5" r="1.75" />
+        <circle cx="11.75" cy="9.5" r="1.75" />
+        <path d="M5.25 5.25v5.5M5.25 5.25c0 2.5 2.25 4.25 4.75 4.25" />
+      </svg>
+    );
+  }
   return (
-    <svg className="pr-monitor-doc-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <rect x="4.5" y="3" width="11" height="14" rx="2.5" fill="currentColor" />
-      <path d="M7.5 8h5M7.5 11.5h3.5" stroke="var(--terminal-bg, #fff)" strokeWidth="1.6" strokeLinecap="round" />
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="4.75" cy="3.5" r="1.75" />
+      <circle cx="4.75" cy="12.5" r="1.75" />
+      <circle cx="11.25" cy="12.5" r="1.75" />
+      <path d="M4.75 5.25v5.5M11.25 10.75V6a2 2 0 0 0-2-2H7.5" />
+      <path d="M9 2.25 7.25 4 9 5.75" />
     </svg>
   );
 }
@@ -57,8 +70,8 @@ export const PrMonitorEvent = memo(function PrMonitorEvent({ content }: { conten
           aria-expanded={expanded}
           onClick={() => setExpanded((open) => !open)}
         >
-          <span className={`pr-monitor-badge ${active ? "active" : `pr-monitor-mark ${row.status}`}`} aria-hidden="true">
-            {active ? <SyncArrowsIcon /> : <MonitorDocIcon />}
+          <span className={`pr-monitor-badge ${active ? "active" : `pr-monitor-mark ${row.status}`}${row.checks.failed > 0 ? " checks-failed" : ""}`} aria-hidden="true">
+            {active ? <PrMonitoringSyncIcon /> : <PullRequestIcon merged={row.status === "merged"} className="pr-monitor-pr-icon" />}
           </span>
           <SparkleIcon />
           <span className="pr-monitor-state">{prMonitorStatusLine(row)}:</span>

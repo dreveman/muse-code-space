@@ -22,6 +22,11 @@ import { newSessionIdentity } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
 import { RepoPicker } from "./RepoPicker";
+import type { RepoOption } from "./repoOptions";
+import { ownedPullRequestsFromEvents, type OwnedPullRequest } from "./ownedPullRequests";
+
+const EMPTY_REPOS: readonly RepoOption[] = [];
+const EMPTY_OWNED_PRS: readonly OwnedPullRequest[] = [];
 import { completeMention, matchingAgents, mentionAtCursor, type MentionAgent } from "./agentMentions";
 import { PaneDivider } from "./PaneDivider";
 import { chatWidthBounds, clampChatShare, clampSidebarWidth, DEFAULT_CHAT_SHARE, DEFAULT_SIDEBAR_WIDTH, DIVIDER_WIDTH, loadPaneSizes, savePaneSizes, sidebarWidthBounds } from "./layoutSizing";
@@ -34,7 +39,7 @@ import { redundantSendToolIds } from "./messageToolVisibility";
 import { SessionMenu, type SessionMenuAction } from "./WireDebug";
 import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Dialogs";
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
-import { PrMonitorEvent } from "./PrMonitorEvent";
+import { PrMonitorEvent, PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { parsePrMonitor } from "./prMonitor";
 import { NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
@@ -475,6 +480,21 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
   const patchAvailable = details?.patchRef?.availability === "available" && details.patchRef.kind === "tool_patch" && details.patchRef.mediaType === "application/json";
   const textDiff = presentation.adapterId === "edit" && (!patchAvailable || patchError !== null) ? parseUnifiedDiff(fullOutput ?? details?.output ?? "") : null;
   const diffDoc = patchDoc ?? textDiff;
+  const isFormattedOutputOnlyTool =
+    presentation.adapterId === "github-create-pr" ||
+    presentation.adapterId === "github-monitor-pr" ||
+    presentation.adapterId === "github-pr-status" ||
+    presentation.adapterId === "github-list-prs";
+  const formattedOutputText = fullOutput ?? details?.output ?? null;
+  const waitingForFormattedOutput =
+    !showRawToolOutput &&
+    !formattedOutputText &&
+    (isFormattedOutputOnlyTool ||
+      (running &&
+        (presentation.adapterId === "read" ||
+          presentation.adapterId === "search" ||
+          presentation.adapterId === "agents")));
+  const showExpandedPanel = expanded && !waitingForFormattedOutput;
   const panelId = `tool-transcript-${eventId}`;
 
   // A preference change resets visible rows to the new default; individual
@@ -622,7 +642,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
           <span className="tool-duration" title="Run time">{formatToolDuration(elapsed, false)}</span>
         ) : null}
       </button>
-      {expanded && (
+      {showExpandedPanel && (
         <div ref={patchPanelRef} id={panelId} className={`tool-transcript${!showRawToolOutput && (diffDoc || filePreview || searchPreview) ? " has-code-view" : ""}`}>
           {filePreview && <ToolFileView preview={filePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
           {searchPreview && <ToolSearchView preview={searchPreview} />}
@@ -644,8 +664,8 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
           {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !searchPreview && !agentList)) && (
             presentation.view === "command" && !showRawToolOutput && presentation.command !== null ? (
               <pre className="tool-command">{presentation.command}</pre>
-            ) : presentation.adapterId === "github-monitor-pr" && !showRawToolOutput ? (
-              <pre>{fullOutput ?? details?.output ?? (running ? "(waiting for output…)" : "")}</pre>
+            ) : isFormattedOutputOnlyTool && !showRawToolOutput ? (
+              <pre>{formattedOutputText}</pre>
             ) : (
               <>
                 <pre>{presentation.view === "json" && !showRawToolOutput && jsonText
@@ -1104,6 +1124,8 @@ const SessionRow = memo(function SessionRow({
     : session.status === "queued" ? "Waiting to start" : session.status === "running" ? "Working" : session.status === "succeeded" ? "Finished"
     : session.status === "stopped" ? "Stopped" : "Ready";
   const visual = agentVisualStatus(session);
+  const relativeTime = formatRelativeTime(session.updated_at, nowMs);
+  const rowOwnedPrs = session.owned_prs ?? [];
   return (
     <div className={`session-row${selected ? " selected" : ""}${summary ? " has-summary" : ""}${visual === "unread" ? " unread" : ""}`} style={agentColorStyle(session.title)}>
       {renaming ? (
@@ -1143,8 +1165,40 @@ const SessionRow = memo(function SessionRow({
             {summary && <span className="session-summary" title={summary}>{summary}</span>}
             <span className="companion-task-state">{taskState}</span>
           </span>
-          <time className="session-time" dateTime={session.updated_at}>{formatRelativeTime(session.updated_at, nowMs)}</time>
+          <time className="session-time" dateTime={session.updated_at} title={relativeTime === "just now" ? "Last activity just now" : `Last activity ${relativeTime} ago`}>{relativeTime}</time>
         </button>
+      )}
+      {!renaming && rowOwnedPrs.length > 0 && (
+        <div
+          className={`session-row-prs${!past && actionable ? " shift-two" : " shift-one"}`}
+          aria-label={`${rowOwnedPrs.length} pull ${rowOwnedPrs.length === 1 ? "request" : "requests"}`}
+        >
+          {rowOwnedPrs.map((pr) => {
+            const stateLabel = pr.monitoring
+              ? "Monitoring"
+              : pr.state === "merged"
+                ? "Merged"
+                : pr.state === "closed"
+                  ? "Closed"
+                  : pr.draft
+                    ? "Draft"
+                    : "Open";
+            const tooltip = `PR #${pr.number}${pr.title ? ` · ${pr.title}` : ""} (${stateLabel})`;
+            return (
+              <span
+                key={pr.key}
+                className={`vcs-node-bubble session-row-pr-item state-${pr.state}${pr.draft ? " is-draft" : ""}${pr.checks === "failure" ? " checks-failed" : ""}${pr.monitoring ? " is-monitoring" : ""}`}
+                title={tooltip}
+              >
+                {pr.monitoring ? (
+                  <PrMonitoringSyncIcon className="vcs-node-sync-spin" />
+                ) : (
+                  <PullRequestIcon merged={pr.state === "merged"} />
+                )}
+              </span>
+            );
+          })}
+        </div>
       )}
       {/* Hover-only on pointer devices (theme.css); touch devices reach the
           same actions from the transcript's session menu. */}
@@ -1506,9 +1560,13 @@ export function App() {
   const selectedCompanion = companions.find((companion) => companion.id === selectedCompanionId) ?? null;
   const selectedModelAccess = selectedCompanion ? companionModelAccess(selectedCompanion, accessibleModels) : null;
   const selectedModelBlocked = selectedModelAccess !== null && selectedModelAccess.status !== "ready";
+  const assignedCompanionsKey = useMemo(
+    () => sessions.filter((s) => !s.archived).map((s) => `${s.title.trim().toLowerCase()}:${s.archived ? 1 : 0}`).sort().join("|"),
+    [sessions],
+  );
   const availableCompanions = useMemo(
     () => orderCompanionsByAccess(availableCompanionDefinitions(sessions), accessibleModels),
-    [sessions, accessibleModels],
+    [assignedCompanionsKey, accessibleModels],
   );
   const matchingAvailableCompanions = useMemo(
     () => availableCompanions.filter((companion) => matchesCompanionQuery(companion, sessionQuery)),
@@ -1746,32 +1804,42 @@ export function App() {
       if (data.session) {
         const body = terminalBodyRef.current;
         const atBottom = selectedIdRef.current === id && !document.hidden && (body === null || followTranscriptRef.current || transcriptAtBottom(body));
-        const syncedSession = atBottom && data.session.seen_output_revision < data.session.output_revision
-          ? { ...data.session, seen_output_revision: data.session.output_revision }
-          : data.session;
-        queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) => {
-          if (!old) return old;
-          let changed = false;
-          const nextSessions = old.sessions.map((item) => {
-            if (item.id !== id) return item;
-            if (
-              item.status === syncedSession.status &&
-              item.title === syncedSession.title &&
-              item.summary === syncedSession.summary &&
-              item.session_summary === syncedSession.session_summary &&
-              item.needs_you === syncedSession.needs_you &&
-              item.archived === syncedSession.archived &&
-              item.output_revision === syncedSession.output_revision &&
-              agentVisualStatus(item) === agentVisualStatus(syncedSession)
-            ) {
-              return item;
-            }
-            changed = true;
-            return syncedSession;
-          });
-          return changed ? { ...old, sessions: nextSessions } : old;
-        });
-        if (syncedSession !== data.session) {
+        const seenBumped = atBottom && data.session.seen_output_revision < data.session.output_revision;
+        const syncedOwnedPrs = ownedPullRequestsFromEvents(data.events);
+        const syncedSession = {
+          ...(seenBumped
+            ? { ...data.session, seen_output_revision: data.session.output_revision }
+            : data.session),
+          owned_prs: syncedOwnedPrs.length > 0 ? syncedOwnedPrs : (data.session.owned_prs ?? []),
+        };
+        const oldList = queryClient.getQueryData<typeof sessionsQuery.data>(["code-sessions"]);
+        const existingItem = oldList?.sessions.find((item) => item.id === id);
+        if (existingItem) {
+          const prevPrsKey = (existingItem.owned_prs ?? []).map((p) => `${p.key}:${p.state}:${p.monitoring}:${p.checks}`).join(",");
+          const nextPrsKey = (syncedSession.owned_prs ?? []).map((p) => `${p.key}:${p.state}:${p.monitoring}:${p.checks}`).join(",");
+          const sidebarChanged =
+            existingItem.status !== syncedSession.status ||
+            existingItem.title !== syncedSession.title ||
+            existingItem.summary !== syncedSession.summary ||
+            existingItem.session_summary !== syncedSession.session_summary ||
+            existingItem.needs_you !== syncedSession.needs_you ||
+            existingItem.archived !== syncedSession.archived ||
+            prevPrsKey !== nextPrsKey ||
+            agentVisualStatus(existingItem) !== agentVisualStatus(syncedSession);
+          if (sidebarChanged) {
+            queryClient.setQueryData<typeof sessionsQuery.data>(["code-sessions"], (old) => {
+              if (!old) return old;
+              return {
+                ...old,
+                sessions: old.sessions.map((item) => (item.id === id ? syncedSession : item)),
+              };
+            });
+          } else {
+            existingItem.output_revision = syncedSession.output_revision;
+            existingItem.seen_output_revision = syncedSession.seen_output_revision;
+          }
+        }
+        if (seenBumped) {
           const revision = data.session.output_revision;
           if (revision > (requestedSeenRef.current.get(id) ?? 0)) {
             requestedSeenRef.current.set(id, revision);
@@ -1781,12 +1849,13 @@ export function App() {
               if (requestedSeenRef.current.get(id) === revision) requestedSeenRef.current.delete(id);
             });
           }
-          return { ...data, session: syncedSession };
         }
+        return { ...data, session: syncedSession };
       }
       return data;
     },
     enabled: selectedId !== null && selectedId !== draft?.id,
+    staleTime: 1000,
     refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 5000 : false,
   });
   const detailLoadedSession = detailQuery.data?.session ?? null;
@@ -1948,6 +2017,17 @@ export function App() {
     () => detail?.events.filter((event) => event.kind !== "result" && !isLifecycleMessage(event)) ?? [],
     [detail?.events],
   );
+  const rawOwnedPrs = useMemo(
+    () => ownedPullRequestsFromEvents(transcriptEvents),
+    [transcriptEvents],
+  );
+  const ownedPrsKey = rawOwnedPrs
+    .map((p) => `${p.key}:${p.state}:${p.monitoring}:${p.checks ?? ""}:${p.checksSummary ?? ""}:${p.latestChange ?? ""}`)
+    .join("|");
+  const ownedPrs = useMemo(
+    () => (rawOwnedPrs.length === 0 ? EMPTY_OWNED_PRS : rawOwnedPrs),
+    [ownedPrsKey],
+  );
   const redundantMessageTools = useMemo(() => redundantSendToolIds(transcriptEvents), [transcriptEvents]);
   const visibleTranscriptEvents = useMemo(() => {
     const events = showReasoning ? transcriptEvents : transcriptEvents.filter((event) => event.kind !== "thinking");
@@ -1972,6 +2052,12 @@ export function App() {
   // A workflow's child agents keep running after the turn that launched them
   // ended: keep syncing and ticking while any agents row is still running
   // (bounded, so a row orphaned by a lost backend doesn't poll forever).
+  const workflowRunning = useMemo(() => transcriptEvents.some((event) => {
+    if (event.kind !== "agents" || event.finished_at) return false;
+    const row = parseAgentsRow(event.content);
+    const started = event.started_at ? Date.parse(event.started_at) : NaN;
+    return !!row && agentStatusRunning(row.status) && Number.isFinite(started) && Date.now() - started < 12 * 60 * 60 * 1000;
+  }), [transcriptEvents]);
   const agentsRunning = useMemo(() => transcriptEvents.some((event) => {
     if (event.kind === "pr_monitor") return parsePrMonitor(event.content)?.status === "monitoring";
     if (event.kind !== "agents" || event.finished_at) return false;
@@ -3042,8 +3128,8 @@ export function App() {
     return sig;
   }, [visibleTranscriptEvents, minuteClockMs]);
   const transcriptClockMs = useMemo(
-    () => (agentsRunning ? nowMs : minuteClockMs),
-    [agentsRunning ? nowMs : stdoutTimeSignature],
+    () => (workflowRunning ? nowMs : minuteClockMs),
+    [workflowRunning ? nowMs : stdoutTimeSignature],
   );
   const renderedRowCacheRef = useRef<{
     contextKey: unknown[];
@@ -3156,20 +3242,23 @@ export function App() {
   };
 
 
+  const chooseDraftRepo = useCallback((slug: string | null) => {
+    setDraft((current) => (current ? { ...current, repoSlug: slug } : current));
+  }, []);
   const firstMessageComposer = (startingDraft?.draft.id === selectedId || selectedCompanion !== null) ? (
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
       <RepoPicker
-        repos={reposQuery.data?.repos ?? []}
+        repos={reposQuery.data?.repos ?? EMPTY_REPOS}
         githubEnabled={reposQuery.data?.github_enabled ?? true}
-        loading={reposQuery.isFetching}
+        loading={reposQuery.isPending}
         selected={startingDraft?.draft.id === selectedId ? startingDraft.draft.repoSlug : draft?.repoSlug ?? null}
         disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
         mode={startingDraft?.draft.id === selectedId ? "manage" : "pick"}
         cloneProgress={startingDraft?.draft.id === selectedId ? (cloneProgressQuery.data ?? null) : null}
         workspacePath={startingDraft?.draft.id === selectedId ? shortenHomePaths(startingDraft.workspacePath) : null}
         phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
-        onChoose={(slug) => setDraft((current) => (current ? { ...current, repoSlug: slug } : current))}
+        onChoose={chooseDraftRepo}
       />
       <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
         <label className="sr-only" htmlFor="draft-input">
@@ -3462,8 +3551,8 @@ export function App() {
     moreAvailableExpanded,
   ]);
   const detailMenuSession = selectedSession ?? detailSession;
-  const detailCompanionActive = liveWork || sendingDirection || pendingEcho !== null;
-  const detailCompanionActivity = agentsRunning && !sessionActive ? "Running helpers" : workingLabel;
+  const detailCompanionActive = (!detailSession?.archived && (sessionActive || workflowRunning)) || sendingDirection || pendingEcho !== null;
+  const detailCompanionActivity = workflowRunning && !sessionActive ? "Running helpers" : workingLabel;
   const detailCompanionVisible = !isNarrow || !mobileListOpen;
   const detailFloatingToolbar = useMemo(() => {
     if (!detailSession || !detailMenuSession) return null;
@@ -3543,11 +3632,21 @@ export function App() {
   const vcsStatusQuery = useQuery({
     queryKey: ["session-vcs-status", vcsSessionId],
     queryFn: () => api.getSessionVcsStatus({ session_id: vcsSessionId! }),
-    enabled: vcsSessionId !== null && vcsSessionId !== draft?.id,
+    enabled:
+      vcsSessionId !== null &&
+      vcsSessionId !== draft?.id &&
+      (smartlogTabActive || detailLoadedSession?.id === vcsSessionId),
+    staleTime: 4000,
     refetchInterval: smartlogTabActive || liveWork ? 5000 : 15_000,
     retry: false,
   });
   const detailWorkspaceShort = detailSession?.workspace_root ? shortenHomePaths(detailSession.workspace_root) : null;
+  const refreshDetailVcs = useCallback(() => {
+    void vcsStatusQuery.refetch();
+  }, [vcsStatusQuery.refetch]);
+  const toggleDetailSmartlog = useCallback(() => {
+    if (detailSessionIdForFiles) toggleSmartlogTab(detailSessionIdForFiles);
+  }, [detailSessionIdForFiles, toggleSmartlogTab]);
   const detailSidePanel = useMemo(() => {
     if (!hasSidePanel || !detailSessionIdForFiles || !detailSidePanelState) return null;
     return (
@@ -3556,9 +3655,9 @@ export function App() {
         sessionId={detailSessionIdForFiles}
         state={detailSidePanelState}
         vcsStatus={vcsStatusQuery.data ?? null}
-        vcsLoading={vcsStatusQuery.isFetching}
+        vcsLoading={vcsStatusQuery.isPending}
         workspacePath={detailWorkspaceShort}
-        onRefreshVcs={() => { void vcsStatusQuery.refetch(); }}
+        onRefreshVcs={refreshDetailVcs}
         onOpenFile={openFileTabForDetail}
         onBack={() => setMobileSideOpen(false)}
         onSelect={(key) => updateSidePanel(detailSessionIdForFiles, (state) => ({ ...state, activeKey: key }))}
@@ -3576,8 +3675,9 @@ export function App() {
     detailSessionIdForFiles,
     detailSidePanelState,
     vcsStatusQuery.data,
-    vcsStatusQuery.isFetching,
+    vcsStatusQuery.isPending,
     detailWorkspaceShort,
+    refreshDetailVcs,
     openFileTabForDetail,
   ]);
 
@@ -3766,18 +3866,19 @@ export function App() {
                     ) : (
                     /* Shown for past sessions too: sending resumes them ("Resume & send"). */
                       <form ref={takeoverFormRef} className="terminal-prompt" onSubmit={submitTakeover}>
-                        {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout) && (
+                        {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout || ownedPrs.length > 0) && (
                           <RepoPicker
-                            repos={reposQuery.data?.repos ?? []}
+                            repos={reposQuery.data?.repos ?? EMPTY_REPOS}
                             githubEnabled={reposQuery.data?.github_enabled ?? true}
-                            loading={reposQuery.isFetching}
+                            loading={reposQuery.isPending}
                             selected={detailSession.repo_slug}
                             mode="manage"
                             cloneProgress={detailSession.status === "queued" && detailSession.pilot_session_id === null ? (cloneProgressQuery.data ?? null) : null}
                             workspacePath={detailWorkspaceShort}
                             vcsStatus={vcsStatusQuery.data ?? null}
+                            ownedPrs={ownedPrs}
                             smartlogOpen={smartlogTabActive}
-                            onToggleSmartlog={() => toggleSmartlogTab(detailSession.id)}
+                            onToggleSmartlog={toggleDetailSmartlog}
                             phase={detailSession.status === "queued" && detailSession.pilot_session_id === null ? "starting" : "idle"}
                           />
                         )}

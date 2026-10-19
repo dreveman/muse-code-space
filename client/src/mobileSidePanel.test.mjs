@@ -18,6 +18,7 @@ test("the side view is full-screen with a back button to the conversation", () =
   assert.ok(app.includes("onBack={() => setMobileSideOpen(false)}"));
   const mobile = css.slice(css.indexOf("@media (max-width: 779px)"));
   assert.ok(mobile.includes(".mobile-side-view .detail-split > .transcript { display: none; }"), "transcript yields the screen");
+  assert.ok(mobile.includes(".mobile-detail-view .side-panel"), "returning to the conversation hides the side panel");
   assert.ok(mobile.includes(".mobile-side-view .side-panel"), "panel fills the screen");
   assert.ok(mobile.includes(".mobile-side-view .session-rail { display: none; }"));
 });
