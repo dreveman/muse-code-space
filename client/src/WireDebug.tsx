@@ -40,6 +40,8 @@ export type SessionMenuAction = {
   onActivate: () => void;
 };
 
+export const UI_BUILD_ID = "2026-10-19.v3";
+
 const COLOR_MODE_OPTIONS: Array<{ value: ColorMode; label: string; description: string }> = [
   { value: "system", label: "System default", description: "Follow this device's appearance" },
   { value: "light", label: "Light", description: "Always use the light palette" },
@@ -258,6 +260,10 @@ export function SessionMenu({ actions = [], colorMode, onColorModeChange, showRa
               checked={relayVisible}
               onActivate={() => { setPanelVisible(false); setRelayVisible((visible) => !visible); }}
             />
+            <div className="wire-settings-build" aria-label={`Build ${UI_BUILD_ID}`}>
+              <span className="wire-settings-item-label">Build</span>
+              <code className="wire-settings-build-code">{UI_BUILD_ID}</code>
+            </div>
           </details>
         </div>
       )}

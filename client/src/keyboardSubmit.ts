@@ -52,10 +52,12 @@ export function isHardwareKeyEvent(key: string): boolean {
 export function shouldSubmitOnEnter(args: {
   isComposing: boolean;
   shiftKey: boolean;
-  virtualKeyboard: boolean;
-  hardwareKeyboardSeen: boolean;
+  virtualKeyboard?: boolean;
+  hardwareKeyboardSeen?: boolean;
+  submitOnEnter?: boolean;
 }): boolean {
   if (args.isComposing || args.shiftKey) return false;
+  if (args.submitOnEnter !== undefined) return args.submitOnEnter;
   if (args.virtualKeyboard && !args.hardwareKeyboardSeen) return false;
   return true;
 }

@@ -540,14 +540,41 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   padding: 0 0 env(safe-area-inset-bottom);
   border-top: 0;
   background: transparent;
+  --terminal-surface: #ffffff;
   --terminal-text: #171a18;
   --terminal-dim: #667069;
   --terminal-faint: #dce1dc;
 }
 :root[data-color-mode="dark"] .terminal-prompt {
+  --terminal-surface: var(--surface-strong);
   --terminal-text: var(--text);
   --terminal-dim: var(--dim);
   --terminal-faint: var(--border-strong);
+}
+/* Extend the input prompt's background infinitely downward through any host
+   bottom padding when the composer has no bottom border; when the centered
+   desktop layout adds a bottom border (--chat-inset-bottom >= 1px), extend
+   the page background after that border instead. */
+.terminal-prompt::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  background: var(--terminal-bg, var(--bg));
+  pointer-events: none;
+}
+.terminal-prompt::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: calc((1px - min(1px, var(--chat-inset-bottom, 0px))) * 100000);
+  max-height: 100vh;
+  background: var(--terminal-surface);
+  pointer-events: none;
 }
 .terminal-composer {
   --terminal-bg: #f2f4f2;
@@ -617,6 +644,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .queued-note button:hover { background: color-mix(in srgb, var(--terminal-text) 14%, transparent); }
 /* Repo picker: floating control + status row above a new companion's first prompt. */
 .repo-row { position: absolute; bottom: calc(100% - var(--chat-inset-top, 0px)); left: 0; right: 0; display: flex; align-items: center; gap: 10px; padding: 0 2px 3px; border: 0; background: transparent; color: var(--terminal-text); pointer-events: none; }
+.companion-welcome > .companion-first-prompt > .repo-row { position: relative; bottom: auto; left: auto; right: auto; }
 .repo-row:has(.repo-menu) { z-index: 10; }
 .repo-picker-wrap { position: relative; flex: 0 1 auto; min-width: 0; pointer-events: auto; }
 .repo-row-status { pointer-events: auto; }
@@ -850,18 +878,39 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 @media (max-width: 779px) {
+  [data-generated-space-root]:has(.mobile-detail-view, .mobile-side-view) {
+    overflow: hidden;
+  }
+  .hatch-space-root[data-hatch-space-root]:has(.mobile-detail-view, .mobile-side-view) {
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+  .hatch-space-root[data-hatch-space-root][data-keyboard-open="true"] {
+    padding-bottom: 0 !important;
+  }
   .workspace { padding: 0; }
   .console-layout { gap: 0; }
-  .console-layout.mobile-detail-view { height: 100dvh; display: flex; flex-direction: column; }
+  .console-layout.mobile-detail-view {
+    height: calc(100dvh - var(--header-height, 0px) - var(--hatch-space-bottom-padding, 0px));
+    display: flex;
+    flex-direction: column;
+  }
+  .console-layout.mobile-detail-view .terminal-prompt {
+    padding-bottom: 0;
+  }
   .mobile-detail-view .session-rail { display: none; }
   .mobile-detail-view .side-panel,
   .mobile-detail-view .pane-divider { display: none; }
-  .mobile-detail-view .detail-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  .mobile-detail-view .detail-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: visible; }
   .mobile-list-view .detail-pane { display: none; }
   .mobile-detail-view .archive-error { flex: 0 0 auto; }
   /* Third mobile view: the side panel (tab strip + tab) full-screen,
      replacing the transcript until its back button returns. */
-  .console-layout.mobile-side-view { height: 100dvh; display: flex; flex-direction: column; }
+  .console-layout.mobile-side-view {
+    height: calc(100dvh - var(--header-height, 0px) - var(--hatch-space-bottom-padding, 0px));
+    display: flex;
+    flex-direction: column;
+  }
   .mobile-side-view .session-rail { display: none; }
   .mobile-side-view .detail-pane { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .mobile-side-view .detail-split { flex-direction: column; }
@@ -964,6 +1013,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .session-menu-action:disabled { cursor: not-allowed; }
 .session-menu-separator { height: 1px; margin: 0; background: var(--border); }
 .session-menu-heading { padding: 9px 12px 3px; color: var(--dim); font: 600 10px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.wire-settings-build {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px 4px;
+  color: var(--terminal-dim);
+}
+.wire-settings-build-code {
+  font: 10px/1.3 var(--mono);
+  color: var(--terminal-dim);
+}
 .session-menu-section > summary { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 9px 12px; border-radius: 6px; list-style: none; }
 .session-menu-section > summary::-webkit-details-marker { display: none; }
 .session-menu-section > summary:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
