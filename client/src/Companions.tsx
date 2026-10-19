@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { companionDefinitions, companionRoleTitle } from "./companionRoster";
 import { companionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
@@ -165,27 +165,6 @@ export function CompanionWelcome({ companion, visible, models, availableIds, onB
 }) {
   const welcomeRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const phone = useMediaQuery("(max-width: 779px)");
-  useLayoutEffect(() => {
-    const element = welcomeRef.current;
-    if (!phone || !visible || !element) return;
-    const viewport = window.visualViewport;
-    const measure = () => {
-      if (!viewport || viewport.scale !== 1) return;
-      const height = Math.max(0, viewport.height + viewport.offsetTop - element.getBoundingClientRect().top);
-      element.style.maxHeight = `${Math.floor(height)}px`;
-    };
-    measure();
-    viewport?.addEventListener("resize", measure);
-    viewport?.addEventListener("scroll", measure);
-    window.addEventListener("resize", measure);
-    return () => {
-      viewport?.removeEventListener("resize", measure);
-      viewport?.removeEventListener("scroll", measure);
-      window.removeEventListener("resize", measure);
-      element.style.removeProperty("max-height");
-    };
-  }, [phone, visible]);
   const index = availableIds.indexOf(companion.id);
   const canBrowse = index >= 0 && availableIds.length > 1;
   const browse = (direction: -1 | 1) => {

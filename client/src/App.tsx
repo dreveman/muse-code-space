@@ -101,6 +101,7 @@ const SHOW_REASONING_KEY = "muse-code-space:show-reasoning";
 const EXPAND_TOOLS_KEY = "muse-code-space:expand-tools";
 const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
 const WORKING_DETAILS_KEY = "muse-code-space:working-details";
+const ENTER_SUBMITS_KEY = "muse-code-space:enter-submits";
 const SORT_MODE_KEY = "muse-code-space:sort-mode";
 // Home folder on the pilot's machine, from the server's getHostConfig
 // (the VM is /home/hatch; a pilot on a Mac is /Users/<you>). Module-level so
@@ -1334,6 +1335,9 @@ export function App() {
   const [showWorkingDetails, setShowWorkingDetails] = useState(() => {
     try { return window.localStorage.getItem(WORKING_DETAILS_KEY) === "true"; } catch { return false; }
   });
+  const [enterSubmits, setEnterSubmits] = useState(() => {
+    try { return window.localStorage.getItem(ENTER_SUBMITS_KEY) !== "false"; } catch { return true; }
+  });
   const [colorMode, setColorMode] = useState<ColorMode>(loadColorMode);
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
@@ -1400,13 +1404,32 @@ export function App() {
     if (!isNarrow || mobileListOpen || !element) return;
     const viewport = window.visualViewport;
     const spaceRoot = document.querySelector<HTMLElement>("[data-generated-space-root]");
+    const hatchRoot = document.querySelector<HTMLElement>(".hatch-space-root[data-hatch-space-root]");
+    let maxViewportHeight = viewport?.height ?? window.innerHeight;
     const measure = () => {
       if (!viewport || viewport.scale !== 1) return;
+      if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height;
       if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
-      const height = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - element.getBoundingClientRect().top));
-      element.style.height = `${height}px`;
-      element.style.maxHeight = `${height}px`;
+      const activeTag = document.activeElement?.tagName;
+      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
+      const keyboardOpen = viewport.height < maxViewportHeight - 80 || (inputFocused && viewport.height < window.innerHeight - 40);
+      if (keyboardOpen) {
+        element.dataset.keyboardOpen = "true";
+        hatchRoot?.setAttribute("data-keyboard-open", "true");
+        // When the virtual keyboard is open, the host may forget to clear
+        // --bottom-padding; size directly to the visualViewport edge above
+        // the keyboard so no bottom-padding gap remains above the keyboard.
+        const top = element.getBoundingClientRect().top;
+        const height = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - top));
+        element.style.height = `${height}px`;
+        element.style.maxHeight = `${height}px`;
+      } else {
+        delete element.dataset.keyboardOpen;
+        hatchRoot?.removeAttribute("data-keyboard-open");
+        element.style.removeProperty("height");
+        element.style.removeProperty("max-height");
+      }
       if (followTranscriptRef.current && terminalBodyRef.current) {
         terminalBodyRef.current.scrollTop = terminalBodyRef.current.scrollHeight;
       }
@@ -1415,10 +1438,16 @@ export function App() {
     viewport?.addEventListener("resize", measure);
     viewport?.addEventListener("scroll", measure);
     window.addEventListener("resize", measure);
+    document.addEventListener("focusin", measure);
+    document.addEventListener("focusout", measure);
     return () => {
       viewport?.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
+      document.removeEventListener("focusin", measure);
+      document.removeEventListener("focusout", measure);
+      delete element.dataset.keyboardOpen;
+      hatchRoot?.removeAttribute("data-keyboard-open");
       element.style.removeProperty("height");
       element.style.removeProperty("max-height");
     };
@@ -1437,6 +1466,9 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem(WORKING_DETAILS_KEY, String(showWorkingDetails)); } catch { /* webview storage can be disabled */ }
   }, [showWorkingDetails]);
+  useEffect(() => {
+    try { window.localStorage.setItem(ENTER_SUBMITS_KEY, String(enterSubmits)); } catch { /* webview storage can be disabled */ }
+  }, [enterSubmits]);
   useEffect(() => {
     try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch { /* webview storage can be disabled */ }
   }, [sortMode]);
@@ -3003,6 +3035,13 @@ export function App() {
       checked: showWorkingDetails,
       onActivate: () => setShowWorkingDetails((value) => !value),
     },
+    {
+      key: "enter-submits",
+      label: "Return sends message",
+      description: "Turn off to insert a new line with Return",
+      checked: enterSubmits,
+      onActivate: () => setEnterSubmits((value) => !value),
+    },
   ];
   // The sidebar's rename/archive buttons are hover-only; the transcript's
   // session menu carries the same actions so touch devices can reach them.
@@ -3296,6 +3335,7 @@ export function App() {
               shiftKey: event.shiftKey,
               virtualKeyboard: isVirtualKeyboardEnvironment(),
               hardwareKeyboardSeen: hardwareKeyboardSeenRef.current,
+              submitOnEnter: enterSubmits,
             })) return;
             event.preventDefault();
             if (!creating && direction.trim().length > 0) {
@@ -3303,6 +3343,7 @@ export function App() {
             }
           }}
           placeholder={`What would you like ${selectedCompanion?.name ?? "your companion"} to do?`}
+          enterKeyHint={enterSubmits ? "send" : "enter"}
           rows={1}
           maxLength={19960}
         />
@@ -3595,6 +3636,7 @@ export function App() {
     showReasoning,
     expandTools,
     showWorkingDetails,
+    enterSubmits,
     archiveBusy,
     deleteBusy,
     renameBusy,
@@ -3927,6 +3969,7 @@ export function App() {
                                 shiftKey: event.shiftKey,
                                 virtualKeyboard: isVirtualKeyboardEnvironment(),
                                 hardwareKeyboardSeen: hardwareKeyboardSeenRef.current,
+                                submitOnEnter: enterSubmits,
                               })) return;
                               event.preventDefault();
                               if (!sendingDirection && pendingDirection === null && direction.trim().length > 0) {
@@ -3934,6 +3977,7 @@ export function App() {
                               }
                             }}
                             placeholder={sessionPast ? "Type a message to resume this task…" : "Type a message…"}
+                            enterKeyHint={enterSubmits ? "send" : "enter"}
                             rows={1}
                             maxLength={19960}
                             autoFocus
