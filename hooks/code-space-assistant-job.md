@@ -139,3 +139,32 @@ by session creation and message APIs.
 Report failures and incomplete identity/avatar synchronization explicitly.
 Do not mark an avatar upload, message batch, or summary update successful solely
 because the action transport returned without throwing.
+
+## Restore the Code Space services after a host wipe
+
+A host replacement can wipe /etc while everything under the home directory
+survives, deleting the systemd units and stopping the pilot, relay, and
+GitHub broker. When the wake reports missing units or an unhealthy pilot:
+
+1. Verify the outage is real before touching anything: the units are
+   genuinely absent from /etc/systemd/system AND the pilot health endpoint
+   (http://127.0.0.1:18791/health) is unreachable. A missing-unit report can
+   also fire transiently right after a reboot — if the units are already
+   installed, enabled, active, and health returns ok:true, do not restart
+   anything; a restart drops live sessions for no benefit.
+2. Restore from the pre-generated unit files in the pilot runtime directory
+   (~/workspace/muse-code-space-pilot/ on a standard install): copy
+   muse-code-space-pilot.service, muse-code-space-relay.service,
+   muse-code-space-github-broker.service, muse-code-space-watchdog.service,
+   and muse-code-space-watchdog.timer into /etc/systemd/system/, run
+   systemctl daemon-reload, enable all units, restart the relay, then the
+   GitHub broker, then the pilot, and start the watchdog timer.
+3. Require the health gate before continuing the pass: GET /health returns
+   ok:true with the relay and GitHub broker up.
+4. Never read or run pilot/install.sh or the install guide during a watchdog
+   restore, and never run a full install: the installer re-pins and downloads
+   the Muse binary and rewrites credentials, none of which a service restore
+   needs — the pre-generated unit files are sufficient. Where the image has
+   no crontab binary, the */2 watchdog cron cannot be installed;
+   Restart=always in the units plus the systemd watchdog timer is the
+   coverage, not a failure.
