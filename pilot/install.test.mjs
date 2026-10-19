@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 const source = readFileSync(new URL("./install.sh", import.meta.url), "utf8");
 
 test("VM installer deploys the file viewer dependency while preserving pilot state", () => {
-  assert.ok(source.includes("pilot.mjs terminals.mjs files.mjs mcp.mjs"));
+  assert.ok(source.includes('"$REPO_DIR"/*.mjs'), "installer deploys pilot modules by glob");
   assert.ok(source.includes('mkdir -p "$RUNTIME/state"'));
   assert.ok(source.includes('RUNTIME="${HOME}/workspace/muse-code-space-pilot"'));
   const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));

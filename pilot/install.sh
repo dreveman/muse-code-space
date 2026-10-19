@@ -100,7 +100,22 @@ fi
 
 # ---- deploy files (code only; state/ and logs stay untouched) ----
 mkdir -p "$RUNTIME/state"
-for f in pilot.mjs terminals.mjs files.mjs mcp.mjs githubTools.mjs prMonitor.mjs repoSetup.mjs vcsSmartlog.mjs pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
+# Deploy every pilot module by glob so the deploy set can never drift from
+# the modules in the repo — a hardcoded list previously omitted
+# githubTools.mjs and prMonitor.mjs and crash-looped the deployed pilot.
+# Test modules are excluded (the runtime carries only the two named below),
+# and assistant-avatar.mjs is deployed from server/src by the copy after
+# this loop, not from the pilot-local file.
+shopt -s nullglob
+for path in "$REPO_DIR"/*.mjs; do
+  f="$(basename "$path")"
+  case "$f" in
+    *.test.mjs|assistant-avatar.mjs) continue ;;
+  esac
+  cp "$path" "$RUNTIME/$f" || fail "copy $f"
+done
+shopt -u nullglob
+for f in pty_bridge.py package.json package-lock.json muse_relay.py github_broker.py setup_github_broker.py watchdog.sh recovery.test.mjs files.test.mjs; do
   cp "$REPO_DIR/$f" "$RUNTIME/$f" || fail "copy $f"
 done
 cp "$REPO_DIR/../server/src/assistantAvatar.mjs" "$RUNTIME/assistant-avatar.mjs" || fail "copy shared avatar validator"
