@@ -82,6 +82,38 @@ const sessionResponseSchema = z.object({
   owned_prs: z.array(ownedPrSchema).optional(),
 });
 
+const userAttachmentResponseSchema = z.object({
+  name: z.string(),
+  mediaType: z.string(),
+  dataUrl: z.string(),
+});
+
+function serializeUserAttachments(attachments: readonly PilotAttachmentInput[] | undefined): string | null {
+  if (!attachments || attachments.length === 0) return null;
+  return JSON.stringify(
+    attachments.map((att) => ({
+      name: att.name,
+      mediaType: att.mediaType,
+      dataUrl: `data:${att.mediaType};base64,${att.base64Data}`,
+    })),
+  );
+}
+
+function parseUserAttachments(raw: string | null): Array<{ name: string; mediaType: string; dataUrl: string }> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+    const valid = parsed.filter(
+      (item): item is { name: string; mediaType: string; dataUrl: string } =>
+        Boolean(item && typeof item.name === "string" && typeof item.mediaType === "string" && typeof item.dataUrl === "string"),
+    );
+    return valid.length > 0 ? valid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const eventResponseSchema = z.object({
   id: z.number(),
   kind: eventKindSchema,
@@ -103,6 +135,7 @@ const eventResponseSchema = z.object({
     patchRef: z.object({ id: z.string(), byteLen: z.number().int().nonnegative(), availability: z.string(), mediaType: z.string().nullable(), kind: z.string().nullable() }).nullable(),
     patchSummary: z.object({ files: z.number().int().nonnegative(), added: z.number().int().nonnegative(), removed: z.number().int().nonnegative() }).nullable(),
   }).nullable(),
+  attachments: z.array(userAttachmentResponseSchema).optional(),
 });
 
 const createSessionResponseSchema = z.object({
@@ -332,12 +365,25 @@ type PilotPoll = {
   backendSessionId?: string | null;
   hasOpenTurn?: boolean;
 };
+type PilotAttachmentInput = {
+  name: string;
+  mediaType: string;
+  base64Data: string;
+};
+
 type PilotTurnBody = {
   text: string;
   ifBusy: string;
   reasoningEffort: ReasoningEffort;
   modelId: string;
+  attachments?: readonly PilotAttachmentInput[];
 };
+
+const attachmentInputSchema = z.object({
+  name: z.string().trim().min(1).max(260),
+  mediaType: z.string().trim().regex(/^image\/[a-z0-9.+-]+$/i),
+  base64Data: z.string().min(1).max(15_000_000),
+});
 
 
 function pilotErrorText(error: unknown): string {
@@ -541,7 +587,9 @@ async function pilotSessionIdFor(db: ReturnType<Parameters<typeof Actions.getSes
 }
 
 type PilotStartRow = Pick<typeof schema.sessions.$inferSelect,
-  "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "modelId" | "requestedModelId" | "reasoningEffort">;
+  "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "modelId" | "requestedModelId" | "reasoningEffort"> & {
+  attachments?: readonly PilotAttachmentInput[];
+};
 
 async function requirePaidModelAccess(baseUrl: string, modelId: string) {
   if (!Object.hasOwn(PAID_COMPANION_MODELS, modelId)) return;
@@ -581,6 +629,7 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
         generatedWorkspace: row.workspaceRoot === null || isGeneratedWorkspaceRoot(row.id, row.workspaceRoot, WORKSPACE_ROOT),
         // The pilot clones this into the workspace before the first turn.
         ...(row.repoSlug ? { repo: row.repoSlug } : {}),
+        ...(row.attachments && row.attachments.length > 0 ? { attachments: row.attachments } : {}),
       }),
     },
     pilotSessionResponseSchema,
@@ -1779,6 +1828,7 @@ export const Actions = {
           started_at: event.startedAt?.toISOString() ?? null,
           finished_at: event.finishedAt?.toISOString() ?? null,
           tool_details: event.kind === "tool" ? parseToolDetails(event.toolDetails) : null,
+          ...(event.kind === "user" ? { attachments: parseUserAttachments(event.toolDetails) } : {}),
         })),
       };
     },
@@ -2043,6 +2093,7 @@ export const Actions = {
       // Repo picked before the first message (`owner/repo` or a github.com
       // URL); the pilot clones it into the workspace before starting.
       repo: z.string().trim().min(1).max(300).nullable().optional(),
+      attachments: z.array(attachmentInputSchema).max(8).optional(),
     }).strict(),
     response: createSessionResponseSchema,
     privileged: [privileged.resolvePilotUrl],
@@ -2165,6 +2216,7 @@ export const Actions = {
           sessionId: session.id,
           kind: "user",
           content: prompt,
+          toolDetails: serializeUserAttachments(args.attachments),
           createdAt: now,
         });
 
@@ -2179,6 +2231,7 @@ export const Actions = {
             modelId,
             requestedModelId: modelId,
             reasoningEffort: effort,
+            attachments: args.attachments,
           });
           if (!pilot.turnId) throw new Error("Pilot has not admitted the first turn yet");
           await db
@@ -2521,6 +2574,7 @@ export const Actions = {
     request: z.object({
       session_id: z.string().min(1).max(200),
       content: z.string().trim().min(1).max(20000),
+      attachments: z.array(attachmentInputSchema).max(8).optional(),
     }).strict(),
     response: z.object({
       ok: z.boolean(),
@@ -2568,6 +2622,7 @@ export const Actions = {
             ifBusy: "queue",
             reasoningEffort: effort,
             modelId,
+            ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
           });
           effectiveModelId = pilot.modelId;
         } catch (error) {
@@ -2584,6 +2639,7 @@ export const Actions = {
           sessionId: args.session_id,
           kind: "user",
           content: storedContent,
+          toolDetails: serializeUserAttachments(args.attachments),
           createdAt: now,
         })
         .returning({ id: schema.outputEvents.id });
@@ -2614,6 +2670,7 @@ export const Actions = {
       // "Resume & send" from a past session: an archived session is restored
       // as part of the same request, only once the new turn is accepted.
       resume: z.boolean().optional(),
+      attachments: z.array(attachmentInputSchema).max(8).optional(),
     }).strict(),
     response: createSessionResponseSchema,
     privileged: [privileged.resolvePilotUrl],
@@ -2687,6 +2744,7 @@ export const Actions = {
               ifBusy: "queue",
               reasoningEffort: effort,
               modelId,
+              ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
             });
             admitted = true;
             effectiveModelId = pilot.modelId;
@@ -2707,6 +2765,7 @@ export const Actions = {
               sessionId: args.session_id,
               kind: "user",
               content: args.content,
+              toolDetails: serializeUserAttachments(args.attachments),
               createdAt: now,
             })
             .returning({ id: schema.outputEvents.id });

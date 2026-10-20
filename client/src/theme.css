@@ -835,6 +835,21 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 @media (hover: hover) and (pointer: fine) {
   .voice-button:hover, .attachment-button:hover { color: var(--terminal-text); background: var(--terminal-faint); }
 }
+.attachment-button:disabled { opacity: .5; cursor: default; }
+.composer-attachments { display: flex; align-items: center; gap: 10px; height: 140px; padding: 12px 15px 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.composer-attachments::-webkit-scrollbar { display: none; }
+.composer-attachment-card { position: relative; flex: 0 0 auto; height: 128px; border-radius: 10px; overflow: hidden; background: var(--terminal-bg); }
+.composer-attachment-image { display: block; height: 128px; width: auto; max-width: 260px; object-fit: cover; border-radius: 10px; }
+.composer-attachment-remove { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.84); color: #3c4043; cursor: pointer; display: inline-grid; place-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+:root[data-color-mode="dark"] .composer-attachment-remove { background: rgba(20, 24, 27, 0.82); color: #e8eade; }
+.composer-attachment-remove svg { width: 10px; height: 10px; }
+.composer-attachment-remove:active { filter: brightness(0.92); }
+@media (hover: hover) and (pointer: fine) {
+  .composer-attachment-remove:hover { filter: brightness(0.92); }
+}
+.message-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.message-attachments + .message-text { margin-top: 8px; }
+.message-attachment-image { display: block; height: 128px; width: auto; max-width: min(280px, 100%); object-fit: cover; border-radius: 10px; }
 .voice-button.listening { color: var(--terminal-error); background: color-mix(in srgb, var(--terminal-error) 14%, transparent); }
 .composer-send { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #87bfe9; color: #09263b; cursor: pointer; transition: background .16s ease, opacity .16s ease; }
 /* Past session: the send button grows into a pill, "Resume & send ↑". */

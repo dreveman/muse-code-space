@@ -16,7 +16,7 @@ test("attachment icon is defined", () => {
 });
 
 test("both composers render the attachment button next to the voice button", () => {
-  const attachments = [...app.matchAll(/<AttachmentButton \/>/g)];
+  const attachments = [...app.matchAll(/<AttachmentButton\b/g)];
   assert.equal(attachments.length, 2, "expected the attachment button in both composers");
   const voices = [...app.matchAll(/className=\{`composer-icon voice-button/g)];
   assert.equal(voices.length, 2, "expected the voice button in both composers");
@@ -26,6 +26,13 @@ test("both composers render the attachment button next to the voice button", () 
       "attachment button must sit immediately before the voice button",
     );
   }
+});
+
+test("selected attachments render in the composer and are sent with the prompt", () => {
+  assert.ok(app.includes("function ComposerAttachmentStrip("), "composer renders staged attachment chips");
+  assert.equal((app.match(/<ComposerAttachmentStrip\b/g) ?? []).length, 2, "both composers render the attachment strip");
+  assert.ok(app.includes("fileToBase64(file)"), "selected files are base64-encoded for action transport");
+  assert.ok(app.includes("attachments: serializedAttachments"), "attachments are passed to createSession / sendInput / continueSession");
 });
 
 test("attachment button opens a hidden image file picker", () => {
