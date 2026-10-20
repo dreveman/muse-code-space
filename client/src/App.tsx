@@ -1,4 +1,4 @@
-import { SafeAreaTopScrim } from "@hatch/space-sdk/client";
+import { SafeAreaTopScrim, fileToBase64 } from "@hatch/space-sdk/client";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { api, type ApiResponse } from "./api";
@@ -131,11 +131,41 @@ type NewSessionDraft = {
   companionName: string;
 };
 
+export type ComposerAttachment = {
+  id: string;
+  name: string;
+  mediaType: string;
+  base64Data: string;
+  previewUrl: string;
+};
+
 // The one prompt held while the connection is down; sent on reconnect.
-type QueuedMessage = { kind: "message"; sessionId: string; content: string };
-type QueuedDraft = { kind: "draft"; draft: NewSessionDraft; workspacePath: string; prompt: string };
+type QueuedMessage = {
+  kind: "message";
+  sessionId: string;
+  content: string;
+  attachments?: readonly ComposerAttachment[];
+};
+type QueuedDraft = {
+  kind: "draft";
+  draft: NewSessionDraft;
+  workspacePath: string;
+  prompt: string;
+  attachments?: readonly ComposerAttachment[];
+};
 type QueuedPrompt = QueuedMessage | QueuedDraft;
 type SendResult = { ok: true } | { ok: false; error: string; network: boolean; pilotUnavailable?: boolean };
+
+function formatPromptWithAttachments(text: string, attachments: readonly ComposerAttachment[]): string {
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+  return attachments.length > 0 ? "[Image]" : "";
+}
+
+function visibleUserPromptText(content: string, hasAttachments: boolean): string {
+  if (hasAttachments && content.trim() === "[Image]") return "";
+  return displayOutput(content);
+}
 
 const QUEUE_FULL_MESSAGE = "One message is already queued. It sends when the connection is back.";
 
@@ -826,13 +856,20 @@ function AttachmentIcon() {
   );
 }
 
-function AttachmentButton() {
+function AttachmentButton({
+  onSelectFiles,
+  disabled,
+}: {
+  onSelectFiles?: (files: FileList | null) => void;
+  disabled?: boolean;
+}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <>
       <button
         type="button"
         className="composer-icon attachment-button"
+        disabled={disabled}
         onClick={() => fileInputRef.current?.click()}
         title="Attach files"
         aria-label="Attach files"
@@ -847,9 +884,70 @@ function AttachmentButton() {
         hidden
         aria-hidden="true"
         tabIndex={-1}
-        onChange={(event) => { event.currentTarget.value = ""; }}
+        onChange={(event) => {
+          onSelectFiles?.(event.currentTarget.files);
+          event.currentTarget.value = "";
+        }}
       />
     </>
+  );
+}
+
+function ComposerAttachmentStrip({
+  attachments,
+  onRemove,
+}: {
+  attachments: readonly ComposerAttachment[];
+  onRemove: (id: string) => void;
+}) {
+  if (attachments.length === 0) return null;
+  return (
+    <div className="composer-attachments" aria-label="Attached images">
+      {attachments.map((att) => (
+        <div key={att.id} className="composer-attachment-card">
+          <img
+            src={att.previewUrl}
+            alt={att.name}
+            className="composer-attachment-image"
+          />
+          <button
+            type="button"
+            className="composer-attachment-remove"
+            onClick={() => onRemove(att.id)}
+            aria-label={`Remove ${att.name}`}
+            title={`Remove ${att.name}`}
+          >
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+            </svg>
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MessageAttachments({
+  attachments,
+}: {
+  attachments?: ReadonlyArray<{ name: string; dataUrl?: string; previewUrl?: string }>;
+}) {
+  if (!attachments || attachments.length === 0) return null;
+  return (
+    <div className="message-attachments">
+      {attachments.map((att, idx) => {
+        const src = att.dataUrl ?? att.previewUrl;
+        if (!src) return null;
+        return (
+          <img
+            key={`${att.name}-${idx}`}
+            src={src}
+            alt={att.name}
+            className="message-attachment-image"
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -1074,9 +1172,14 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
   return (
     <article className={`output-event ${event.kind}${event.system_is_error ? " system-error" : ""}`}>
       {event.kind === "user" ? (
-        <div className="message-text">
-          {content}
-        </div>
+        <>
+          <MessageAttachments attachments={event.attachments} />
+          {visibleUserPromptText(event.content, Boolean(event.attachments?.length)) && (
+            <div className="message-text">
+              {visibleUserPromptText(event.content, Boolean(event.attachments?.length))}
+            </div>
+          )}
+        </>
       ) : event.kind === "agents" ? (
         <AgentsEvent sessionId={detailSessionId} content={event.content} startedAt={event.started_at} finishedAt={event.finished_at} nowMs={nowMs} />
       ) : event.kind === "pr_monitor" ? (
@@ -1311,10 +1414,12 @@ export function App() {
   const detailSplitRef = useRef<HTMLDivElement>(null);
   const [detailSplitWidth, setDetailSplitWidth] = useState(0);
   const [direction, setDirection] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [composerFocused, setComposerFocused] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const [pendingDirection, setPendingDirection] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<readonly ComposerAttachment[]>([]);
   // When the pending prompt was sent: "Sending (…)" counts from here, not
   // from the previous prompt still last in the transcript.
   const [pendingSentAtMs, setPendingSentAtMs] = useState(0);
@@ -1795,8 +1900,33 @@ export function App() {
     }
   }, [selectedId, sessions.length, draft?.id]);
 
+  const addAttachmentFiles = useCallback(async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const picked = Array.from(files).filter((file) => /^image\/[a-z0-9.+-]+$/i.test(file.type) && file.size > 0 && file.size <= 10 * 1024 * 1024);
+    if (picked.length === 0) return;
+    const encoded = await Promise.all(
+      picked.map(async (file): Promise<ComposerAttachment> => {
+        const { dataBase64, mimeType } = await fileToBase64(file);
+        const mediaType = /^image\/[a-z0-9.+-]+$/i.test(mimeType) ? mimeType : (file.type || "image/png");
+        return {
+          id: crypto.randomUUID(),
+          name: file.name || "image.png",
+          mediaType,
+          base64Data: dataBase64,
+          previewUrl: `data:${mediaType};base64,${dataBase64}`,
+        };
+      }),
+    );
+    setAttachments((current) => [...current, ...encoded].slice(0, 8));
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+  }, []);
+
   useEffect(() => {
     setDirection("");
+    setAttachments([]);
     setCaretPosition(null);
     promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     snappedSessionRef.current = null;
@@ -2430,11 +2560,13 @@ export function App() {
   const prevComposerMeasureRef = useRef<{
     input: HTMLTextAreaElement | null;
     direction: string;
+    hasAttachments: boolean;
     viewportWidth: number;
     sidebarWidth: number;
     chatShare: number;
     hasSidePanel: boolean;
   } | null>(null);
+  const hasAttachments = attachments.length > 0;
 
   useLayoutEffect(() => {
     // The first-prompt draft has its own textarea; sizing only the existing
@@ -2445,6 +2577,7 @@ export function App() {
     const sameGeometry =
       prev !== null &&
       prev.input === input &&
+      prev.hasAttachments === hasAttachments &&
       prev.viewportWidth === viewportWidth &&
       prev.sidebarWidth === paneSizes.sidebarWidth &&
       prev.chatShare === paneSizes.chatShare &&
@@ -2453,6 +2586,7 @@ export function App() {
     prevComposerMeasureRef.current = {
       input,
       direction,
+      hasAttachments,
       viewportWidth,
       sidebarWidth: paneSizes.sidebarWidth,
       chatShare: paneSizes.chatShare,
@@ -2492,6 +2626,11 @@ export function App() {
     });
     return () => cancelAnimationFrame(frame);
   }, [direction, selectedId, draftSelected, viewportWidth, paneSizes.sidebarWidth, paneSizes.chatShare, hasSidePanel, selectedCompanionId]);
+
+  useLayoutEffect(() => {
+    const input = draftSelected ? draftInputRef.current : takeoverInputRef.current;
+    if (input) resizeComposerTextarea(input);
+  }, [hasAttachments, draftSelected]);
 
   useEffect(() => {
     // Swap the echo for the real event once it shows up in the transcript.
@@ -2556,9 +2695,15 @@ export function App() {
           : sessions.find((item) => item.id === message.sessionId);
       const continuing = session ? !isTurnLive(session.status) : true;
       const resuming = session ? !isSessionActive(session, Date.now()) : false;
+      const serializedAttachments = message.attachments?.map(({ name, mediaType, base64Data }) => ({
+        name,
+        mediaType,
+        base64Data,
+      }));
       const args = {
         session_id: message.sessionId,
         content: message.content,
+        ...(serializedAttachments && serializedAttachments.length > 0 ? { attachments: serializedAttachments } : {}),
       };
       const response = continuing
         ? await api.continueSession({ ...args, resume: true })
@@ -2598,8 +2743,10 @@ export function App() {
   const submitTakeover = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = direction.trim();
+    const submittedAttachments = attachments;
+    const formattedContent = formatPromptWithAttachments(content, submittedAttachments);
     // Archived sessions included: sending is how they're resumed.
-    if (!detailSession || handoffBusy || content.length === 0) return;
+    if (!detailSession || handoffBusy || formattedContent.length === 0) return;
     if (detailModelBlocked) {
       setTakeoverError("Check model access or pick another companion before sending a message.");
       return;
@@ -2609,15 +2756,18 @@ export function App() {
       return;
     }
     const message: QueuedMessage = { kind: "message", sessionId: detailSession.id, content };
+    message.content = formattedContent;
+    if (submittedAttachments.length > 0) message.attachments = submittedAttachments;
     const decision = decideSubmit(promptConnectionLost, queuedPrompt !== null);
     if (decision === "queue-full") {
       setTakeoverError(QUEUE_FULL_MESSAGE);
       return;
     }
     followTranscriptRef.current = true;
-    sentPromptsRef.current.push(content);
+    if (content) sentPromptsRef.current.push(content);
     promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     setDirection("");
+    setAttachments([]);
     setTakeoverError(null);
     setTakeoverStatus(null);
     if (decision === "queue") {
@@ -2629,13 +2779,15 @@ export function App() {
     // Anchor past current events so an identical older message cannot
     // clear this echo before the real event arrives.
     setPendingEchoAnchor(transcriptEvents.length);
-    setPendingDirection(content);
+    setPendingDirection(formattedContent);
+    setPendingAttachments(submittedAttachments);
     setPendingSentAtMs(Date.now());
     setSendingDirection(true);
     const result = await deliverMessage(message);
     setSendingDirection(false);
     if (result.ok) return;
     setPendingDirection(null);
+    setPendingAttachments([]);
     if (result.network && queuedPrompt === null) {
       // The request never got an answer: hold it and resend on reconnect.
       if (result.pilotUnavailable) setPilotSync((current) => ({ ...current, [message.sessionId]: false }));
@@ -2646,6 +2798,7 @@ export function App() {
     setTakeoverError(result.error);
     // Never lose what was typed.
     setDirection((current) => current || content);
+    setAttachments((current) => (current.length > 0 ? current : [...submittedAttachments]));
   };
 
   const handOffCompanion = async (companionId: string) => {
@@ -2712,6 +2865,11 @@ export function App() {
     setStartingDraft(queued);
     setPendingSentAtMs(Date.now());
     try {
+      const serializedAttachments = queued.attachments?.map(({ name, mediaType, base64Data }) => ({
+        name,
+        mediaType,
+        base64Data,
+      }));
       const response = await api.createSession({
         session_id: queued.draft.id,
         title: queued.draft.companionName,
@@ -2719,6 +2877,7 @@ export function App() {
         workspaceRoot: queued.workspacePath,
         project_id: queued.draft.projectKey === "" ? null : queued.draft.projectKey,
         repo: queued.draft.repoSlug,
+        ...(serializedAttachments && serializedAttachments.length > 0 ? { attachments: serializedAttachments } : {}),
       });
       if (!response.ok || !response.id) {
         setStartingDraft(null);
@@ -2778,6 +2937,15 @@ export function App() {
                   started_at: null,
                   finished_at: null,
                   tool_details: null,
+                  ...(queued.attachments && queued.attachments.length > 0
+                    ? {
+                        attachments: queued.attachments.map((att) => ({
+                          name: att.name,
+                          mediaType: att.mediaType,
+                          dataUrl: att.previewUrl,
+                        })),
+                      }
+                    : {}),
                 },
               ],
             },
@@ -2791,7 +2959,10 @@ export function App() {
       const viewing = selectedIdRef.current === queued.draft.id;
       setDraft((current) => (current?.id === queued.draft.id ? null : current));
       if (viewing) {
-        if (fromComposer) setDirection("");
+        if (fromComposer) {
+          setDirection("");
+          setAttachments([]);
+        }
         setFilter("active");
         setMobileListOpen(false);
         setSelectedCompanionId(null);
@@ -2812,25 +2983,34 @@ export function App() {
       setCreateError("This companion is already on a task. Pick another companion.");
       return;
     }
-    const prompt = direction.trim();
+    const rawText = direction.trim();
+    const submittedAttachments = attachments;
+    const prompt = formatPromptWithAttachments(rawText, submittedAttachments);
     if (!prompt) return;
     const workspace = resolveWorkspaceRoot(draft.workspaceRoot);
     if (!workspace.ok) {
       setCreateError(workspace.error);
       return;
     }
-    const queued: QueuedDraft = { kind: "draft", draft, workspacePath: workspace.path, prompt };
+    const queued: QueuedDraft = {
+      kind: "draft",
+      draft,
+      workspacePath: workspace.path,
+      prompt,
+      ...(submittedAttachments.length > 0 ? { attachments: submittedAttachments } : {}),
+    };
     const decision = decideSubmit(promptConnectionLost, queuedPrompt !== null);
     if (decision === "queue-full") {
       setCreateError(QUEUE_FULL_MESSAGE);
       return;
     }
     setCreateError(null);
-    sentPromptsRef.current.push(prompt);
+    if (rawText) sentPromptsRef.current.push(rawText);
     promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     if (decision === "queue") {
       setQueuedPrompt(queued);
       setDirection("");
+      setAttachments([]);
       return;
     }
     firstMessageSendingRef.current = true;
@@ -3327,6 +3507,10 @@ export function App() {
         onChoose={chooseDraftRepo}
       />
       <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
+        <ComposerAttachmentStrip
+          attachments={startingDraft?.draft.id === selectedId ? [] : attachments}
+          onRemove={removeAttachment}
+        />
         <label className="sr-only" htmlFor="draft-input">
           First message
         </label>
@@ -3342,6 +3526,11 @@ export function App() {
           onFocus={(event) => { setComposerFocused(true); updateCaretPosition(event.currentTarget); }}
           onBlur={() => setComposerFocused(false)}
           onClick={(event) => updateCaretPosition(event.currentTarget)}
+          onPaste={(event) => {
+            if (event.clipboardData?.files?.length) {
+              void addAttachmentFiles(event.clipboardData.files);
+            }
+          }}
           onKeyUp={(event) => {
             if (suppressMentionKeyUpRef.current) { suppressMentionKeyUpRef.current = false; return; }
             updateCaretPosition(event.currentTarget);
@@ -3364,7 +3553,7 @@ export function App() {
               hardwareKeyboardSeen: hardwareKeyboardSeenRef.current,
             })) return;
             event.preventDefault();
-            if (!creating && direction.trim().length > 0) {
+            if (!creating && (direction.trim().length > 0 || attachments.length > 0)) {
               draftFormRef.current?.requestSubmit();
             }
           }}
@@ -3392,7 +3581,10 @@ export function App() {
             >
               <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
             </span>
-            <AttachmentButton />
+            <AttachmentButton
+              onSelectFiles={(files) => { void addAttachmentFiles(files); }}
+              disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
+            />
             <button
               type="button"
               className={`composer-icon voice-button ${listening ? "listening" : ""}`}
@@ -3408,7 +3600,7 @@ export function App() {
               className="composer-send"
               aria-label={creating ? "Sending message" : connectionLost ? "Queue first message" : "Send first message"}
               title={connectionLost ? "Offline — the message sends when the connection is back" : undefined}
-              disabled={selectedModelBlocked || creating || startingDraft?.draft.id === selectedId || direction.trim().length === 0 || queuedPrompt?.kind === "draft" || (connectionLost && queuedPrompt !== null)}
+              disabled={selectedModelBlocked || creating || startingDraft?.draft.id === selectedId || (direction.trim().length === 0 && attachments.length === 0) || queuedPrompt?.kind === "draft" || (connectionLost && queuedPrompt !== null)}
             >
               {creating ? <span className="send-spinner" aria-hidden="true" /> : <SendIcon />}
             </button>
@@ -3792,7 +3984,12 @@ export function App() {
                     <div className="terminal-body">
                       <div className="output-stream">
                         <article className="output-event user pending-echo" aria-label="Sending">
-                          <div className="message-text">{displayOutput(startingDraft.prompt)}</div>
+                          <MessageAttachments attachments={startingDraft.attachments} />
+                          {visibleUserPromptText(startingDraft.prompt, Boolean(startingDraft.attachments?.length)) && (
+                            <div className="message-text">
+                              {visibleUserPromptText(startingDraft.prompt, Boolean(startingDraft.attachments?.length))}
+                            </div>
+                          )}
                         </article>
                         <WorkingIndicator label="Starting" elapsedSeconds={sendingElapsedSeconds} detailed={showWorkingDetails} />
                       </div>
@@ -3879,7 +4076,12 @@ export function App() {
                           {renderedTranscriptEvents}
                           {pendingEcho !== null && (
                             <article className="output-event user pending-echo" aria-label="Sending">
-                              <div className="message-text">{displayOutput(pendingEcho)}</div>
+                              <MessageAttachments attachments={pendingAttachments} />
+                              {visibleUserPromptText(pendingEcho, pendingAttachments.length > 0) && (
+                                <div className="message-text">
+                                  {visibleUserPromptText(pendingEcho, pendingAttachments.length > 0)}
+                                </div>
+                              )}
                             </article>
                           )}
                           {pendingEcho !== null && (
@@ -3957,6 +4159,10 @@ export function App() {
                             says the companion is connecting. */}
                         {!promptConnectionLost && accessibleModels !== undefined && <CompanionAccessNotice access={detailModelAccess} modelName={displayModelLabel(detailModelId)} />}
                         <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
+                          <ComposerAttachmentStrip
+                            attachments={attachments}
+                            onRemove={removeAttachment}
+                          />
                           <label className="sr-only" htmlFor="takeover-input">
                             Message Muse Code
                           </label>
@@ -3972,6 +4178,11 @@ export function App() {
                             onFocus={(event) => { setComposerFocused(true); updateCaretPosition(event.currentTarget); }}
                             onBlur={() => setComposerFocused(false)}
                             onClick={(event) => updateCaretPosition(event.currentTarget)}
+                            onPaste={(event) => {
+                              if (event.clipboardData?.files?.length) {
+                                void addAttachmentFiles(event.clipboardData.files);
+                              }
+                            }}
                             onKeyUp={(event) => {
                               if (suppressMentionKeyUpRef.current) { suppressMentionKeyUpRef.current = false; return; }
                               updateCaretPosition(event.currentTarget);
@@ -3996,7 +4207,7 @@ export function App() {
                                 hardwareKeyboardSeen: hardwareKeyboardSeenRef.current,
                               })) return;
                               event.preventDefault();
-                              if (!sendingDirection && pendingDirection === null && direction.trim().length > 0) {
+                              if (!sendingDirection && pendingDirection === null && (direction.trim().length > 0 || attachments.length > 0)) {
                                 takeoverFormRef.current?.requestSubmit();
                               }
                             }}
@@ -4019,7 +4230,10 @@ export function App() {
                               >
                                 <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
                               </span>
-                              <AttachmentButton />
+                              <AttachmentButton
+                                onSelectFiles={(files) => { void addAttachmentFiles(files); }}
+                                disabled={handoffBusy}
+                              />
                               <button
                                 type="button"
                                 className={`composer-icon voice-button ${listening ? "listening" : ""}`}
@@ -4051,7 +4265,7 @@ export function App() {
                                   title={companionBusyElsewhere ? "Pick another companion before resuming this task" : promptConnectionLost
                                     ? "Offline — the message sends when the connection is back"
                                     : sessionPast ? "Restores this task to Active and sends the message" : undefined}
-                                  disabled={detailModelBlocked || companionBusyElsewhere || handoffBusy || pendingDirection !== null || direction.trim().length === 0 || (connectionLost && queuedPrompt !== null)}
+                                  disabled={detailModelBlocked || companionBusyElsewhere || handoffBusy || pendingDirection !== null || (direction.trim().length === 0 && attachments.length === 0) || (connectionLost && queuedPrompt !== null)}
                                 >
                                   {sessionPast && <span className="composer-send-label">Resume &amp; send</span>}
                                   <SendIcon />

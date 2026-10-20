@@ -1724,13 +1724,41 @@ function deleteSession(id, requestedWorkspaceRoot = null) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (c) => { data += c; if (data.length > 1e6) req.destroy(); });
+    req.on("data", (c) => { data += c; if (data.length > 25e6) req.destroy(); });
     req.on("end", () => {
       try { resolve(data ? JSON.parse(data) : {}); }
       catch (e) { reject(e); }
     });
     req.on("error", reject);
   });
+}
+
+function buildTurnInputParts(text, attachments) {
+  const parts = [];
+  if (typeof text === "string" && text.length > 0) {
+    parts.push({ type: "text", text });
+  }
+  if (Array.isArray(attachments)) {
+    for (const att of attachments) {
+      if (
+        att &&
+        typeof att.mediaType === "string" &&
+        /^image\/[a-z0-9.+-]+$/i.test(att.mediaType) &&
+        typeof att.base64Data === "string" &&
+        att.base64Data.length > 0
+      ) {
+        parts.push({
+          type: "image",
+          mediaType: att.mediaType,
+          base64Data: att.base64Data,
+        });
+      }
+    }
+  }
+  if (parts.length === 0) {
+    parts.push({ type: "text", text: "" });
+  }
+  return parts;
 }
 // Terminals for the UI (shells in session workspaces on this host).
 const terminals = createTerminalManager({ log, envExtras: () => githubSessionEnv() });
@@ -1863,8 +1891,9 @@ async function createPilotSessionInner(body, appSessionId) {
       return { code: 503, body: { error: "credential relay unavailable; retry once it is back", code: "relay_down", sessionId: entry.logId } };
     }
     try {
+      const firstText = entry.meta.name ? `${agentPreamble(entry.meta.name)}\n\n---\n\n${body.prompt}` : body.prompt;
       const turn = await entry.session.sendUserTurn({
-        input: [{ type: "text", text: entry.meta.name ? `${agentPreamble(entry.meta.name)}\n\n---\n\n${body.prompt}` : body.prompt }],
+        input: buildTurnInputParts(firstText, body.attachments),
         reasoningEffort: normEffort(body.reasoningEffort),
       });
       if (!turn?.turnId) throw new Error("turn admitted without a turn id");
@@ -2372,7 +2401,7 @@ const server = createServer(async (req, res) => {
         log("model switched:", entry.session.sessionId, "->", body.modelId);
       }
       const turn = await entry.session.sendUserTurn({
-        input: [{ type: "text", text }],
+        input: buildTurnInputParts(text, body.attachments),
         ifBusy: body.ifBusy ?? "queue",
         reasoningEffort: normEffort(body.reasoningEffort),
       });
