@@ -4,8 +4,12 @@
 import "@wterm/react/css";
 import { Suspense, lazy, memo, useEffect, useRef, useState } from "react";
 import { FileTab } from "./FileTab";
+import { ImageTab } from "./ImageTab";
+import { NewPreviewButton, PreviewTabIcon, PreviewView } from "./PreviewPanel";
 import { SmartLogIcon, SmartLogView } from "./SmartLogPanel";
 import type { SessionVcsStatus } from "./smartlogLayout";
+
+export { NewPreviewButton };
 
 const LazyTerminalView = lazy(() =>
   import("./TerminalPanel").then((m) => ({ default: m.TerminalView })),
@@ -16,6 +20,19 @@ function TerminalTabIcon() {
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
       <path d="M7.5 9.5l3 2.5-3 2.5M12.5 15h4" />
+    </svg>
+  );
+}
+
+function FileTabIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+      <path d="M8.794 8.031a.762.762 0 1 1 0 1.524H5.746a.762.762 0 0 1 0-1.524h3.048zM10.318 4.984a.762.762 0 1 1 0 1.523H5.746a.762.762 0 0 1 0-1.523h4.572z" />
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M11.841.412a2.286 2.286 0 0 1 2.286 2.286v10.666a2.286 2.286 0 0 1-2.286 2.286H4.222a2.286 2.286 0 0 1-2.285-2.286V2.698A2.286 2.286 0 0 1 4.222.412h7.62zM4.222 1.936a.762.762 0 0 0-.762.762v10.666c0 .421.341.762.762.762h7.62c.42 0 .761-.34.761-.761V2.697a.762.762 0 0 0-.762-.762H4.222z"
+      />
     </svg>
   );
 }
@@ -38,7 +55,9 @@ export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
 export type SideTab =
   | { key: string; kind: "terminal"; terminalId: string | null; number: number | null }
   | { key: string; kind: "file"; path: string }
-  | { key: string; kind: "smartlog" };
+  | { key: string; kind: "image"; title: string; src: string; path?: string | null }
+  | { key: string; kind: "smartlog" }
+  | { key: string; kind: "preview" };
 
 export type SidePanelState = { tabs: SideTab[]; activeKey: string | null };
 
@@ -57,7 +76,7 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
   if (paths.length === 0) return null;
   return <div className="artifact-menu-wrap" ref={root}>
     <button type="button" className={`terminal-toggle${open ? " active" : ""}`} onClick={() => setOpen((current) => !current)} aria-label="Open companion artifact" title="Open companion artifact" aria-haspopup="menu" aria-expanded={open}>
-      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"><path d="M5 3h10l4 4v14H5zM15 3v5h4M8 12h8M8 16h8" /></svg>
+      <FileTabIcon />
     </button>
     {open && <div className="artifact-menu" role="menu" aria-label="Companion artifacts">
       {paths.map((path) => <button key={path} type="button" role="menuitem" title={path} onClick={() => { setOpen(false); onOpen(path); }}>{path}</button>)}
@@ -66,7 +85,9 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
 });
 
 export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
+  if (tab.kind === "preview") return "Preview";
   if (tab.kind === "smartlog") return "Smart Log";
+  if (tab.kind === "image") return tab.title.split("/").at(-1) || tab.title;
   if (tab.kind === "file") return tab.path.split("/").at(-1) || tab.path;
   // A lone terminal is just "Terminal"; numbers only disambiguate when
   // there is more than one terminal tab.
@@ -76,6 +97,7 @@ export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
 export function SidePanel({
   sessionId,
   state,
+  previewPort = null,
   vcsStatus = null,
   vcsLoading = false,
   workspacePath = null,
@@ -88,6 +110,7 @@ export function SidePanel({
 }: {
   sessionId: string;
   state: SidePanelState;
+  previewPort?: number | null;
   vcsStatus?: SessionVcsStatus | null;
   vcsLoading?: boolean;
   workspacePath?: string | null;
@@ -125,6 +148,8 @@ export function SidePanel({
               >
                 {tab.kind === "terminal" && <TerminalTabIcon />}
                 {tab.kind === "smartlog" && <SmartLogIcon />}
+                {tab.kind === "preview" && <PreviewTabIcon />}
+                {(tab.kind === "file" || tab.kind === "image") && <FileTabIcon />}
                 <span>{label}</span>
               </button>
               <button
@@ -168,6 +193,19 @@ export function SidePanel({
                   workspacePath={workspacePath}
                   onRefresh={() => onRefreshVcs?.()}
                   onOpenFile={onOpenFile}
+                />
+              ) : tab.kind === "preview" ? (
+                <PreviewView
+                  sessionId={sessionId}
+                  active={selected}
+                  initialPort={previewPort}
+                />
+              ) : tab.kind === "image" ? (
+                <ImageTab
+                  sessionId={sessionId}
+                  path={tab.path ?? null}
+                  initialSrc={tab.src}
+                  title={tab.title}
                 />
               ) : <FileTab sessionId={sessionId} path={tab.path} />}
             </div>

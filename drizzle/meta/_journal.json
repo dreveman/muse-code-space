@@ -176,6 +176,13 @@
       "when": 1792400000000,
       "tag": "0025_add_session_repo",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792500000000,
+      "tag": "0026_add_session_preview_port",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import { SafeAreaTopScrim, fileToBase64 } from "@hatch/space-sdk/client";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { api, type ApiResponse } from "./api";
 import { getWorkingLabel } from "./workingLabel";
 import { shouldSnapToBottom, shouldFollowTranscript } from "./scrollSnap";
@@ -41,7 +41,8 @@ import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Di
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { PrMonitorEvent, PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { parsePrMonitor } from "./prMonitor";
-import { NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
+import { NewPreviewButton, NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
+import { PreviewTabIcon } from "./PreviewPanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 import { contextUsageLabel } from "./contextUsage";
@@ -252,6 +253,154 @@ function isSafeUrl(url: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(url.trim());
 }
 
+function isSafeImageDataUri(url: string): boolean {
+  return /^data:image\/(?:png|jpeg|jpg|gif|webp|svg\+xml);base64,[a-z0-9+/=\s]+$/i.test(url.trim());
+}
+
+export function parseLoopbackPreviewUrl(url: string): { port: number; path: string } | null {
+  const m = url
+    .trim()
+    .match(/^(?:https?:\/\/(?:127\.0\.0\.1|localhost):(\d{4,5})|preview:\/\/(\d{4,5}))(\/[^\s)]*)?$/i);
+  if (!m) return null;
+  const port = Number(m[1] ?? m[2]);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return null;
+  return { port, path: m[3] || "/" };
+}
+
+export function normalizeWorkspaceImagePath(rawSrc: string): string | null {
+  const trimmed = rawSrc.trim().replace(/[?#].*$/, "").replace(/^(?:\.\/)+/, "");
+  if (
+    !trimmed ||
+    trimmed.length > 500 ||
+    /^(?:https?:|data:|mailto:|blob:|\/)/i.test(trimmed) ||
+    trimmed.includes("\\") ||
+    trimmed.split("/").includes("..")
+  ) {
+    return null;
+  }
+  return /\.(?:png|jpe?g|gif|webp|svg)$/i.test(trimmed) ? trimmed : null;
+}
+
+const MarkdownSessionContext = createContext<{
+  sessionId: string | null;
+  openPreviewPort: (port: number) => void;
+  openImage: (spec: { title: string; src: string; path?: string | null }) => void;
+}>({
+  sessionId: null,
+  openPreviewPort: () => {},
+  openImage: () => {},
+});
+
+function MarkdownImage({
+  alt,
+  src,
+  interactive = true,
+}: {
+  alt: string;
+  src: string;
+  interactive?: boolean;
+}) {
+  const { sessionId, openImage } = useContext(MarkdownSessionContext);
+  const workspacePath = normalizeWorkspaceImagePath(src);
+  const imageQuery = useQuery({
+    queryKey: ["session-image", sessionId, workspacePath],
+    queryFn: () => api.readSessionImage({ session_id: sessionId!, path: workspacePath! }),
+    enabled: Boolean(sessionId && workspacePath),
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  let resolvedSrc: string | null = null;
+  if (workspacePath) {
+    if (!sessionId || imageQuery.isPending) {
+      return <span className="markdown-image-placeholder">Loading image {workspacePath}…</span>;
+    }
+    if (!imageQuery.data?.ok || !imageQuery.data.media_type || !imageQuery.data.base64_data) {
+      return <span className="markdown-image-placeholder">{alt || workspacePath}</span>;
+    }
+    resolvedSrc = `data:${imageQuery.data.media_type};base64,${imageQuery.data.base64_data}`;
+  } else if (isSafeUrl(src) || isSafeImageDataUri(src)) {
+    resolvedSrc = src.trim();
+  }
+
+  if (!resolvedSrc) {
+    return <span>{alt || src}</span>;
+  }
+
+  const imgEl = <img className="markdown-inline-image" src={resolvedSrc} alt={alt} loading="lazy" />;
+  if (!interactive) return imgEl;
+
+  const title = workspacePath || alt || "Image";
+  return (
+    <button
+      type="button"
+      className="markdown-image-button"
+      title={`Open ${title} in image viewer`}
+      onClick={() => openImage({ title, src: resolvedSrc!, path: workspacePath })}
+    >
+      {imgEl}
+    </button>
+  );
+}
+
+function MarkdownLinkedImage({ alt, src, href }: { alt: string; src: string; href: string }) {
+  const { openPreviewPort } = useContext(MarkdownSessionContext);
+  const previewTarget = parseLoopbackPreviewUrl(href);
+  if (previewTarget) {
+    return (
+      <button
+        type="button"
+        className="markdown-preview-card"
+        onClick={() => openPreviewPort(previewTarget.port)}
+        title={`Open live preview on 127.0.0.1:${previewTarget.port}`}
+      >
+        <MarkdownImage alt={alt} src={src} interactive={false} />
+        <span className="markdown-preview-card-bar">
+          <PreviewTabIcon />
+          <span className="markdown-preview-card-title">{alt || `Live preview (:${previewTarget.port})`}</span>
+          <span className="markdown-preview-card-cta">Open Preview →</span>
+        </span>
+      </button>
+    );
+  }
+  if (isSafeUrl(href)) {
+    return (
+      <a className="markdown-image-link" href={href} target="_blank" rel="noreferrer">
+        <MarkdownImage alt={alt} src={src} interactive={false} />
+      </a>
+    );
+  }
+  return <MarkdownImage alt={alt} src={src} />;
+}
+
+function MarkdownLink({ label, url }: { label: string; url: string }) {
+  const { openPreviewPort } = useContext(MarkdownSessionContext);
+  const previewTarget = parseLoopbackPreviewUrl(url);
+  if (previewTarget) {
+    return (
+      <a
+        href={url}
+        className="markdown-preview-link"
+        title={`Open live preview on 127.0.0.1:${previewTarget.port}`}
+        onClick={(event) => {
+          event.preventDefault();
+          openPreviewPort(previewTarget.port);
+        }}
+      >
+        {label}
+      </a>
+    );
+  }
+  if (isSafeUrl(url)) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer">
+        {label}
+      </a>
+    );
+  }
+  return <span>{label}</span>;
+}
+
 function renderInlineText(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   const codeParts = text.split(/(`[^`\n]+`)/g);
@@ -262,28 +411,45 @@ function renderInlineText(text: string, keyPrefix: string): ReactNode[] {
       nodes.push(<code key={`${keyPrefix}-c${key++}`}>{part.slice(1, -1)}</code>);
       continue;
     }
-    const pattern = /(\[.+?\]\(.+?\)|https?:\/\/[^\s)]+|\*\*.+?\*\*|~~.+?~~|\*[^*\n]+?\*|_[^_\n]+?_)/g;
+    const pattern = /(\[!\[[^\]]*\]\([^)\n]+\)\]\([^)\n]+\)|!\[[^\]]*\]\([^)\n]+\)|\[.+?\]\(.+?\)|https?:\/\/[^\s)]+|\*\*.+?\*\*|~~.+?~~|\*[^*\n]+?\*|_[^_\n]+?_)/g;
     let last = 0;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(part)) !== null) {
       if (match.index > last) nodes.push(part.slice(last, match.index));
       const token = match[0];
       const elementKey = `${keyPrefix}-i${key++}`;
-      if (token.startsWith("[")) {
+      if (token.startsWith("[![")) {
+        const linkedImgMatch = /^\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)$/.exec(token);
+        if (linkedImgMatch) {
+          nodes.push(
+            <MarkdownLinkedImage
+              key={elementKey}
+              alt={linkedImgMatch[1] ?? ""}
+              src={(linkedImgMatch[2] ?? "").trim()}
+              href={(linkedImgMatch[3] ?? "").trim()}
+            />,
+          );
+        } else {
+          nodes.push(token);
+        }
+      } else if (token.startsWith("![")) {
+        const imgMatch = /^!\[([^\]]*)\]\(([^)\n]+)\)$/.exec(token);
+        if (imgMatch) {
+          nodes.push(<MarkdownImage key={elementKey} alt={imgMatch[1] ?? ""} src={(imgMatch[2] ?? "").trim()} />);
+        } else {
+          nodes.push(token);
+        }
+      } else if (token.startsWith("[")) {
         const linkMatch = /^\[(.+?)\]\((.+?)\)$/.exec(token);
         if (linkMatch) {
           const label = linkMatch[1] ?? "";
           const url = (linkMatch[2] ?? "").trim();
-          if (isSafeUrl(url)) {
-            nodes.push(<a key={elementKey} href={url} target="_blank" rel="noreferrer">{label}</a>);
-          } else {
-            nodes.push(<span key={elementKey}>{label}</span>);
-          }
+          nodes.push(<MarkdownLink key={elementKey} label={label} url={url} />);
         } else {
           nodes.push(token);
         }
       } else if (token.startsWith("http")) {
-        nodes.push(<a key={elementKey} href={token} target="_blank" rel="noreferrer">{token}</a>);
+        nodes.push(<MarkdownLink key={elementKey} label={token} url={token} />);
       } else if (token.startsWith("**")) {
         nodes.push(<strong key={elementKey}>{token.slice(2, -2)}</strong>);
       } else if (token.startsWith("~~")) {
@@ -514,7 +680,8 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
     presentation.adapterId === "github-create-pr" ||
     presentation.adapterId === "github-monitor-pr" ||
     presentation.adapterId === "github-pr-status" ||
-    presentation.adapterId === "github-list-prs";
+    presentation.adapterId === "github-list-prs" ||
+    presentation.adapterId === "preview-screenshot";
   const formattedOutputText = fullOutput ?? details?.output ?? null;
   const waitingForFormattedOutput =
     !showRawToolOutput &&
@@ -932,19 +1099,28 @@ function MessageAttachments({
 }: {
   attachments?: ReadonlyArray<{ name: string; dataUrl?: string; previewUrl?: string }>;
 }) {
+  const { openImage } = useContext(MarkdownSessionContext);
   if (!attachments || attachments.length === 0) return null;
   return (
     <div className="message-attachments">
       {attachments.map((att, idx) => {
         const src = att.dataUrl ?? att.previewUrl;
         if (!src) return null;
+        const label = att.name || `Attachment ${idx + 1}`;
         return (
-          <img
+          <button
             key={`${att.name}-${idx}`}
-            src={src}
-            alt={att.name}
-            className="message-attachment-image"
-          />
+            type="button"
+            className="message-attachment-button"
+            title={`Open ${label} in image viewer`}
+            onClick={() => openImage({ title: label, src, path: null })}
+          >
+            <img
+              src={src}
+              alt={att.name}
+              className="message-attachment-image"
+            />
+          </button>
         );
       })}
     </div>
@@ -3351,12 +3527,108 @@ export function App() {
       return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
     });
   }, [isNarrow, mobileSideOpen]);
+  const togglePreviewTab = useCallback((sessionId: string) => {
+    setSidePanels((current) => {
+      const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing = state.tabs.find((tab) => tab.kind === "preview");
+      const currentlyShowing = existing && state.activeKey === existing.key && (!isNarrow || mobileSideOpen);
+      if (currentlyShowing) {
+        const tabs = state.tabs.filter((tab) => tab.key !== existing.key);
+        const activeKey = tabs.at(-1)?.key ?? null;
+        if (tabs.length === 0) setMobileSideOpen(false);
+        return { ...current, [sessionId]: { ...state, tabs, activeKey } };
+      }
+      if (isNarrow) setMobileSideOpen(true);
+      if (existing) {
+        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: "preview", kind: "preview" };
+      return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [isNarrow, mobileSideOpen]);
   // Stable per-detail-session file opener so memoized tool rows keep an
   // identical onOpenFile prop across renders.
   const detailSessionIdForFiles = detailSession?.id ?? null;
   const openFileTabForDetail = useCallback((path: string) => {
     if (detailSessionIdForFiles) openFileTab(detailSessionIdForFiles, path);
   }, [openFileTab, detailSessionIdForFiles]);
+  const [previewPortOverrides, setPreviewPortOverrides] = useState<Record<string, number | null>>({});
+  const detailPreviewPortRef = useRef<number | null>(null);
+  const effectiveDetailPreviewPort =
+    detailSessionIdForFiles && detailSessionIdForFiles in previewPortOverrides
+      ? previewPortOverrides[detailSessionIdForFiles]!
+      : (detailSession?.preview_port ?? null);
+  detailPreviewPortRef.current = effectiveDetailPreviewPort;
+  const openPreviewPortForDetail = useCallback((port: number) => {
+    if (!detailSessionIdForFiles) return;
+    setPreviewPortOverrides((prev) => (prev[detailSessionIdForFiles] === port ? prev : { ...prev, [detailSessionIdForFiles]: port }));
+    queryClient.setQueryData(
+      ["preview-ports", detailSessionIdForFiles],
+      (prev: { ok: boolean; configured_port: number | null; reachable: boolean | null; ports: Array<{ port: number; command: string; pid: number }> } | undefined) => ({
+        ok: true,
+        configured_port: port,
+        reachable: prev?.reachable ?? true,
+        ports: prev?.ports ?? [],
+      }),
+    );
+    if (detailPreviewPortRef.current !== port) {
+      detailPreviewPortRef.current = port;
+      void api.setPreviewPort({ session_id: detailSessionIdForFiles, port }).then((res) => {
+        if (res.ok) {
+          queryClient.setQueryData(
+            ["preview-ports", detailSessionIdForFiles],
+            (prev: { ok: boolean; configured_port: number | null; reachable: boolean | null; ports: Array<{ port: number; command: string; pid: number }> } | undefined) => ({
+              ok: true,
+              configured_port: res.port,
+              reachable: res.reachable,
+              ports: prev?.ports ?? [],
+            }),
+          );
+        }
+      });
+    }
+    if (isNarrow) setMobileSideOpen(true);
+    setSidePanels((current) => {
+      const state = current[detailSessionIdForFiles] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing = state.tabs.find((tab) => tab.kind === "preview");
+      if (existing) {
+        return { ...current, [detailSessionIdForFiles]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: "preview", kind: "preview" };
+      return { ...current, [detailSessionIdForFiles]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [detailSessionIdForFiles, isNarrow, queryClient]);
+  const openImageTabForDetail = useCallback(
+    (spec: { title: string; src: string; path?: string | null }) => {
+      if (!detailSessionIdForFiles) return;
+      if (isNarrow) setMobileSideOpen(true);
+      const tabKey = spec.path ? `file:${spec.path}` : `image:${spec.title}:${spec.src.slice(0, 48)}`;
+      setSidePanels((current) => {
+        const state = current[detailSessionIdForFiles] ?? { tabs: [], activeKey: null, loaded: false };
+        const existing = state.tabs.find((tab) => tab.key === tabKey);
+        if (existing) {
+          return { ...current, [detailSessionIdForFiles]: { ...state, activeKey: existing.key } };
+        }
+        const tab: SideTab = {
+          key: tabKey,
+          kind: "image",
+          title: spec.title,
+          src: spec.src,
+          path: spec.path ?? null,
+        };
+        return { ...current, [detailSessionIdForFiles]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+      });
+    },
+    [detailSessionIdForFiles, isNarrow],
+  );
+  const markdownSessionValue = useMemo(
+    () => ({
+      sessionId: detailSessionIdForFiles,
+      openPreviewPort: openPreviewPortForDetail,
+      openImage: openImageTabForDetail,
+    }),
+    [detailSessionIdForFiles, openPreviewPortForDetail, openImageTabForDetail],
+  );
   const detailWorkspaceRoot = detailSession?.workspace_root ?? "";
   const assistantAvatarUrl = assistantIdentityQuery.data?.avatar_data_url ?? null;
   const sessionsPeerKey = useMemo(
@@ -3809,6 +4081,16 @@ export function App() {
     draftCompanionId,
     moreAvailableExpanded,
   ]);
+  const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
+  const smartlogTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailSidePanelState?.tabs.some((tab) => tab.kind === "smartlog" && tab.key === detailSidePanelState.activeKey),
+  );
+  const previewTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailSidePanelState?.tabs.some((tab) => tab.kind === "preview" && tab.key === detailSidePanelState.activeKey),
+  );
+  const detailPreviewPort = effectiveDetailPreviewPort;
   const detailMenuSession = selectedSession ?? detailSession;
   const detailCompanionActive = (!detailSession?.archived && (sessionActive || workflowRunning)) || sendingDirection || pendingEcho !== null;
   const detailCompanionActivity = workflowRunning && !sessionActive ? "Running helpers" : workingLabel;
@@ -3828,6 +4110,7 @@ export function App() {
                         visible={detailCompanionVisible} />
                       <div className="chat-floating-actions">
                         <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                        <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
                         <SessionMenu actions={sessionMenuActions(selectedSession ?? detailSession)} colorMode={colorMode}
                           onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
@@ -3849,6 +4132,8 @@ export function App() {
     detailCompanionVisible,
     ownedFiles,
     openFileTabForDetail,
+    previewTabActive,
+    togglePreviewTab,
     colorMode,
     showRawToolOutput,
     showReasoning,
@@ -3882,11 +4167,6 @@ export function App() {
     takeoverDisabledReason,
     detailSession?.id,
   ]);
-  const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
-  const smartlogTabActive = Boolean(
-    (!isNarrow || mobileSideOpen) &&
-      detailSidePanelState?.tabs.some((tab) => tab.kind === "smartlog" && tab.key === detailSidePanelState.activeKey),
-  );
   const vcsSessionId = detailSession?.pilot_session_id ? detailSession.id : null;
   const vcsStatusQuery = useQuery({
     queryKey: ["session-vcs-status", vcsSessionId],
@@ -3913,6 +4193,7 @@ export function App() {
         key={detailSessionIdForFiles}
         sessionId={detailSessionIdForFiles}
         state={detailSidePanelState}
+        previewPort={detailPreviewPort}
         vcsStatus={vcsStatusQuery.data ?? null}
         vcsLoading={vcsStatusQuery.isPending}
         workspacePath={detailWorkspaceShort}
@@ -3933,6 +4214,7 @@ export function App() {
     hasSidePanel,
     detailSessionIdForFiles,
     detailSidePanelState,
+    detailPreviewPort,
     vcsStatusQuery.data,
     vcsStatusQuery.isPending,
     detailWorkspaceShort,
@@ -3964,6 +4246,7 @@ export function App() {
               valueFromPointer={(clientX) => clientX - (layoutRef.current?.getBoundingClientRect().left ?? 0)}
             />
 
+            <MarkdownSessionContext.Provider value={markdownSessionValue}>
             <section id="agent-detail" className="detail-pane" aria-label="Companion output">
               {startingDraft?.draft.id === selectedId ? (
                 <div className="detail-split">
@@ -4305,6 +4588,7 @@ export function App() {
               )}
               </>}
             </section>
+            </MarkdownSessionContext.Provider>
           </div>
       </main>
       {textPrompt && (

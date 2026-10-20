@@ -1,8 +1,20 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { relative, resolve } from "node:path";
+import type { Duplex } from "node:stream";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
+import { readWorkspaceImage } from "../pilot/files.mjs";
+import {
+  capturePreviewScreenshot,
+  createPreviewWsManager,
+  discoverWorkspaceListeningPorts,
+  isAllowedPreviewPort,
+  probeLocalPort,
+  proxyPreviewHttpRequest,
+} from "../pilot/preview.mjs";
 import { readGitVcsStatus } from "../pilot/vcsSmartlog.mjs";
 import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 
@@ -919,6 +931,48 @@ async function runTurn(session: Session, text: string) {
     const jsonTool = /\bjson-tool\b/i.test(text);
     const listAgentsTool = /\blist-agents-tool\b/i.test(text);
     const monitorTool = /\b(?:monitor-prs?|pr-monitor)\b/i.test(text);
+    const startPreviewMatch = text.match(/\b(?:start-preview|preview-demo|preview-screenshot)(?:\s+(\d{4,5}))?\b/i);
+    const hmrUpdateTool = /\bhmr-update\b/i.test(text);
+    const stopPreviewTool = /\bstop-preview\b/i.test(text);
+    const showImageTool = /\b(?:show-image|image-reply|test-image)\b/i.test(text);
+    if (showImageTool && session.workspaceRoot) {
+      mkdirSync(session.workspaceRoot, { recursive: true });
+      const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" width="560" height="220">
+  <rect width="560" height="220" rx="12" fill="#11161d" stroke="#30363d" stroke-width="1.5"/>
+  <text x="28" y="42" fill="#e6edf3" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">Workspace Image Render Test (diagram.svg)</text>
+  <rect x="28" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="98" y="109" text-anchor="middle" fill="#58a6ff" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Client UI</text>
+  <path d="M168 104 H210" stroke="#8b949e" stroke-width="2"/>
+  <rect x="210" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="280" y="109" text-anchor="middle" fill="#3fb950" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Space Actions</text>
+  <path d="M350 104 H392" stroke="#8b949e" stroke-width="2"/>
+  <rect x="392" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="462" y="109" text-anchor="middle" fill="#d2a8ff" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Pilot Host</text>
+  <text x="28" y="182" fill="#8b949e" font-family="system-ui, -apple-system, sans-serif" font-size="12">Rendered inline from the session workspace via ![Architecture diagram](diagram.svg)</text>
+</svg>`;
+      writeFileSync(resolve(session.workspaceRoot, "diagram.svg"), sampleSvg, "utf8");
+    }
+    const demoPreview = startPreviewMatch
+      ? await startDemoPreviewServer(
+          session.id,
+          startPreviewMatch[1] ? Number(startPreviewMatch[1]) : undefined,
+        )
+      : demoPreviews.get(session.id) ?? null;
+    if (hmrUpdateTool && demoPreview) {
+      demoPreview.broadcastHmr(`Updated via chat prompt at ${new Date().toLocaleTimeString()} (v${demoPreview.version + 1})`);
+    }
+    const previewShot =
+      (startPreviewMatch || hmrUpdateTool) && demoPreview && session.workspaceRoot
+        ? await capturePreviewScreenshot({
+            workspaceRoot: session.workspaceRoot,
+            port: demoPreview.port,
+            path: "/",
+            title: `Live preview v${demoPreview.version}`,
+          })
+        : null;
+    if (stopPreviewTool && demoPreview) {
+      await demoPreview.stop();
+    }
     const createPrMatch = text.match(/\bcreate-prs?(?:\s+(\d+))?\b/i);
     const createPrTool = createPrMatch !== null;
     const createPrCount = createPrMatch?.[1] ? Math.min(8, Math.max(1, Number(createPrMatch[1]))) : /\bcreate-prs\b/i.test(text) ? 3 : 1;
@@ -961,6 +1015,23 @@ async function runTurn(session: Session, text: string) {
         `https://github.com/${prRepoSlug}/pull/${firstCreatedPrNumber}\n` +
         `pr-${firstCreatedPrNumber} → main`
       )
+      : startPreviewMatch && demoPreview ? (
+        previewShot?.ok && previewShot.text
+          ? previewShot.text
+          : `VITE v6.2.0  ready in 148 ms\n\n  ➜  Local:   http://127.0.0.1:${demoPreview.port}/\n  ➜  HMR:     ws://127.0.0.1:${demoPreview.port}/__hmr (vite-hmr)`
+      )
+      : hmrUpdateTool ? (
+        demoPreview
+          ? `Pushed WebSocket HMR update v${demoPreview.version} to http://127.0.0.1:${demoPreview.port}/` +
+            (previewShot?.ok ? `\n\n${previewShot.markdown}` : "")
+          : `No demo preview server is running. Send "start-preview" first.`
+      )
+      : stopPreviewTool ? (
+        `Stopped demo preview server.`
+      )
+      : showImageTool ? (
+        `wrote diagram.svg to workspace`
+      )
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
       : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
       : searchTool ? (searchBad ? "future search format" : searchEmpty ? "" : "alpha.txt-1-ALPHA before\nalpha.txt:2:MCS_SEARCH_PROBE first\nalpha.txt-3-ALPHA after\nbeta.txt-1-BETA before\nbeta.txt:2:MCS_SEARCH_PROBE second\nbeta.txt-3-BETA after")
@@ -971,8 +1042,8 @@ async function runTurn(session: Session, text: string) {
     if (editDiff) toolOutputs.set(patchRefId, patchJson);
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
-      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : startPreviewMatch ? "mcp__code_space__preview_screenshot" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },
@@ -1072,6 +1143,32 @@ async function runTurn(session: Session, text: string) {
       steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
     } else if (/\bfail\b/i.test(text)) {
       steps.push(() => push(session, "turn_error", { error: "Fake pilot: simulated model failure." }));
+    } else if ((startPreviewMatch || hmrUpdateTool) && demoPreview && previewShot?.ok) {
+      steps.push(() =>
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text:
+              `Dev server is live at [http://127.0.0.1:${demoPreview.port}/](http://127.0.0.1:${demoPreview.port}/). Click the screenshot below to open the live Preview tab:\n\n` +
+              previewShot.markdown,
+          },
+        }),
+      );
+      steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
+    } else if (showImageTool) {
+      steps.push(() =>
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text:
+              "Here is the generated diagram from your workspace (`diagram.svg`):\n\n" +
+              "![Architecture diagram](diagram.svg)",
+          },
+        }),
+      );
+      steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
     } else {
       steps.push(() =>
         push(session, "item", {
@@ -1099,6 +1196,198 @@ async function runTurn(session: Session, text: string) {
 
 const json = (status: number, body: unknown) => Response.json(body, { status });
 const terminals = createTerminalManager({ log: (...args: unknown[]) => console.log("[fake-pilot]", ...args) });
+const previewWs = createPreviewWsManager();
+
+// Built-in demo dev server per session ("start-preview", "hmr-update", "stop-preview" prompt keywords).
+interface DemoPreviewServer {
+  port: number;
+  server: HttpServer;
+  sockets: Set<Duplex>;
+  wsClients: Set<Duplex>;
+  version: number;
+  headline: string;
+  broadcastHmr: (headline: string) => void;
+  stop: () => Promise<void>;
+}
+const demoPreviews = new Map<string, DemoPreviewServer>();
+
+function sendWsTextFrame(socket: Duplex, text: string) {
+  const payload = Buffer.from(text, "utf8");
+  const header =
+    payload.length < 126
+      ? Buffer.from([0x81, payload.length])
+      : Buffer.from([0x81, 126, (payload.length >> 8) & 0xff, payload.length & 0xff]);
+  try {
+    socket.write(Buffer.concat([header, payload]));
+  } catch {
+    // ignore closed socket
+  }
+}
+
+async function startDemoPreviewServer(sessionId: string, requestedPort?: number): Promise<DemoPreviewServer> {
+  const existing = demoPreviews.get(sessionId);
+  if (existing && (!requestedPort || existing.port === requestedPort)) {
+    return existing;
+  }
+  if (existing) {
+    await existing.stop();
+  }
+  const sockets = new Set<Duplex>();
+  const wsClients = new Set<Duplex>();
+  const state: DemoPreviewServer = {
+    port: 0,
+    server: null as unknown as HttpServer,
+    sockets,
+    wsClients,
+    version: 1,
+    headline: "Hello from Fake-Pilot Vite + HMR Preview (v1)",
+    broadcastHmr(headline: string) {
+      state.version += 1;
+      state.headline = headline;
+      const msg = JSON.stringify({
+        type: "hmr-update",
+        version: state.version,
+        headline: state.headline,
+        updatedAt: new Date().toLocaleTimeString(),
+      });
+      for (const ws of wsClients) {
+        sendWsTextFrame(ws, msg);
+      }
+    },
+    async stop() {
+      demoPreviews.delete(sessionId);
+      for (const s of sockets) {
+        try { s.destroy(); } catch {}
+      }
+      await new Promise<void>((resolve) => state.server.close(() => resolve()));
+    },
+  };
+
+  const server = createHttpServer((req, res) => {
+    const reqUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (reqUrl.pathname === "/style.css") {
+      res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+      res.end(`
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 28px; background: #0f141c; color: #e6edf3; }
+        .card { max-width: 560px; padding: 20px 22px; border-radius: 12px; background: #161b22; border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+        h1 { font-size: 18px; margin: 0 0 8px; color: #58a6ff; }
+        p { font-size: 13px; line-height: 1.5; color: #8b949e; margin: 8px 0; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font: 600 11px ui-monospace, monospace; background: rgba(46, 160, 67, 0.2); color: #3fb950; }
+        .nav { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+        a, button { padding: 6px 12px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; font: 500 12px system-ui; text-decoration: none; cursor: pointer; }
+        a:hover, button:hover { background: #30363d; }
+      `);
+      return;
+    }
+    if (reqUrl.pathname === "/app.js") {
+      res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
+      res.end(`
+        const statusEl = document.getElementById("ws-status");
+        const titleEl = document.getElementById("headline");
+        const verEl = document.getElementById("ver");
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(proto + "//" + location.host + "/__hmr", "vite-hmr");
+        ws.addEventListener("open", () => {
+          if (statusEl) statusEl.textContent = "HMR WebSocket connected (vite-hmr)";
+        });
+        ws.addEventListener("message", (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === "hmr-update") {
+              if (titleEl) titleEl.textContent = msg.headline;
+              if (verEl) verEl.textContent = "v" + msg.version + " · updated " + msg.updatedAt;
+            }
+          } catch {}
+        });
+        const btn = document.getElementById("hmr-btn");
+        if (btn) {
+          btn.addEventListener("click", () => {
+            fetch("/__trigger-hmr", { method: "POST" });
+          });
+        }
+      `);
+      return;
+    }
+    if (reqUrl.pathname === "/__trigger-hmr" && req.method === "POST") {
+      state.broadcastHmr(`Hot-reloaded via WebSocket HMR (v${state.version + 1})`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, version: state.version }));
+      return;
+    }
+    if (reqUrl.pathname === "/old") {
+      res.writeHead(302, { location: "/about" });
+      res.end();
+      return;
+    }
+    if (reqUrl.pathname === "/about") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body>
+        <div class="card">
+          <span class="badge">Route: /about</span>
+          <h1>About this Preview Server</h1>
+          <p>Root-relative links, 302 redirects (<code>/old → /about</code>), CSS, and cookies stay scoped inside the session preview root.</p>
+          <div class="nav"><a href="/">← Back to Home</a></div>
+        </div>
+      </body></html>`);
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "set-cookie": "preview_demo=active; Path=/",
+    });
+    res.end(`<!doctype html><html><head><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head><body>
+      <div class="card">
+        <span class="badge" id="ws-status">Connecting HMR WebSocket…</span>
+        <h1 id="headline">${state.headline}</h1>
+        <p id="ver">v${state.version} · Port 127.0.0.1:${state.port}</p>
+        <p>Try navigating to sub-routes, triggering a redirect, or pushing a live WebSocket HMR update without reloading the iframe:</p>
+        <div class="nav">
+          <button type="button" id="hmr-btn">⚡ Trigger WebSocket HMR Update</button>
+          <a href="/about">About page (/about)</a>
+          <a href="/old">302 Redirect (/old → /about)</a>
+        </div>
+      </div>
+    </body></html>`);
+  });
+
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+
+  server.on("upgrade", (req, socket) => {
+    sockets.add(socket);
+    wsClients.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+      wsClients.delete(socket);
+    });
+    const key = req.headers["sec-websocket-key"] ?? "";
+    const accept = createHash("sha1")
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest("base64");
+    const proto = req.headers["sec-websocket-protocol"];
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n` +
+        (proto ? `Sec-WebSocket-Protocol: ${String(proto).split(",")[0]!.trim()}\r\n` : "") +
+        "\r\n",
+    );
+    sendWsTextFrame(socket, JSON.stringify({ type: "connected", version: state.version }));
+  });
+
+  state.server = server;
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(requestedPort ?? 0, "127.0.0.1", () => resolve());
+  });
+  const addr = server.address();
+  state.port = typeof addr === "object" && addr ? addr.port : requestedPort ?? 5173;
+  demoPreviews.set(sessionId, state);
+  return state;
+}
 
 Bun.serve({
   hostname: "127.0.0.1",
@@ -1342,6 +1631,70 @@ Bun.serve({
     if (!session) return json(404, { error: "unknown session", code: "unknown_session" });
     const sub = m[2] ?? "";
 
+    if (sub === "/preview/ports" && req.method === "GET") {
+      const wsDir = session.workspaceRoot ?? null;
+      const checkPort = Number(url.searchParams.get("port") ?? 0);
+      const [discoveredPorts, activeReachable] = await Promise.all([
+        wsDir && existsSync(wsDir)
+          ? discoverWorkspaceListeningPorts({ workspaceRoot: wsDir })
+          : Promise.resolve([]),
+        checkPort > 0 && isAllowedPreviewPort(checkPort)
+          ? probeLocalPort(checkPort)
+          : Promise.resolve(null),
+      ]);
+      const demo = demoPreviews.get(session.id);
+      const ports = [...discoveredPorts];
+      if (demo && !ports.some((p) => p.port === demo.port)) {
+        ports.unshift({ port: demo.port, command: "vite", pid: process.pid });
+      }
+      return json(200, { ports, activeReachable });
+    }
+    if (sub === "/preview/request" && req.method === "POST") {
+      const result = await proxyPreviewHttpRequest({
+        port: Number(body.port),
+        method: typeof body.method === "string" ? body.method : "GET",
+        path: typeof body.path === "string" ? body.path : "/",
+        headers: body.headers && typeof body.headers === "object" ? (body.headers as Record<string, string>) : {},
+        bodyBase64: typeof body.bodyBase64 === "string" ? body.bodyBase64 : null,
+        previewBasePath: typeof body.previewBasePath === "string" ? body.previewBasePath : "",
+        sessionId: session.id,
+      });
+      return json(200, result);
+    }
+    if (sub === "/preview/ws" && req.method === "POST") {
+      const cmd = body.cmd;
+      if (cmd === "open") {
+        return json(200, previewWs.open({
+          sessionId: session.id,
+          clientId: String(body.clientId ?? ""),
+          port: Number(body.port),
+          path: String(body.path ?? "/"),
+          protocols: Array.isArray(body.protocols) ? (body.protocols as string[]) : [],
+        }));
+      }
+      if (cmd === "send") {
+        return json(200, previewWs.send({
+          sessionId: session.id,
+          clientId: String(body.clientId ?? ""),
+          data: String(body.data ?? ""),
+        }));
+      }
+      if (cmd === "poll") {
+        return json(200, await previewWs.pollAsync({
+          sessionId: session.id,
+          since: body.since && typeof body.since === "object" ? (body.since as Record<string, number>) : {},
+          waitMs: Number(body.waitMs ?? 0),
+        }));
+      }
+      if (cmd === "close") {
+        return json(200, previewWs.close({
+          sessionId: session.id,
+          clientId: String(body.clientId ?? ""),
+        }));
+      }
+      return json(400, { error: "invalid preview ws command" });
+    }
+
     if (sub === "/vcs-status" && req.method === "GET") {
       const wsDir = session.workspaceRoot ?? null;
       if (wsDir && existsSync(`${wsDir}/.git`)) {
@@ -1423,6 +1776,12 @@ Bun.serve({
       if (body.path === "test.rs") return json(200, { ok: true, path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" });
       if (body.path === "notes.unknown") return json(200, { ok: true, path: "notes.unknown", content: "const x = 3;\n" });
       return json(404, { error: "File not found in this agent's working directory." });
+    }
+    if (sub === "/files/read-image" && req.method === "POST") {
+      const requestedPath = typeof body.path === "string" ? body.path : "";
+      if (!session.workspaceRoot) return json(409, { error: "Companion working directory is unavailable." });
+      const result = readWorkspaceImage(session.workspaceRoot, requestedPath);
+      return json(result.ok ? 200 : ("code" in result ? Number(result.code) : 400), result);
     }
 
     if (sub === "/poll") {

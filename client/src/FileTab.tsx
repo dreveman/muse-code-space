@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { CodeFileLines } from "./CodeFileLines";
+import { ImageTab, isWorkspaceImagePath } from "./ImageTab";
 
 function RefreshIcon() {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.5 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.5-2" /></svg>;
@@ -25,6 +26,9 @@ function CheckIcon() {
 // the workspace; Refresh is explicit so a changing file does not shift under
 // someone reading it. Closing the tab discards the snapshot.
 export function FileTab({ sessionId, path }: { sessionId: string; path: string }) {
+  if (isWorkspaceImagePath(path)) {
+    return <ImageTab sessionId={sessionId} path={path} />;
+  }
   const [revision, setRevision] = useState(0);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

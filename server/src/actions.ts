@@ -79,6 +79,7 @@ const sessionResponseSchema = z.object({
   latest_output: z.string().nullable(),
   project_id: z.string().nullable(),
   repo_slug: z.string().nullable(),
+  preview_port: z.number().int().nullable().optional(),
   owned_prs: z.array(ownedPrSchema).optional(),
 });
 
@@ -1231,6 +1232,52 @@ export const Actions = {
     },
   }),
 
+  // Read a binary/SVG image from the session's workspace for inline Markdown
+  // rendering (`![alt](relative/path.png)`) and preview screenshot cards.
+  readSessionImage: defineAction({
+    request: z.object({ session_id: z.string().min(1).max(200), path: z.string().min(1).max(2000) }),
+    response: z.object({
+      ok: z.boolean(),
+      path: z.string().nullable(),
+      media_type: z.string().nullable(),
+      base64_data: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const empty = (error: string) => ({ ok: false, path: null, media_type: null, base64_data: null, error });
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) return empty(denied);
+      const db = ctx.db<typeof schema>();
+      const session = (await db.select({ pilotSessionId: schema.sessions.pilotSessionId })
+        .from(schema.sessions).where(eq(schema.sessions.id, args.session_id)).limit(1))[0];
+      if (!session?.pilotSessionId) return empty("Agent connection unavailable.");
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const result = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/files/read-image`,
+          { method: "POST", body: JSON.stringify({ path: args.path }) },
+          z.object({
+            ok: z.literal(true),
+            path: z.string(),
+            mediaType: z.string(),
+            base64Data: z.string(),
+          }),
+        );
+        return {
+          ok: true,
+          path: result.path,
+          media_type: result.mediaType,
+          base64_data: result.base64Data,
+          error: null,
+        };
+      } catch (error) {
+        return empty(pilotRequestErrorText(error));
+      }
+    },
+  }),
+
   // A new shell in the session's workspace, or (with terminal_id) reattach
   // to one of its shells.
   openTerminal: defineAction({
@@ -1435,6 +1482,311 @@ export const Actions = {
         }).transform((value) => ({ github_enabled: value.enabled, repos: value.repos })), 20_000);
       } catch {
         return { github_enabled: false, repos: [] };
+      }
+    },
+  }),
+
+  setPreviewPort: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+      port: z.number().int().min(1024).max(65535).nullable(),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      port: z.number().int().nullable(),
+      reachable: z.boolean().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) return { ok: false, port: null, reachable: null, error: denied };
+      if (args.port !== null && [443, 4173, 18790, 18791, 18792].includes(args.port)) {
+        return { ok: false, port: null, reachable: null, error: `Port ${args.port} is reserved by Code Space.` };
+      }
+      const db = ctx.db<typeof schema>();
+      const rows = await db
+        .select({ id: schema.sessions.id, pilotSessionId: schema.sessions.pilotSessionId })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, args.session_id))
+        .limit(1);
+      const session = rows[0];
+      if (!session) return { ok: false, port: null, reachable: null, error: "Session not found." };
+      await db
+        .update(schema.sessions)
+        .set({ previewPort: args.port })
+        .where(eq(schema.sessions.id, args.session_id));
+      let reachable: boolean | null = null;
+      if (args.port !== null && session.pilotSessionId) {
+        try {
+          const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+          const check = await pilotRequest(
+            baseUrl,
+            `/sessions/${encodeURIComponent(session.pilotSessionId)}/preview/ports?port=${args.port}`,
+            { method: "GET" },
+            z.object({
+              ports: z.array(z.object({ port: z.number(), command: z.string(), pid: z.number() })),
+              activeReachable: z.boolean().nullable(),
+            }),
+            5_000,
+          );
+          reachable = check.activeReachable;
+        } catch {
+          reachable = false;
+        }
+      }
+      ctx.invalidateQueries({
+        queryKeys: [
+          ["preview-ports", args.session_id],
+        ],
+      });
+      return { ok: true, port: args.port, reachable, error: null };
+    },
+  }),
+
+  listPreviewPorts: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      configured_port: z.number().int().nullable(),
+      reachable: z.boolean().nullable(),
+      ports: z.array(z.object({
+        port: z.number().int(),
+        command: z.string(),
+        pid: z.number().int(),
+      })),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) return { ok: false, configured_port: null, reachable: null, ports: [] };
+      const db = ctx.db<typeof schema>();
+      const rows = await db
+        .select({
+          pilotSessionId: schema.sessions.pilotSessionId,
+          previewPort: schema.sessions.previewPort,
+        })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, args.session_id))
+        .limit(1);
+      const session = rows[0];
+      if (!session) return { ok: false, configured_port: null, reachable: null, ports: [] };
+      const configuredPort = session.previewPort ?? null;
+      if (!session.pilotSessionId) {
+        return { ok: true, configured_port: configuredPort, reachable: configuredPort ? false : null, ports: [] };
+      }
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const query = configuredPort ? `?port=${configuredPort}` : "";
+        const res = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/preview/ports${query}`,
+          { method: "GET" },
+          z.object({
+            ports: z.array(z.object({ port: z.number().int(), command: z.string(), pid: z.number().int() })),
+            activeReachable: z.boolean().nullable(),
+          }),
+          5_000,
+        );
+        return {
+          ok: true,
+          configured_port: configuredPort,
+          reachable: res.activeReachable,
+          ports: res.ports,
+        };
+      } catch {
+        return {
+          ok: true,
+          configured_port: configuredPort,
+          reachable: configuredPort ? false : null,
+          ports: [],
+        };
+      }
+    },
+  }),
+
+  previewProxy: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+      method: z.string().min(1).max(16).default("GET"),
+      path: z.string().min(1).max(4000).default("/"),
+      headers: z.record(z.string(), z.string()).default({}),
+      bodyBase64: z.string().max(15_000_000).nullable().default(null),
+      previewBasePath: z.string().max(500).default(""),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      reachable: z.boolean(),
+      port: z.number().int().nullable(),
+      status: z.number().int(),
+      statusText: z.string(),
+      headers: z.record(z.string(), z.string()),
+      bodyBase64: z.string(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) {
+        return { ok: false, reachable: false, port: null, status: 403, statusText: "Forbidden", headers: {}, bodyBase64: "", error: denied };
+      }
+      const db = ctx.db<typeof schema>();
+      const rows = await db
+        .select({
+          pilotSessionId: schema.sessions.pilotSessionId,
+          previewPort: schema.sessions.previewPort,
+        })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, args.session_id))
+        .limit(1);
+      const session = rows[0];
+      if (!session) {
+        return { ok: false, reachable: false, port: null, status: 404, statusText: "Not Found", headers: {}, bodyBase64: "", error: "Session not found." };
+      }
+      const port = session.previewPort ?? null;
+      if (port === null) {
+        return { ok: false, reachable: false, port: null, status: 409, statusText: "Conflict", headers: {}, bodyBase64: "", error: "No preview port is attached to this session." };
+      }
+      if (!session.pilotSessionId) {
+        return { ok: false, reachable: false, port, status: 502, statusText: "Bad Gateway", headers: {}, bodyBase64: "", error: `Session has not started on the pilot yet (port ${port}).` };
+      }
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const result = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/preview/request`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              port,
+              method: args.method,
+              path: args.path,
+              headers: args.headers,
+              bodyBase64: args.bodyBase64,
+              previewBasePath: args.previewBasePath,
+            }),
+          },
+          z.object({
+            reachable: z.boolean(),
+            status: z.number().int(),
+            statusText: z.string(),
+            headers: z.record(z.string(), z.string()),
+            bodyBase64: z.string(),
+            error: z.string().nullable(),
+          }),
+          20_000,
+        );
+        return {
+          ok: result.reachable,
+          reachable: result.reachable,
+          port,
+          status: result.status,
+          statusText: result.statusText,
+          headers: result.headers,
+          bodyBase64: result.bodyBase64,
+          error: result.error,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          reachable: false,
+          port,
+          status: 502,
+          statusText: "Bad Gateway",
+          headers: {},
+          bodyBase64: "",
+          error: `Could not reach 127.0.0.1:${port}: ${pilotRequestErrorText(error).slice(0, 200)}`,
+        };
+      }
+    },
+  }),
+
+  previewWs: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+      cmd: z.enum(["open", "send", "poll", "close"]),
+      clientId: z.string().max(120).optional(),
+      path: z.string().max(2000).optional(),
+      protocols: z.array(z.string().max(100)).max(10).optional(),
+      data: z.string().max(1_000_000).optional(),
+      since: z.record(z.string(), z.number().int().nonnegative()).optional(),
+      waitMs: z.number().int().min(0).max(12_000).optional(),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      events: z.array(z.object({
+        clientId: z.string(),
+        seq: z.number().int(),
+        event: z.enum(["open", "message", "close", "error"]),
+        protocol: z.string().optional(),
+        data: z.string().optional(),
+        code: z.number().int().optional(),
+        reason: z.string().optional(),
+      })).optional(),
+      nextSince: z.record(z.string(), z.number().int()).optional(),
+      error: z.string().nullable().optional(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) return { ok: false, error: denied };
+      const db = ctx.db<typeof schema>();
+      const rows = await db
+        .select({
+          pilotSessionId: schema.sessions.pilotSessionId,
+          previewPort: schema.sessions.previewPort,
+        })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, args.session_id))
+        .limit(1);
+      const session = rows[0];
+      if (!session || !session.pilotSessionId || session.previewPort === null) {
+        return { ok: false, error: "Preview is not active for this session." };
+      }
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/preview/ws`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              cmd: args.cmd,
+              port: session.previewPort,
+              clientId: args.clientId,
+              path: args.path,
+              protocols: args.protocols,
+              data: args.data,
+              since: args.since,
+              waitMs: args.waitMs,
+            }),
+          },
+          z.object({
+            ok: z.boolean().optional(),
+            events: z.array(z.object({
+              clientId: z.string(),
+              seq: z.number().int(),
+              event: z.enum(["open", "message", "close", "error"]),
+              protocol: z.string().optional(),
+              data: z.string().optional(),
+              code: z.number().int().optional(),
+              reason: z.string().optional(),
+            })).optional(),
+            nextSince: z.record(z.string(), z.number().int()).optional(),
+            error: z.string().nullable().optional(),
+          }),
+          15_000,
+        );
+        return {
+          ok: res.ok ?? true,
+          events: res.events,
+          nextSince: res.nextSince,
+          error: res.error ?? null,
+        };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error).slice(0, 200) };
       }
     },
   }),
@@ -1748,6 +2100,7 @@ export const Actions = {
             latest_output: latest ? latest.slice(0, 220) : null,
             project_id: row.projectId ?? null,
             repo_slug: row.repoSlug ?? null,
+            preview_port: row.previewPort ?? null,
             owned_prs: ownedPrs,
           };
         }),
@@ -1818,6 +2171,7 @@ export const Actions = {
           latest_output: latest ? latest.slice(0, 220) : null,
           project_id: row.projectId ?? null,
           repo_slug: row.repoSlug ?? null,
+          preview_port: row.previewPort ?? null,
         },
         events: events.map((event) => ({
           id: event.id,
