@@ -16,6 +16,7 @@
 // github_* tools from githubTools.mjs (gated per request, so enabling
 // GitHub later needs no session restart).
 import { GITHUB_TOOLS, isGitHubTool } from "./githubTools.mjs";
+import { capturePreviewScreenshot } from "./preview.mjs";
 
 export const MCP_SERVER_NAME = "code-space";
 
@@ -68,6 +69,23 @@ export const MCP_TOOLS = [
     description: "List the other Code Space agents you can message (and whether each is busy), plus the user's Muse assistant.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "preview_screenshot",
+    title: "Capture live preview screenshot",
+    description:
+      "Capture a screenshot of a web server listening on 127.0.0.1:<port> in this session's workspace and return a clickable Markdown image link (`[![title](.code-space/preview-<port>.png)](http://127.0.0.1:<port><path>)`). " +
+      "Include that Markdown in your reply so the user sees the screenshot in the transcript and can click it to open the live Preview tab.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "integer", description: "Loopback port where the dev server is listening (1024–65535)." },
+        path: { type: "string", description: "Request path on the dev server (default \"/\")." },
+        title: { type: "string", description: "Short label for the preview card (default \"Live preview\")." },
+      },
+      required: ["port"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const ok = (id, result) => ({ jsonrpc: "2.0", id, result });
@@ -98,7 +116,8 @@ export async function handleMcpRequest(token, message, deps) {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: MCP_SERVER_NAME, version: "1.0.0" },
-      instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there."
+      instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there. "
+        + "You can display workspace images in your Markdown replies with `![alt](relative/path.png)`, and when a dev server is running on 127.0.0.1:<port>, use preview_screenshot to include a clickable screenshot link in your reply that opens the live Preview tab."
         + (deps.github?.enabled() ? " GitHub tools (github_create_pr, github_pr_status, github_list_prs, github_monitor_pr) work through Code Space's GitHub broker; repo and branch default to your workspace checkout. github_monitor_pr watches a PR in the background and posts updates to this session." : ""),
     });
   }
@@ -120,6 +139,18 @@ export async function handleMcpRequest(token, message, deps) {
       const result = await deps.sendMessage(entry, to, text);
       if (!result.ok) return ok(id, toolText(`Not delivered: ${result.error}`, true));
       return ok(id, toolText(`Delivered to ${result.to?.name ?? to}${result.queued ? " (queued behind its current turn)" : ""}.`));
+    }
+    if (name === "preview_screenshot") {
+      const wsDir = entry?.meta?.workspaceRoot ?? null;
+      const runCapture = deps.previewScreenshot ?? capturePreviewScreenshot;
+      const result = await runCapture({
+        workspaceRoot: wsDir,
+        port: args.port,
+        path: typeof args.path === "string" ? args.path : "/",
+        title: typeof args.title === "string" ? args.title : "Live preview",
+      });
+      if (!result.ok) return ok(id, toolText(result.error ?? "Failed to capture preview screenshot.", true));
+      return ok(id, toolText(result.text));
     }
     if (isGitHubTool(name)) {
       if (!deps.github) return ok(id, toolText("GitHub tools aren't available in this Code Space.", true));

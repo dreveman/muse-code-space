@@ -286,6 +286,100 @@ async function handleAction(req: Request): Promise<Response> {
   }
 }
 
+function parseDevPreviewTarget(req: Request, url: URL): { sessionId: string; basePath: string; subpath: string } | null {
+  const match = url.pathname.match(/^(.*?\/(?:assets\/)?__preview\/([^/]+))(\/.*)?$/);
+  if (match) {
+    try {
+      const sessionId = decodeURIComponent(match[2]!);
+      if (sessionId) return { sessionId, basePath: match[1]!, subpath: match[3] || "/" };
+    } catch {
+      return null;
+    }
+  }
+  const ref = req.headers.get("referer");
+  if (ref) {
+    try {
+      const refUrl = new URL(ref);
+      const refMatch = refUrl.pathname.match(/^(.*?\/(?:assets\/)?__preview\/([^/]+))(\/.*)?$/);
+      if (
+        refMatch &&
+        !url.pathname.endsWith("/actions") &&
+        url.pathname !== "/__dev/events" &&
+        !/\/chunk-[a-z0-9]+\.(?:js|css)$/i.test(url.pathname)
+      ) {
+        const sessionId = decodeURIComponent(refMatch[2]!);
+        if (sessionId) return { sessionId, basePath: refMatch[1]!, subpath: url.pathname };
+      }
+    } catch {
+      // ignore invalid referer
+    }
+  }
+  return null;
+}
+
+async function handlePreviewRoute(
+  req: Request,
+  url: URL,
+  target: { sessionId: string; basePath: string; subpath: string },
+): Promise<Response> {
+  const previewProxy = actions.previewProxy;
+  if (!isAction(previewProxy)) {
+    return new Response("previewProxy action unavailable", { status: 500 });
+  }
+  let bodyBase64: string | null = null;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    try {
+      const buf = Buffer.from(await req.arrayBuffer());
+      if (buf.length > 0) bodyBase64 = buf.toString("base64");
+    } catch {
+      bodyBase64 = null;
+    }
+  }
+  const headers: Record<string, string> = {};
+  req.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  const ctx = makeCtx(`dev-preview-${crypto.randomUUID()}`, previewProxy.privileged) as unknown as Parameters<typeof previewProxy.handler>[0];
+  const parsedArgs = previewProxy.request.parse({
+    session_id: target.sessionId,
+    method: req.method,
+    path: `${target.subpath}${url.search}`,
+    headers,
+    bodyBase64,
+    previewBasePath: target.basePath,
+  });
+  const result = (await previewProxy.handler(ctx, parsedArgs)) as {
+    reachable: boolean;
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    bodyBase64: string;
+    error: string | null;
+  };
+  if (!result.reachable && result.error) {
+    return new Response(result.error, {
+      status: 502,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  const resHeaders = new Headers();
+  for (const [k, v] of Object.entries(result.headers ?? {})) {
+    try {
+      resHeaders.set(k, v);
+    } catch {
+      // ignore restricted headers
+    }
+  }
+  resHeaders.set("cache-control", "no-store");
+  const status = result.status >= 100 && result.status <= 599 ? result.status : 200;
+  const bodyBytes = result.bodyBase64 ? Buffer.from(result.bodyBase64, "base64") : new Uint8Array(0);
+  return new Response(status === 204 || status === 304 || req.method === "HEAD" ? null : bodyBytes, {
+    status,
+    statusText: result.statusText || "",
+    headers: resHeaders,
+  });
+}
+
 // ---- static files ----
 async function serveStatic(pathname: string): Promise<Response> {
   const rel = pathname === "/" ? "index.html" : normalize(decodeURIComponent(pathname)).replace(/^\/+/, "");
@@ -316,6 +410,8 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname.endsWith("/actions") && req.method === "POST") return handleAction(req);
+    const previewTarget = parseDevPreviewTarget(req, url);
+    if (previewTarget) return handlePreviewRoute(req, url, previewTarget);
     if (url.pathname === "/__dev/events") {
       let ctl: ReadableStreamDefaultController<string>;
       const stream = new ReadableStream<string>({

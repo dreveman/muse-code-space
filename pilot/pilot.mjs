@@ -48,11 +48,18 @@ import { createHash, getRandomValues } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
-import { readWorkspaceFile } from "./files.mjs";
+import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
 import { readGitVcsStatus } from "./vcsSmartlog.mjs";
+import {
+  createPreviewWsManager,
+  discoverWorkspaceListeningPorts,
+  isAllowedPreviewPort,
+  probeLocalPort,
+  proxyPreviewHttpRequest,
+} from "./preview.mjs";
 import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
 
@@ -1695,6 +1702,7 @@ function deleteSession(id, requestedWorkspaceRoot = null) {
   }
   if (aliases.delete(logId)) saveAliases();
   prMonitors.forgetSession(logId); // its transcript row is gone; stop watching
+  previewWs.closeAllForSession(logId);
   for (const sub of subscribers.get(logId) ?? []) {
     try { sub.end(); } catch { /* already closed */ }
   }
@@ -1762,6 +1770,7 @@ function buildTurnInputParts(text, attachments) {
 }
 // Terminals for the UI (shells in session workspaces on this host).
 const terminals = createTerminalManager({ log, envExtras: () => githubSessionEnv() });
+const previewWs = createPreviewWsManager();
 
 const json = (res, code, obj) => {
   res.writeHead(code, { "content-type": "application/json" });
@@ -2146,6 +2155,89 @@ const server = createServer(async (req, res) => {
       return json(res, result.ok ? 200 : 409, result);
     }
 
+    // GET /sessions/:id/preview/ports?port=<optionalPort>
+    const mPreviewPorts = path.match(/^\/sessions\/([^/]+)\/preview\/ports$/);
+    if (req.method === "GET" && mPreviewPorts) {
+      const id = decodeURIComponent(mPreviewPorts[1]);
+      const entry = resolveEntry(id);
+      const registry = entry ? null : loadRegistry();
+      const meta = entry?.meta ?? registry?.[id] ?? null;
+      const wsDir = meta?.workspaceRoot ?? null;
+      const checkPort = Number(url.searchParams.get("port") ?? 0);
+      const [ports, activeReachable] = await Promise.all([
+        wsDir && existsSync(wsDir)
+          ? discoverWorkspaceListeningPorts({ workspaceRoot: wsDir })
+          : Promise.resolve([]),
+        checkPort > 0 && isAllowedPreviewPort(checkPort)
+          ? probeLocalPort(checkPort)
+          : Promise.resolve(null),
+      ]);
+      return json(res, 200, { ports, activeReachable });
+    }
+
+    // POST /sessions/:id/preview/request
+    const mPreviewReq = path.match(/^\/sessions\/([^/]+)\/preview\/request$/);
+    if (req.method === "POST" && mPreviewReq) {
+      const id = decodeURIComponent(mPreviewReq[1]);
+      const entry = resolveEntry(id);
+      const registry = entry ? null : loadRegistry();
+      const meta = entry?.meta ?? registry?.[id] ?? null;
+      if (!meta) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      const body = await readBody(req);
+      const result = await proxyPreviewHttpRequest({
+        port: Number(body.port),
+        method: body.method,
+        path: body.path,
+        headers: body.headers,
+        bodyBase64: body.bodyBase64,
+        previewBasePath: body.previewBasePath,
+        sessionId: id,
+      });
+      return json(res, 200, result);
+    }
+
+    // POST /sessions/:id/preview/ws
+    const mPreviewWs = path.match(/^\/sessions\/([^/]+)\/preview\/ws$/);
+    if (req.method === "POST" && mPreviewWs) {
+      const id = decodeURIComponent(mPreviewWs[1]);
+      const entry = resolveEntry(id);
+      const registry = entry ? null : loadRegistry();
+      const meta = entry?.meta ?? registry?.[id] ?? null;
+      if (!meta) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      const body = await readBody(req);
+      const cmd = body.cmd;
+      if (cmd === "open") {
+        return json(res, 200, previewWs.open({
+          sessionId: id,
+          clientId: String(body.clientId ?? ""),
+          port: Number(body.port),
+          path: String(body.path ?? "/"),
+          protocols: Array.isArray(body.protocols) ? body.protocols : [],
+        }));
+      }
+      if (cmd === "send") {
+        return json(res, 200, previewWs.send({
+          sessionId: id,
+          clientId: String(body.clientId ?? ""),
+          data: String(body.data ?? ""),
+        }));
+      }
+      if (cmd === "poll") {
+        return json(res, 200, await previewWs.pollAsync({
+          sessionId: id,
+          since: body.since && typeof body.since === "object" ? body.since : {},
+          waitMs: Number(body.waitMs ?? 0),
+        }));
+      }
+      if (cmd === "close") {
+        return json(res, 200, previewWs.close({
+          sessionId: id,
+          clientId: String(body.clientId ?? ""),
+        }));
+      }
+      return json(res, 400, { error: "invalid preview ws command" });
+    }
+
     // GET /sessions/:id/vcs-status -> { isGitCheckout, branch, headSha, uncommittedFileCount, totalAdditions, totalDeletions, files, smartlogCommits }
     const mVcsStatus = path.match(/^\/sessions\/([^/]+)\/vcs-status$/);
     if (req.method === "GET" && mVcsStatus) {
@@ -2315,6 +2407,16 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       if (!entry.meta?.workspaceRoot) return json(res, 409, { error: "Companion working directory is unavailable." });
       const result = readWorkspaceFile(entry.meta.workspaceRoot, body.path);
+      return json(res, result.ok ? 200 : result.code, result);
+    }
+
+    const mImageRead = path.match(/^\/sessions\/([^/]+)\/files\/read-image$/);
+    if (req.method === "POST" && mImageRead) {
+      const entry = resolveEntry(decodeURIComponent(mImageRead[1]));
+      if (!entry) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      const body = await readBody(req).catch(() => ({}));
+      if (!entry.meta?.workspaceRoot) return json(res, 409, { error: "Companion working directory is unavailable." });
+      const result = readWorkspaceImage(entry.meta.workspaceRoot, body.path);
       return json(res, result.ok ? 200 : result.code, result);
     }
 

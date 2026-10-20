@@ -11,6 +11,8 @@ export const sessions = sqliteTable("sessions", {
   // clones it into workspaceRoot before the session starts. Null: the
   // companion starts in a blank generated folder.
   repoSlug: text("repo_slug"),
+  // Loopback port on the pilot host attached in the Preview tab.
+  previewPort: integer("preview_port"),
   status: text("status", {
     enum: ["queued", "running", "succeeded", "failed", "stopped"],
   })

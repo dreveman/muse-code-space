@@ -10,7 +10,7 @@
     "build:server": "cd server && bun build ./src/actions.ts --target=bun --outfile=./dist/actions.js",
     "build:client": "bun ./client/build.mjs",
     "dev": "bun --watch dev/server.ts",
-    "dev:fake-pilot": "bun dev/fake-pilot.ts",
+    "dev:fake-pilot": "bun --watch dev/fake-pilot.ts",
     "test:restart": "bun dev/restart-test.ts"
   },
   "dependencies": {

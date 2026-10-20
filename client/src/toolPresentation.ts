@@ -176,6 +176,20 @@ const adapters: readonly ToolAdapter[] = [
   { id: "github-pr-status", tools: new Set(["mcp__code_space__github_pr_status"]), label: (ctx, args, failed) => githubAction("Checking pull request", "Checked pull request", githubPrDetail(args), ctx, failed), view: "plain", showDuration: false },
   { id: "github-list-prs", tools: new Set(["mcp__code_space__github_list_prs"]), label: (ctx, args, failed) => githubAction("Listing pull requests", "Listed pull requests", githubListDetail(args), ctx, failed), view: "plain", showDuration: false },
   { id: "github-monitor-pr", tools: new Set(["mcp__code_space__github_monitor_pr"]), label: githubMonitorLabel, view: "plain", showDuration: false },
+  {
+    id: "preview-screenshot",
+    tools: new Set(["mcp__code_space__preview_screenshot"]),
+    label: (ctx, args, failed) =>
+      githubAction(
+        "Capturing preview",
+        "Captured preview",
+        typeof args?.port === "number" ? `:${args.port}${typeof args.path === "string" && args.path !== "/" ? args.path : ""}` : shortDetail(args?.title),
+        ctx,
+        failed,
+      ),
+    view: "plain",
+    showDuration: false,
+  },
 ];
 
 function compactTool(label: string): string {
