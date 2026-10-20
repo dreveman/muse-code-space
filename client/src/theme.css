@@ -830,10 +830,10 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .context-ring-track, .context-ring-progress { fill: none; stroke-width: 2; }
 .context-ring-track { stroke: currentColor; opacity: .28; }
 .context-ring-progress { stroke: var(--terminal-live); stroke-linecap: round; transition: stroke-dashoffset .2s ease; }
-.voice-button { padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: 50%; }
-.voice-button:active { color: var(--terminal-text); background: var(--terminal-faint); }
+.voice-button, .attachment-button { padding: 0; border: 0; background: transparent; cursor: pointer; border-radius: 50%; }
+.voice-button:active, .attachment-button:active { color: var(--terminal-text); background: var(--terminal-faint); }
 @media (hover: hover) and (pointer: fine) {
-  .voice-button:hover { color: var(--terminal-text); background: var(--terminal-faint); }
+  .voice-button:hover, .attachment-button:hover { color: var(--terminal-text); background: var(--terminal-faint); }
 }
 .voice-button.listening { color: var(--terminal-error); background: color-mix(in srgb, var(--terminal-error) 14%, transparent); }
 .composer-send { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #87bfe9; color: #09263b; cursor: pointer; transition: background .16s ease, opacity .16s ease; }

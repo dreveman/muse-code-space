@@ -818,6 +818,41 @@ function MicrophoneIcon() {
   );
 }
 
+function AttachmentIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
+function AttachmentButton() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className="composer-icon attachment-button"
+        onClick={() => fileInputRef.current?.click()}
+        title="Attach files"
+        aria-label="Attach files"
+      >
+        <AttachmentIcon />
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => { event.currentTarget.value = ""; }}
+      />
+    </>
+  );
+}
+
 function SendIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -3357,6 +3392,7 @@ export function App() {
             >
               <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
             </span>
+            <AttachmentButton />
             <button
               type="button"
               className={`composer-icon voice-button ${listening ? "listening" : ""}`}
@@ -3983,6 +4019,7 @@ export function App() {
                               >
                                 <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
                               </span>
+                              <AttachmentButton />
                               <button
                                 type="button"
                                 className={`composer-icon voice-button ${listening ? "listening" : ""}`}
