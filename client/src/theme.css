@@ -242,7 +242,7 @@ button { color: inherit; }
 .transcript-companion-activity { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 400; }
 .transcript-companion-activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .transcript-companion-activity .working-spinner { width: 11px; height: 11px; }
-#agent-chat > .terminal-body { padding-top: 112px; }
+#agent-chat > .terminal-body { display: flex; flex-direction: column-reverse; padding-top: 112px; }
 /* Fade at the top (under the floating companion/toolbar) and at the bottom
    (starting above the floating GitHub / Smart Log bar) while keeping the
    first and final messages fully visible at the scroll extremes. */
@@ -301,7 +301,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   scrollbar-gutter: stable;
   contain: strict;
 }
-.output-stream { padding: 6px 0 54px; }
+.output-stream { width: 100%; margin-bottom: auto; padding: 6px 0 54px; }
 .transcript-scroll-controls { position: relative; flex: 0 0 0; z-index: 3; contain: layout style; opacity: 0; pointer-events: none; }
 .transcript-scroll-controls.visible { opacity: 1; pointer-events: auto; }
 .scroll-to-bottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 17px; border: 1px solid color-mix(in srgb, #7db9ed 35%, var(--terminal-bg)); border-radius: 999px; background: color-mix(in srgb, #cce6ff 90%, var(--terminal-bg)); color: #162b3d; font: 600 12px/1.4 var(--sans); white-space: nowrap; cursor: pointer; }

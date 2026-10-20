@@ -40,7 +40,15 @@ export type SessionMenuAction = {
   onActivate: () => void;
 };
 
-export const UI_BUILD_ID = "2026-10-19.v3";
+function detectUiBuildId(): string {
+  if (typeof document === "undefined") return "dev";
+  const jsSrc = document.querySelector<HTMLScriptElement>('script[src*="chunk-"]')?.getAttribute("src") ?? "";
+  const cssHref = document.querySelector<HTMLLinkElement>('link[rel="stylesheet"][href*="chunk-"]')?.getAttribute("href") ?? "";
+  const jsHash = jsSrc.match(/chunk-([a-z0-9]+)\.js/i)?.[1];
+  const cssHash = cssHref.match(/chunk-([a-z0-9]+)\.css/i)?.[1];
+  if (jsHash && cssHash) return `${jsHash}·${cssHash.slice(0, 4)}`;
+  return jsHash ?? cssHash ?? "dev";
+}
 
 const COLOR_MODE_OPTIONS: Array<{ value: ColorMode; label: string; description: string }> = [
   { value: "system", label: "System default", description: "Follow this device's appearance" },
@@ -260,9 +268,9 @@ export function SessionMenu({ actions = [], colorMode, onColorModeChange, showRa
               checked={relayVisible}
               onActivate={() => { setPanelVisible(false); setRelayVisible((visible) => !visible); }}
             />
-            <div className="wire-settings-build" aria-label={`Build ${UI_BUILD_ID}`}>
+            <div className="wire-settings-build" aria-label={`Build ${detectUiBuildId()}`}>
               <span className="wire-settings-item-label">Build</span>
-              <code className="wire-settings-build-code">{UI_BUILD_ID}</code>
+              <code className="wire-settings-build-code">{detectUiBuildId()}</code>
             </div>
           </details>
         </div>
