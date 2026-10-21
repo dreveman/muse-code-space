@@ -302,6 +302,9 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     // be bundled as a module (its HTML would throw `Unexpected token '<'`).
     assert.ok(bundled.includes('__cs_dynamic_import("/src/MyComponent")'));
     assert.ok(!bundled.includes("phantom-marker"));
+    // Entry invocations stay deferred like the original `type="module"`
+    // scripts, so top-level DOM queries see the parsed document.
+    assert.ok(bundled.includes('<script type="module" nonce="__CS_CSP_NONCE__">'));
     assert.ok(bundled.includes('nonce="__CS_CSP_NONCE__"'));
     // `</script` inside inlined JS strings must be escaped, otherwise the HTML
     // parser truncates the script block and the preview dies with a

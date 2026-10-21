@@ -1476,7 +1476,12 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
 
   out = out.replace(/\x00CS_MODULE_ENTRY:([^\x00]+)\x00/g, (_full, entryId) => {
     const prefix = !modulesEmitted ? ((modulesEmitted = true), buildModulesBlock() + "\n") : "";
-    return `<script nonce="__CS_CSP_NONCE__">\n${prefix}window.__cs_require(${JSON.stringify(entryId)});\n</script>`;
+    // type="module" preserves the deferred execution the original
+    // `<script type="module" src>` had: entry code that queries DOM written
+    // later in the document (e.g. the app root element) must not run while
+    // the parser is still in <head>. The payload has no import/export
+    // statements, so it is valid module code and still runs in order.
+    return `<script type="module" nonce="__CS_CSP_NONCE__">\n${prefix}window.__cs_require(${JSON.stringify(entryId)});\n</script>`;
   });
 
   const bootstrap = buildSrcdocBootstrapScript({ sessionId, port, subpath, hasViteClient });
