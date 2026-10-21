@@ -20,8 +20,8 @@ import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 
 // Fake pilot for local UI/action testing — no muse, no VM, no credentials.
 //
-//   bun run dev:fake-pilot          # 127.0.0.1:18792
-//   MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18792 bun run dev
+//   bun run dev:fake-pilot          # 127.0.0.1:18793
+//   bun run dev                     # auto-connects to :18793 when running
 //
 // Speaks the subset of the real pilot's HTTP API (pilot/pilot.mjs) that
 // server/src/actions.ts calls, and plays a short scripted turn for every
@@ -48,7 +48,7 @@ import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 // The response shapes mirror pilot.mjs; when the real pilot's API changes,
 // update this file too. It is a test double, not a reference.
 
-const PORT = Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_PORT ?? 18792);
+const PORT = Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_PORT ?? 18793);
 // Pretend to run on another machine: reported as /health `home` (the dev
 // server builds workspace paths from it). Unset = no `home`, i.e. the VM default.
 const HOME = process.env.MUSE_CODE_SPACE_FAKE_PILOT_HOME;

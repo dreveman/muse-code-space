@@ -13,7 +13,7 @@ import { request as httpRequest } from "node:http";
 import { createConnection } from "node:net";
 import { join, resolve as resolvePath } from "node:path";
 
-export const DEFAULT_FORBIDDEN_PREVIEW_PORTS = new Set([443, 4173, 18790, 18791, 18792]);
+export const DEFAULT_FORBIDDEN_PREVIEW_PORTS = new Set([443, 18790, 18791, 18792, 18793]);
 
 /** Validate that a port is a safe unprivileged loopback port and not a pilot/service port. */
 export function isAllowedPreviewPort(port, forbiddenPorts = DEFAULT_FORBIDDEN_PREVIEW_PORTS) {
@@ -482,6 +482,995 @@ const HOP_BY_HOP_HEADERS = new Set([
   "host",
 ]);
 
+function guessMimeType(subpath, contentTypeHeader = "") {
+  const ct = String(contentTypeHeader || "").split(";")[0].trim().toLowerCase();
+  if (ct && ct !== "application/octet-stream") return ct;
+  const clean = String(subpath || "").split("?")[0].toLowerCase();
+  if (clean.endsWith(".svg")) return "image/svg+xml";
+  if (clean.endsWith(".png")) return "image/png";
+  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return "image/jpeg";
+  if (clean.endsWith(".gif")) return "image/gif";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".ico")) return "image/x-icon";
+  if (clean.endsWith(".woff2")) return "font/woff2";
+  if (clean.endsWith(".woff")) return "font/woff";
+  if (clean.endsWith(".ttf")) return "font/ttf";
+  if (clean.endsWith(".css")) return "text/css";
+  if (clean.endsWith(".js") || clean.endsWith(".mjs") || clean.endsWith(".jsx") || clean.endsWith(".ts") || clean.endsWith(".tsx")) {
+    return "application/javascript";
+  }
+  return "application/octet-stream";
+}
+
+function resolveLocalPreviewPath(rawRef, baseSubpath, port) {
+  if (typeof rawRef !== "string") return null;
+  const trimmed = rawRef.trim();
+  if (!trimmed || trimmed.startsWith("data:") || trimmed.startsWith("blob:") || trimmed.startsWith("mailto:") || trimmed.startsWith("javascript:") || trimmed.startsWith("#")) {
+    return null;
+  }
+  try {
+    const baseUrl = new URL(baseSubpath || "/", `http://127.0.0.1:${port}`);
+    const resolved = new URL(trimmed, baseUrl);
+    const isLocalHost =
+      resolved.hostname === "127.0.0.1" ||
+      resolved.hostname === "localhost" ||
+      resolved.hostname === "0.0.0.0";
+    const resolvedPort = resolved.port ? Number(resolved.port) : (resolved.protocol === "https:" ? 443 : 80);
+    if (!isLocalHost || resolvedPort !== Number(port)) return null;
+    return `${resolved.pathname}${resolved.search}`;
+  } catch {
+    return null;
+  }
+}
+
+function fetchRawLocalResource(port, subpath, extraHeaders = {}, timeoutMs = 6000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port: Number(port),
+        method: "GET",
+        path: normalizePreviewSubpath(subpath),
+        headers: {
+          host: `127.0.0.1:${port}`,
+          connection: "close",
+          "accept-encoding": "identity",
+          ...extraHeaders,
+        },
+        timeout: timeoutMs,
+        agent: false,
+      },
+      (res) => {
+        const status = res.statusCode ?? 502;
+        const contentType = String(res.headers["content-type"] ?? "");
+        const chunks = [];
+        let total = 0;
+        res.on("data", (c) => {
+          if (total + c.length <= 5 * 1024 * 1024) {
+            chunks.push(c);
+            total += c.length;
+          }
+        });
+        const finish = () => {
+          done({
+            ok: status >= 200 && status < 300,
+            status,
+            contentType,
+            buffer: Buffer.concat(chunks),
+          });
+        };
+        res.on("end", finish);
+        res.on("close", finish);
+        res.on("error", () => done({ ok: false, status: 502, contentType: "", buffer: Buffer.alloc(0) }));
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => done({ ok: false, status: 502, contentType: "", buffer: Buffer.alloc(0) }));
+    req.end();
+  });
+}
+
+async function inlineCssUrls(cssText, cssSubpath, port) {
+  if (typeof cssText !== "string" || !cssText) return "";
+  const urlRe = /url\(\s*(["']?)([^)"']+)\1\s*\)/gi;
+  const matches = [...cssText.matchAll(urlRe)];
+  if (matches.length === 0) return cssText;
+  const replacements = new Map();
+  await Promise.all(
+    matches.map(async (m) => {
+      const rawUrl = m[2]?.trim() ?? "";
+      if (!rawUrl || replacements.has(rawUrl)) return;
+      const localPath = resolveLocalPreviewPath(rawUrl, cssSubpath, port);
+      if (!localPath) return;
+      const res = await fetchRawLocalResource(port, localPath);
+      if (res.ok && res.buffer.length > 0) {
+        const mime = guessMimeType(localPath, res.contentType);
+        replacements.set(rawUrl, `data:${mime};base64,${res.buffer.toString("base64")}`);
+      }
+    }),
+  );
+  if (replacements.size === 0) return cssText;
+  return cssText.replace(urlRe, (full, _q, rawUrl) => {
+    const rep = replacements.get(rawUrl?.trim() ?? "");
+    return rep ? `url("${rep}")` : full;
+  });
+}
+
+/**
+ * Transform an ES module's static `import` / `export` / `import.meta` syntax
+ * into a CommonJS-like factory body for `window.__cs_define(moduleId, fn)` so
+ * module graphs execute inside `<iframe srcdoc>` under strict nonce CSP without
+ * needing Service Workers or external module HTTP requests.
+ */
+export function transformEsModuleForSrcdoc(jsCode, modulePath, port) {
+  const discoveredImports = new Set();
+  let importCounter = 0;
+  let reexportCounter = 0;
+  const deferredExports = [];
+
+  const resolveImport = (spec) => {
+    if (spec === "/@vite/client" || spec.startsWith("/@vite/client?")) return "/@vite/client";
+    const local = resolveLocalPreviewPath(spec, modulePath, port);
+    if (local) {
+      discoveredImports.add(local);
+      return local;
+    }
+    return spec;
+  };
+
+  const parseNamedBindings = (braceContent, targetObjExpr) => {
+    const parts = braceContent
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const decls = [];
+    for (const part of parts) {
+      const m = part.match(/^([A-Za-z0-9_$]+)(?:\s+as\s+([A-Za-z0-9_$]+))?$/);
+      if (!m) continue;
+      const imported = m[1];
+      const local = m[2] || m[1];
+      if (imported === "default") {
+        decls.push(`const ${local} = __cs_interopDefault(${targetObjExpr});`);
+      } else {
+        decls.push(`const ${local} = ${targetObjExpr}.${imported};`);
+      }
+    }
+    return decls.join(" ");
+  };
+
+  let transformed = String(jsCode ?? "");
+
+  // Replace import.meta.url / import.meta.hot / import.meta.env
+  transformed = transformed.replace(/\bimport\.meta\b/g, "__cs_import_meta");
+
+  // Transform dynamic import("...") without adding lazy chunks to eager crawl
+  transformed = transformed.replace(
+    /\bimport\s*\(\s*(["'])([^"'\r\n]+)\1\s*\)/g,
+    (_full, _q, spec) => {
+      const local = resolveLocalPreviewPath(spec, modulePath, port);
+      return `__cs_dynamic_import(${JSON.stringify(local || spec)})`;
+    },
+  );
+
+  // 1. Side-effect import: import "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s*(["'])([^"'\r\n]+)\2\s*;?/g,
+    (_full, prefix, _q, spec) => {
+      const resolved = resolveImport(spec);
+      return `${prefix}__cs_require(${JSON.stringify(resolved)});`;
+    },
+  );
+
+  // 2. import * as ns from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s*\*\s*as\s+([A-Za-z0-9_$]+)\s+from\s*(["'])([^"'\r\n]+)\3\s*;?/g,
+    (_full, prefix, ns, _q, spec) => {
+      const resolved = resolveImport(spec);
+      return `${prefix}const ${ns} = __cs_require(${JSON.stringify(resolved)});`;
+    },
+  );
+
+  // 3. import def, { a, b as c } from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s+([A-Za-z0-9_$]+)\s*,\s*\{([^}]*)\}\s*from\s*(["'])([^"'\r\n]+)\4\s*;?/g,
+    (_full, prefix, defName, named, _q, spec) => {
+      const resolved = resolveImport(spec);
+      const tmp = `__cs_imp_${importCounter++}`;
+      return `${prefix}const ${tmp} = __cs_require(${JSON.stringify(resolved)}); const ${defName} = __cs_interopDefault(${tmp}); ${parseNamedBindings(named, tmp)}`;
+    },
+  );
+
+  // 4. import def, * as ns from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s+([A-Za-z0-9_$]+)\s*,\s*\*\s*as\s+([A-Za-z0-9_$]+)\s+from\s*(["'])([^"'\r\n]+)\4\s*;?/g,
+    (_full, prefix, defName, ns, _q, spec) => {
+      const resolved = resolveImport(spec);
+      return `${prefix}const ${ns} = __cs_require(${JSON.stringify(resolved)}); const ${defName} = __cs_interopDefault(${ns});`;
+    },
+  );
+
+  // 5. import { a, b as c } from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s*\{([^}]*)\}\s*from\s*(["'])([^"'\r\n]+)\3\s*;?/g,
+    (_full, prefix, named, _q, spec) => {
+      const resolved = resolveImport(spec);
+      const tmp = `__cs_imp_${importCounter++}`;
+      return `${prefix}const ${tmp} = __cs_require(${JSON.stringify(resolved)}); ${parseNamedBindings(named, tmp)}`;
+    },
+  );
+
+  // 6. import def from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*import\s+([A-Za-z0-9_$]+)\s+from\s*(["'])([^"'\r\n]+)\3\s*;?/g,
+    (_full, prefix, defName, _q, spec) => {
+      const resolved = resolveImport(spec);
+      return `${prefix}const ${defName} = __cs_interopDefault(__cs_require(${JSON.stringify(resolved)}));`;
+    },
+  );
+
+  // 7. export * from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s*\*\s*from\s*(["'])([^"'\r\n]+)\2\s*;?/g,
+    (_full, prefix, _q, spec) => {
+      const resolved = resolveImport(spec);
+      return `${prefix}Object.assign(__cs_exports, __cs_require(${JSON.stringify(resolved)}));`;
+    },
+  );
+
+  // 8. export { a, b as c } from "spec";
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s*\{([^}]*)\}\s*from\s*(["'])([^"'\r\n]+)\3\s*;?/g,
+    (_full, prefix, named, _q, spec) => {
+      const resolved = resolveImport(spec);
+      const tmp = `__cs_re_${reexportCounter++}`;
+      const props = named
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const m = part.match(/^([A-Za-z0-9_$]+)(?:\s+as\s+([A-Za-z0-9_$]+))?$/);
+          if (!m) return "";
+          const orig = m[1];
+          const exp = m[2] || m[1];
+          return `Object.defineProperty(__cs_exports, ${JSON.stringify(exp)}, { enumerable: true, configurable: true, get: function() { return ${tmp}.${orig}; } });`;
+        })
+        .join(" ");
+      return `${prefix}const ${tmp} = __cs_require(${JSON.stringify(resolved)}); ${props}`;
+    },
+  );
+
+  // 9. export { a, b as c };
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s*\{([^}]*)\}\s*;?/g,
+    (_full, prefix, named) => {
+      const props = named
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const m = part.match(/^([A-Za-z0-9_$]+)(?:\s+as\s+([A-Za-z0-9_$]+))?$/);
+          if (!m) return "";
+          const local = m[1];
+          const exp = m[2] || m[1];
+          return `Object.defineProperty(__cs_exports, ${JSON.stringify(exp)}, { enumerable: true, configurable: true, get: function() { return ${local}; } });`;
+        })
+        .join(" ");
+      return `${prefix}${props}`;
+    },
+  );
+
+  // 10. export default function name / class name / expression
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s+default\s+((?:async\s+)?function\s*\*?\s*([A-Za-z0-9_$]+)|class\s+([A-Za-z0-9_$]+))/g,
+    (_full, prefix, decl, fnName, clsName) => {
+      const id = fnName || clsName;
+      deferredExports.push(`__cs_exports.default = ${id};`);
+      return `${prefix}${decl}`;
+    },
+  );
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s+default\s+/g,
+    "$1__cs_exports.default = ",
+  );
+
+  // 11. export async function name / export function name / export class name
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s+((?:async\s+)?function\s*\*?\s*([A-Za-z0-9_$]+)|class\s+([A-Za-z0-9_$]+))/g,
+    (_full, prefix, decl, fnName, clsName) => {
+      const id = fnName || clsName;
+      deferredExports.push(
+        `Object.defineProperty(__cs_exports, ${JSON.stringify(id)}, { enumerable: true, configurable: true, get: function() { return ${id}; } });`,
+      );
+      return `${prefix}${decl}`;
+    },
+  );
+
+  // 12. export const/let/var name = ...
+  transformed = transformed.replace(
+    /(^|[\r\n])\s*export\s+(const|let|var)\s+([A-Za-z0-9_$]+)/g,
+    (_full, prefix, kw, id) => {
+      deferredExports.push(
+        `Object.defineProperty(__cs_exports, ${JSON.stringify(id)}, { enumerable: true, configurable: true, get: function() { return ${id}; } });`,
+      );
+      return `${prefix}${kw} ${id}`;
+    },
+  );
+
+  if (deferredExports.length > 0) {
+    transformed += `\n${deferredExports.join("\n")}`;
+  }
+
+  return {
+    code: transformed,
+    imports: [...discoveredImports],
+  };
+}
+
+function buildSrcdocBootstrapScript({ sessionId, port, subpath, hasViteClient }) {
+  const cfg = JSON.stringify({
+    sessionId: String(sessionId || ""),
+    port: Number(port) || 0,
+    subpath: String(subpath || "/"),
+    hasViteClient: Boolean(hasViteClient),
+  }).replace(/</g, "\\u003c");
+  return `<script nonce="__CS_CSP_NONCE__">(() => {
+  if (window.__codeSpacePreviewBootstrapped) return;
+  window.__codeSpacePreviewBootstrapped = true;
+  const CFG = ${cfg};
+  const VIRTUAL_ORIGIN = "http://127.0.0.1:" + CFG.port;
+  const VIRTUAL_HREF = VIRTUAL_ORIGIN + (CFG.subpath || "/");
+
+  // Patch window.URL so relative URLs resolved against about:srcdoc or blob:null
+  // (such as @hatch/space-sdk's resolveEndpoint("./actions")) resolve against VIRTUAL_HREF.
+  const OrigURL = window.URL;
+  function PatchedURL(url, base) {
+    if (base !== undefined) {
+      const baseStr = String(base);
+      if (baseStr === "about:srcdoc" || baseStr.startsWith("about:") || baseStr.startsWith("blob:")) {
+        return new OrigURL(url, VIRTUAL_HREF);
+      }
+      return new OrigURL(url, base);
+    }
+    const urlStr = String(url);
+    if (urlStr === "about:srcdoc" || urlStr.startsWith("blob:null")) {
+      return new OrigURL(VIRTUAL_HREF);
+    }
+    return new OrigURL(url);
+  }
+  PatchedURL.createObjectURL = OrigURL.createObjectURL.bind(OrigURL);
+  PatchedURL.revokeObjectURL = OrigURL.revokeObjectURL.bind(OrigURL);
+  if (OrigURL.canParse) PatchedURL.canParse = OrigURL.canParse.bind(OrigURL);
+  PatchedURL.prototype = OrigURL.prototype;
+  window.URL = PatchedURL;
+
+  function toServerPath(rawUrl) {
+    if (typeof rawUrl !== "string") return null;
+    const t = rawUrl.trim();
+    if (!t || t.startsWith("data:") || t.startsWith("blob:") || t.startsWith("mailto:") || t.startsWith("javascript:") || t.startsWith("#")) return null;
+    if (t.startsWith("/") && !t.startsWith("//")) return t;
+    try {
+      const u = new OrigURL(t, VIRTUAL_HREF);
+      if (u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "0.0.0.0") {
+        if (!u.port || Number(u.port) === CFG.port) {
+          return u.pathname + u.search;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  // ---- HTTP bridge via window.parent.postMessage (works inside cvm-frame blob:null) ----
+  const pendingHttp = new Map();
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "code-space:preview-http-res" && typeof d.reqId === "string") {
+      const entry = pendingHttp.get(d.reqId);
+      if (entry) {
+        pendingHttp.delete(d.reqId);
+        entry.resolve(d);
+      }
+    } else if (d.type === "code-space:preview-dom-patch" && typeof d.html === "string") {
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(d.html, "text/html");
+        doc.querySelectorAll("style[data-preview-href]").forEach((newStyle) => {
+          const href = newStyle.getAttribute("data-preview-href");
+          const existing = document.querySelector('style[data-preview-href="' + href + '"]');
+          if (existing) existing.textContent = newStyle.textContent;
+          else document.head.appendChild(newStyle.cloneNode(true));
+        });
+        if (doc.body && document.body && !window.__cs_has_custom_hmr) {
+          document.body.innerHTML = doc.body.innerHTML;
+        }
+      } catch {}
+    }
+  });
+
+  function requestViaParent({ method = "GET", path = "/", headers = {}, bodyBase64 = null }) {
+    return new Promise((resolve, reject) => {
+      const reqId = "req-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const timer = setTimeout(() => {
+        pendingHttp.delete(reqId);
+        reject(new Error("Preview request timed out: " + path));
+      }, 15000);
+      pendingHttp.set(reqId, {
+        resolve: (res) => {
+          clearTimeout(timer);
+          resolve(res);
+        },
+      });
+      window.parent.postMessage({
+        type: "code-space:preview-http-req",
+        reqId,
+        sessionId: CFG.sessionId,
+        port: CFG.port,
+        method,
+        path,
+        headers,
+        bodyBase64,
+      }, "*");
+    });
+  }
+
+  function base64ToUint8Array(b64) {
+    if (!b64) return new Uint8Array(0);
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function uint8ArrayToBase64(bytes) {
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+
+  const origFetch = window.fetch ? window.fetch.bind(window) : null;
+  window.fetch = async function(input, init) {
+    const rawUrl = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input && typeof input.url === "string" ? input.url : ""));
+    const srvPath = toServerPath(rawUrl);
+    if (!srvPath) {
+      if (origFetch) return origFetch(input, init);
+      throw new Error("fetch unavailable");
+    }
+    const method = (init && init.method) || (input && input.method) || "GET";
+    const headers = {};
+    if (init && init.headers) {
+      new Headers(init.headers).forEach((v, k) => { headers[k] = v; });
+    }
+    let bodyBase64 = null;
+    if (init && init.body != null && method !== "GET" && method !== "HEAD") {
+      if (typeof init.body === "string") {
+        bodyBase64 = uint8ArrayToBase64(new TextEncoder().encode(init.body));
+      } else if (init.body instanceof Uint8Array) {
+        bodyBase64 = uint8ArrayToBase64(init.body);
+      } else if (init.body instanceof ArrayBuffer) {
+        bodyBase64 = uint8ArrayToBase64(new Uint8Array(init.body));
+      }
+    }
+    const res = await requestViaParent({ method, path: srvPath, headers, bodyBase64 });
+    const bytes = base64ToUint8Array(res.bodyBase64 || "");
+    const status = res.status >= 100 && res.status <= 599 ? res.status : 200;
+    return new Response(status === 204 || status === 304 || method === "HEAD" ? null : bytes, {
+      status,
+      statusText: res.statusText || "",
+      headers: res.headers || {},
+    });
+  };
+
+  // ---- Intercept dynamic <img> / Image() relative URLs inside about:srcdoc ----
+  const imgDataCache = new Map();
+  function fetchImageDataUri(srvPath) {
+    if (imgDataCache.has(srvPath)) return imgDataCache.get(srvPath);
+    const p = requestViaParent({ method: "GET", path: srvPath }).then((res) => {
+      if (!res || !res.bodyBase64 || res.status >= 400) return null;
+      const ct = (res.headers && res.headers["content-type"]) || (srvPath.endsWith(".webp") ? "image/webp" : srvPath.endsWith(".svg") ? "image/svg+xml" : "image/png");
+      return "data:" + ct.split(";")[0] + ";base64," + res.bodyBase64;
+    }).catch(() => null);
+    imgDataCache.set(srvPath, p);
+    return p;
+  }
+
+  const imgSrcDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+  if (imgSrcDesc && imgSrcDesc.set && imgSrcDesc.get) {
+    Object.defineProperty(HTMLImageElement.prototype, "src", {
+      configurable: true,
+      enumerable: true,
+      get() { return imgSrcDesc.get.call(this); },
+      set(val) {
+        const srvPath = toServerPath(String(val || ""));
+        if (srvPath) {
+          fetchImageDataUri(srvPath).then((uri) => {
+            if (uri) imgSrcDesc.set.call(this, uri);
+          });
+          return;
+        }
+        imgSrcDesc.set.call(this, val);
+      },
+    });
+  }
+
+  function rewriteImgElement(el) {
+    if (!el || el.tagName !== "IMG") return;
+    const raw = el.getAttribute("src");
+    if (!raw || raw.startsWith("data:") || raw.startsWith("blob:")) return;
+    const srvPath = toServerPath(raw);
+    if (!srvPath) return;
+    fetchImageDataUri(srvPath).then((uri) => {
+      if (uri && el.getAttribute("src") === raw) {
+        el.setAttribute("src", uri);
+      }
+    });
+  }
+
+  const mo = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === "attributes" && m.target && m.target.tagName === "IMG") {
+        rewriteImgElement(m.target);
+      } else if (m.type === "childList") {
+        m.addedNodes.forEach((n) => {
+          if (n && n.nodeType === 1) {
+            if (n.tagName === "IMG") rewriteImgElement(n);
+            else if (typeof n.querySelectorAll === "function") {
+              n.querySelectorAll("img[src]").forEach(rewriteImgElement);
+            }
+          }
+        });
+      }
+    }
+  });
+  mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
+
+  // Shim EventSource for local paths (e.g. /__dev/events) inside about:srcdoc
+  const OrigEventSource = window.EventSource;
+  if (OrigEventSource) {
+    window.EventSource = function(url, dict) {
+      const srvPath = toServerPath(String(url || ""));
+      if (srvPath) {
+        const dummy = new EventTarget();
+        dummy.readyState = 1;
+        dummy.url = VIRTUAL_ORIGIN + srvPath;
+        dummy.close = function() { this.readyState = 2; };
+        return dummy;
+      }
+      return new OrigEventSource(url, dict);
+    };
+  }
+
+  // ---- Intercept link clicks and form submissions for multi-page navigation ----
+  document.addEventListener("click", (ev) => {
+    if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const anchor = ev.target && typeof ev.target.closest === "function" ? ev.target.closest("a[href]") : null;
+    if (!anchor) return;
+    const rawHref = anchor.getAttribute("href");
+    if (!rawHref || rawHref.startsWith("#") || anchor.hasAttribute("download") || (anchor.target && anchor.target !== "_self")) return;
+    const srvPath = toServerPath(rawHref);
+    if (!srvPath) return;
+    ev.preventDefault();
+    window.parent.postMessage({
+      type: "code-space:preview-navigate",
+      sessionId: CFG.sessionId,
+      method: "GET",
+      path: srvPath,
+    }, "*");
+  });
+
+  document.addEventListener("submit", (ev) => {
+    if (ev.defaultPrevented) return;
+    const form = ev.target;
+    if (!form || form.tagName !== "FORM") return;
+    const rawAction = form.getAttribute("action") || CFG.subpath || "/";
+    const srvPath = toServerPath(rawAction);
+    if (!srvPath) return;
+    ev.preventDefault();
+    const method = String(form.method || "GET").toUpperCase();
+    const fd = new FormData(form);
+    const params = new URLSearchParams();
+    fd.forEach((v, k) => { if (typeof v === "string") params.append(k, v); });
+    if (method === "GET") {
+      const sep = srvPath.includes("?") ? "&" : "?";
+      const qs = params.toString();
+      window.parent.postMessage({
+        type: "code-space:preview-navigate",
+        sessionId: CFG.sessionId,
+        method: "GET",
+        path: qs ? srvPath + sep + qs : srvPath,
+      }, "*");
+    } else {
+      const bodyBytes = new TextEncoder().encode(params.toString());
+      window.parent.postMessage({
+        type: "code-space:preview-navigate",
+        sessionId: CFG.sessionId,
+        method,
+        path: srvPath,
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        bodyBase64: uint8ArrayToBase64(bodyBytes),
+      }, "*");
+    }
+  });
+
+  // ---- WebSocket bridge via window.parent.postMessage ----
+  const NativeWS = window.WebSocket;
+  class PreviewWebSocket extends EventTarget {
+    constructor(url, protocols) {
+      super();
+      this.CONNECTING = 0;
+      this.OPEN = 1;
+      this.CLOSING = 2;
+      this.CLOSED = 3;
+      this.readyState = 0;
+      this.bufferedAmount = 0;
+      this.extensions = "";
+      this.binaryType = "blob";
+      this.onopen = null;
+      this.onmessage = null;
+      this.onclose = null;
+      this.onerror = null;
+      const wsPath = toServerPath(String(url).replace(/^wss?:/i, "http:")) || "/";
+      this.url = String(url);
+      this._id = "pws-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const protoList = typeof protocols === "string" ? [protocols] : Array.isArray(protocols) ? protocols : [];
+      this.protocol = protoList[0] || "";
+      this._onMsg = (ev) => {
+        const d = ev.data;
+        if (!d || d.type !== "code-space:preview-ws-event" || d.clientId !== this._id) return;
+        if (d.event === "open") {
+          if (this.readyState !== 0) return;
+          this.readyState = 1;
+          if (d.protocol) this.protocol = d.protocol;
+          const openEv = new Event("open");
+          this.dispatchEvent(openEv);
+          if (typeof this.onopen === "function") this.onopen(openEv);
+        } else if (d.event === "message") {
+          if (this.readyState !== 1) return;
+          const msgEv = new MessageEvent("message", { data: d.data });
+          this.dispatchEvent(msgEv);
+          if (typeof this.onmessage === "function") this.onmessage(msgEv);
+        } else if (d.event === "close") {
+          if (this.readyState === 3) return;
+          this.readyState = 3;
+          window.removeEventListener("message", this._onMsg);
+          const closeEv = new CloseEvent("close", { code: d.code || 1000, reason: d.reason || "", wasClean: true });
+          this.dispatchEvent(closeEv);
+          if (typeof this.onclose === "function") this.onclose(closeEv);
+        } else if (d.event === "error") {
+          const errEv = new Event("error");
+          this.dispatchEvent(errEv);
+          if (typeof this.onerror === "function") this.onerror(errEv);
+        }
+      };
+      window.addEventListener("message", this._onMsg);
+      window.parent.postMessage({
+        type: "code-space:preview-ws-cmd",
+        cmd: "open",
+        clientId: this._id,
+        sessionId: CFG.sessionId,
+        port: CFG.port,
+        path: wsPath,
+        protocols: protoList,
+      }, "*");
+    }
+    send(data) {
+      if (this.readyState !== 1) return;
+      window.parent.postMessage({
+        type: "code-space:preview-ws-cmd",
+        cmd: "send",
+        clientId: this._id,
+        sessionId: CFG.sessionId,
+        data: typeof data === "string" ? data : String(data),
+      }, "*");
+    }
+    close(code = 1000, reason = "") {
+      if (this.readyState >= 2) return;
+      this.readyState = 2;
+      window.parent.postMessage({
+        type: "code-space:preview-ws-cmd",
+        cmd: "close",
+        clientId: this._id,
+        sessionId: CFG.sessionId,
+        code,
+        reason,
+      }, "*");
+    }
+  }
+  window.WebSocket = function(url, protocols) {
+    return new PreviewWebSocket(url, protocols);
+  };
+  Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+
+  // ---- ES Module Registry & Vite HMR shim ----
+  const factories = Object.create(null);
+  const cache = Object.create(null);
+  const hotModules = Object.create(null);
+
+  window.__cs_interopDefault = function(mod) {
+    return mod && typeof mod === "object" && "default" in mod ? mod.default : mod;
+  };
+
+  window.__cs_updateStyle = function(id, content) {
+    let el = document.querySelector('style[data-vite-dev-id="' + id + '"]');
+    if (!el) {
+      el = document.createElement("style");
+      el.setAttribute("data-vite-dev-id", id);
+      document.head.appendChild(el);
+    }
+    el.textContent = content;
+  };
+
+  window.__cs_removeStyle = function(id) {
+    const el = document.querySelector('style[data-vite-dev-id="' + id + '"]');
+    if (el) el.remove();
+  };
+
+  window.__cs_createHotContext = function(ownerPath) {
+    const key = String(ownerPath || "").split("?")[0];
+    if (!hotModules[key]) {
+      hotModules[key] = { data: {}, callbacks: [], disposeCallbacks: [] };
+    }
+    const entry = hotModules[key];
+    return {
+      get data() { return entry.data; },
+      accept(deps, cb) {
+        window.__cs_has_custom_hmr = true;
+        if (typeof deps === "function") entry.callbacks.push(deps);
+        else if (typeof cb === "function") entry.callbacks.push(cb);
+      },
+      dispose(cb) {
+        if (typeof cb === "function") entry.disposeCallbacks.push(cb);
+      },
+      prune() {},
+      invalidate() {
+        window.parent.postMessage({ type: "code-space:preview-hmr-reload", sessionId: CFG.sessionId }, "*");
+      },
+      on() {},
+      off() {},
+      send() {},
+    };
+  };
+
+  cache["/@vite/client"] = {
+    createHotContext: window.__cs_createHotContext,
+    updateStyle: window.__cs_updateStyle,
+    removeStyle: window.__cs_removeStyle,
+    injectQuery: (u) => u,
+  };
+
+  window.__cs_define = function(id, factory) {
+    const cleanId = String(id).split("?")[0];
+    factories[id] = factory;
+    factories[cleanId] = factory;
+  };
+
+  window.__cs_require = function(id, forceReload = false) {
+    const cleanId = String(id).split("?")[0];
+    if (!forceReload) {
+      if (cache[id]) return cache[id];
+      if (cache[cleanId]) return cache[cleanId];
+    }
+    const fn = factories[id] || factories[cleanId];
+    if (!fn) {
+      console.warn("[Preview] Module not found:", id);
+      return {};
+    }
+    const exportsObj = {};
+    cache[id] = exportsObj;
+    cache[cleanId] = exportsObj;
+    const meta = {
+      url: VIRTUAL_ORIGIN + cleanId,
+      env: { DEV: true, PROD: false, MODE: "development", BASE_URL: "/" },
+      hot: window.__cs_createHotContext(cleanId),
+    };
+    fn(window.__cs_require, exportsObj, meta);
+    return exportsObj;
+  };
+
+  window.__cs_dynamic_import = async function(id) {
+    const cleanId = String(id).split("?")[0];
+    if (factories[id] || factories[cleanId]) {
+      return window.__cs_require(id);
+    }
+    return {};
+  };
+
+  if (CFG.hasViteClient) {
+    const hmrWs = new PreviewWebSocket("ws://127.0.0.1:" + CFG.port + "/", "vite-hmr");
+    hmrWs.addEventListener("message", (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        if (payload.type === "update" || payload.type === "full-reload") {
+          window.parent.postMessage({
+            type: "code-space:preview-hmr-reload",
+            sessionId: CFG.sessionId,
+            payload,
+          }, "*");
+        }
+      } catch {}
+    });
+  }
+})();</script>`;
+}
+
+export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", sessionId = "" }) {
+  if (typeof html !== "string" || !html) return "";
+  let out = html;
+  let hasViteClient = false;
+
+  // 1. Inline local <link rel="stylesheet" href="...">
+  const linkRe = /<link\b[^>]*>/gi;
+  const linkMatches = [...out.matchAll(linkRe)];
+  for (const m of linkMatches) {
+    const tag = m[0];
+    if (!/\brel\s*=\s*["']?stylesheet["']?/i.test(tag)) continue;
+    const hrefMatch = tag.match(/\bhref\s*=\s*(["'])([^"']+)\1/i);
+    if (!hrefMatch) continue;
+    const localPath = resolveLocalPreviewPath(hrefMatch[2], subpath, port);
+    if (!localPath) continue;
+    const res = await fetchRawLocalResource(port, localPath, { accept: "text/css,*/*" });
+    if (res.ok) {
+      const cssWithAssets = await inlineCssUrls(res.buffer.toString("utf8"), localPath, port);
+      out = out.replace(tag, `<style data-preview-href="${localPath.replace(/"/g, "&quot;")}">${cssWithAssets}</style>`);
+    }
+  }
+
+  // 2. Inline local <img src="..."> as data: URIs
+  const imgRe = /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi;
+  const imgMatches = [...out.matchAll(imgRe)];
+  const imgMap = new Map();
+  await Promise.all(
+    imgMatches.map(async (m) => {
+      const rawSrc = m[3];
+      if (!rawSrc || imgMap.has(rawSrc)) return;
+      const localPath = resolveLocalPreviewPath(rawSrc, subpath, port);
+      if (!localPath) return;
+      const res = await fetchRawLocalResource(port, localPath);
+      if (res.ok && res.buffer.length > 0) {
+        const mime = guessMimeType(localPath, res.contentType);
+        imgMap.set(rawSrc, `data:${mime};base64,${res.buffer.toString("base64")}`);
+      }
+    }),
+  );
+  if (imgMap.size > 0) {
+    out = out.replace(imgRe, (full, prefix, quote, rawSrc) => {
+      const dataUri = imgMap.get(rawSrc);
+      return dataUri ? `${prefix}${quote}${dataUri}${quote}` : full;
+    });
+  }
+
+  // 3. Process <script> tags and crawl local ES module graph
+  const moduleDefinitions = new Map();
+  const moduleCrawlQueue = [];
+
+  const enqueueModule = (modPath) => {
+    const clean = modPath.split("?")[0];
+    if (clean === "/@vite/client") {
+      hasViteClient = true;
+      return;
+    }
+    if (!moduleDefinitions.has(modPath) && moduleDefinitions.size < 80) {
+      moduleDefinitions.set(modPath, null);
+      moduleCrawlQueue.push(modPath);
+    }
+  };
+
+  const scriptRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  const scriptMatches = [...out.matchAll(scriptRe)];
+  const scriptReplacements = [];
+
+  for (const m of scriptMatches) {
+    const fullTag = m[0];
+    const attrs = m[1] || "";
+    const inlineBody = m[2] || "";
+    const isModule = /\btype\s*=\s*(["']?)module\1/i.test(attrs);
+    const srcMatch = attrs.match(/\bsrc\s*=\s*(["'])([^"']+)\1/i);
+    const rawSrc = srcMatch ? srcMatch[2] : null;
+
+    if (rawSrc) {
+      const localPath = resolveLocalPreviewPath(rawSrc, subpath, port);
+      if (!localPath) continue;
+      if (localPath === "/@vite/client" || localPath.startsWith("/@vite/client?")) {
+        hasViteClient = true;
+        scriptReplacements.push({ from: fullTag, to: "" });
+        continue;
+      }
+      if (isModule) {
+        enqueueModule(localPath);
+        scriptReplacements.push({
+          from: fullTag,
+          to: `\x00CS_MODULE_ENTRY:${localPath}\x00`,
+        });
+      } else {
+        const res = await fetchRawLocalResource(port, localPath, { accept: "application/javascript,*/*" });
+        if (res.ok) {
+          scriptReplacements.push({
+            from: fullTag,
+            to: `<script nonce="__CS_CSP_NONCE__">\n${res.buffer.toString("utf8")}\n</script>`,
+          });
+        }
+      }
+    } else if (isModule && inlineBody.trim()) {
+      const inlineId = `/__inline_module_${scriptReplacements.length}.js`;
+      const transformed = transformEsModuleForSrcdoc(inlineBody, subpath, port);
+      moduleDefinitions.set(inlineId, transformed.code);
+      for (const imp of transformed.imports) enqueueModule(imp);
+      scriptReplacements.push({
+        from: fullTag,
+        to: `\x00CS_MODULE_ENTRY:${inlineId}\x00`,
+      });
+    } else if (inlineBody.trim() && !/\bnonce\s*=/i.test(attrs)) {
+      scriptReplacements.push({
+        from: fullTag,
+        to: `<script nonce="__CS_CSP_NONCE__"${attrs}>${inlineBody}</script>`,
+      });
+    }
+  }
+
+  // Crawl queued ES modules on 127.0.0.1:<port>
+  while (moduleCrawlQueue.length > 0) {
+    const batch = moduleCrawlQueue.splice(0, 12);
+    await Promise.all(
+      batch.map(async (modPath) => {
+        const res = await fetchRawLocalResource(port, modPath, { accept: "application/javascript,text/javascript,*/*" });
+        if (!res.ok) {
+          moduleDefinitions.set(modPath, "");
+          return;
+        }
+        const ct = String(res.contentType || "").toLowerCase();
+        const rawText = res.buffer.toString("utf8");
+        if (ct.includes("text/css") || (modPath.split("?")[0].endsWith(".css") && !rawText.includes("updateStyle") && !rawText.includes("export "))) {
+          const inlinedCss = await inlineCssUrls(rawText, modPath, port);
+          moduleDefinitions.set(
+            modPath,
+            `window.__cs_updateStyle(${JSON.stringify(modPath)}, ${JSON.stringify(inlinedCss)});`,
+          );
+          return;
+        }
+        const transformed = transformEsModuleForSrcdoc(rawText, modPath, port);
+        moduleDefinitions.set(modPath, transformed.code);
+        for (const imp of transformed.imports) enqueueModule(imp);
+      }),
+    );
+  }
+
+  for (const rep of scriptReplacements) {
+    out = out.replace(rep.from, rep.to);
+  }
+
+  // Emit defined ES modules before the first __CS_MODULE_ENTRY placeholder
+  let modulesEmitted = false;
+  const buildModulesBlock = () => {
+    const lines = [];
+    for (const [modId, code] of moduleDefinitions.entries()) {
+      if (typeof code !== "string") continue;
+      lines.push(
+        `window.__cs_define(${JSON.stringify(modId)}, function(__cs_require, __cs_exports, __cs_import_meta) {\n${code}\n});`,
+      );
+    }
+    return lines.join("\n");
+  };
+
+  out = out.replace(/\x00CS_MODULE_ENTRY:([^\x00]+)\x00/g, (_full, entryId) => {
+    const prefix = !modulesEmitted ? ((modulesEmitted = true), buildModulesBlock() + "\n") : "";
+    return `<script nonce="__CS_CSP_NONCE__">\n${prefix}window.__cs_require(${JSON.stringify(entryId)});\n</script>`;
+  });
+
+  const bootstrap = buildSrcdocBootstrapScript({ sessionId, port, subpath, hasViteClient });
+  if (/<head\b[^>]*>/i.test(out)) {
+    return out.replace(/<head\b[^>]*>/i, (match) => `${match}${bootstrap}`);
+  }
+  if (/<html\b[^>]*>/i.test(out)) {
+    return out.replace(/<html\b[^>]*>/i, (match) => `${match}<head>${bootstrap}</head>`);
+  }
+  return `${bootstrap}${out}`;
+}
+
 /**
  * Forward an HTTP request to `http://127.0.0.1:<port><path>` on the pilot host
  * and return `{ reachable, status, statusText, headers, bodyBase64, error }`.
@@ -566,10 +1555,41 @@ export function proxyPreviewHttpRequest({
         let total = 0;
         const maxBytes = 10 * 1024 * 1024;
         let sseTimer = null;
-        const finishResponse = () => {
+        const finishResponse = async () => {
           if (sseTimer) clearTimeout(sseTimer);
           let buf = Buffer.concat(chunks);
-          if (previewBasePath && buf.length > 0 && method.toUpperCase() !== "HEAD") {
+          if (previewBasePath === "__srcdoc__") {
+            if (
+              status >= 300 &&
+              status <= 399 &&
+              typeof res.headers.location === "string"
+            ) {
+              const targetPath = resolveLocalPreviewPath(res.headers.location, subpath, port);
+              if (targetPath) {
+                const redirected = await proxyPreviewHttpRequest({
+                  port,
+                  method: status === 307 || status === 308 ? method : "GET",
+                  path: targetPath,
+                  headers,
+                  bodyBase64: status === 307 || status === 308 ? bodyBase64 : null,
+                  previewBasePath: "__srcdoc__",
+                  sessionId,
+                  timeoutMs,
+                });
+                done(redirected);
+                return;
+              }
+            }
+            outHeaders["x-preview-final-path"] = subpath;
+            if (buf.length > 0 && method.toUpperCase() !== "HEAD" && contentType.includes("text/html")) {
+              const bundledHtml = await bundleHtmlForSrcdocPreview(buf.toString("utf8"), {
+                port,
+                subpath,
+                sessionId,
+              });
+              buf = Buffer.from(bundledHtml, "utf8");
+            }
+          } else if (previewBasePath && buf.length > 0 && method.toUpperCase() !== "HEAD") {
             if (contentType.includes("text/html")) {
               const html = rewriteHtmlForPreview(buf.toString("utf8"), previewBasePath, sessionId, port);
               buf = Buffer.from(html, "utf8");
@@ -1007,10 +2027,16 @@ export async function capturePreviewScreenshot({
   title = "Live preview",
 }) {
   const numPort = Number(port);
+  if (DEFAULT_FORBIDDEN_PREVIEW_PORTS.has(numPort)) {
+    return {
+      ok: false,
+      error: `Port ${port} is reserved by Code Space background services (18790–18793). Use another loopback port (e.g. 4173, 5173, 3000, 8000).`,
+    };
+  }
   if (!isAllowedPreviewPort(numPort)) {
     return {
       ok: false,
-      error: `Port ${port} is not an allowed loopback preview port (expected 1024–65535).`,
+      error: `Port ${port} is not an allowed loopback preview port (expected an integer between 1024 and 65535).`,
     };
   }
   if (!workspaceRoot || !existsSync(workspaceRoot)) {
@@ -1045,6 +2071,7 @@ export async function capturePreviewScreenshot({
             "--no-sandbox",
             "--hide-scrollbars",
             "--window-size=1280,720",
+            "--virtual-time-budget=2500",
             `--screenshot=${pngPath}`,
             targetUrl,
           ],

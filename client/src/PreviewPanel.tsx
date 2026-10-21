@@ -1,11 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import {
-  ensurePreviewServiceWorkerRegistered,
-  isPreviewServiceWorkerReady,
-  previewRootUrlForSession,
-} from "./previewServiceWorker";
+import { applyCspNonceToSrcdocHtml } from "./previewServiceWorker";
 
 export function PreviewTabIcon() {
   return (
@@ -42,6 +38,18 @@ export function NewPreviewButton({ onOpen, active = false }: { onOpen: () => voi
   );
 }
 
+function base64ToUtf8(base64: string): string {
+  if (!base64) return "";
+  try {
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
 export function PreviewView({
   sessionId,
   active,
@@ -55,25 +63,20 @@ export function PreviewView({
   const [portError, setPortError] = useState<string | null>(null);
   const [savingPort, setSavingPort] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [frameLoaded, setFrameLoaded] = useState(false);
-  const [swReady, setSwReady] = useState(() => isPreviewServiceWorkerReady());
+  const [srcDocHtml, setSrcDocHtml] = useState<string | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(false);
+  const [currentPath, setCurrentPath] = useState("/");
+  const currentPathRef = useRef("/");
+  currentPathRef.current = currentPath;
+
   const wasLiveRef = useRef(false);
   const manuallyDetachedRef = useRef(false);
   const autoAttachedSessionRef = useRef<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const openWsClientsRef = useRef<Set<string>>(new Set());
   const wsSinceRef = useRef<Record<string, number>>({});
-
-  useEffect(() => {
-    if (swReady) return;
-    let cancelled = false;
-    void ensurePreviewServiceWorkerRegistered().then(() => {
-      if (!cancelled) setSwReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [swReady]);
+  const cookieJarRef = useRef<Map<string, string>>(new Map());
+  const loadSeqRef = useRef(0);
 
   const portsQuery = useQuery({
     queryKey: ["preview-ports", sessionId],
@@ -101,15 +104,94 @@ export function PreviewView({
 
   useEffect(() => {
     wasLiveRef.current = false;
-    setFrameLoaded(false);
+    setSrcDocHtml(null);
+    setCurrentPath("/");
     openWsClientsRef.current.clear();
     wsSinceRef.current = {};
+    cookieJarRef.current.clear();
   }, [sessionId, configuredPort]);
 
   useEffect(() => {
     manuallyDetachedRef.current = false;
     autoAttachedSessionRef.current = null;
   }, [sessionId]);
+
+  const recordCookies = (headers: Record<string, string>) => {
+    const raw = headers["set-cookie"];
+    if (!raw) return;
+    for (const part of raw.split(/,(?=\s*[A-Za-z0-9_-]+=)/)) {
+      const firstSemi = part.split(";")[0]?.trim() ?? "";
+      const eq = firstSemi.indexOf("=");
+      if (eq > 0) {
+        cookieJarRef.current.set(firstSemi.slice(0, eq).trim(), firstSemi.slice(eq + 1).trim());
+      }
+    }
+  };
+
+  const buildCookieHeader = (): string | null => {
+    if (cookieJarRef.current.size === 0) return null;
+    const pairs: string[] = [];
+    cookieJarRef.current.forEach((v, k) => pairs.push(`${k}=${v}`));
+    return pairs.join("; ");
+  };
+
+  const loadPreviewDocument = useCallback(
+    async ({
+      method = "GET",
+      path = "/",
+      headers = {},
+      bodyBase64 = null,
+    }: {
+      method?: string;
+      path?: string;
+      headers?: Record<string, string>;
+      bodyBase64?: string | null;
+    }) => {
+      const seq = ++loadSeqRef.current;
+      setLoadingDoc(true);
+      try {
+        const cookieHdr = buildCookieHeader();
+        const res = await api.previewProxy({
+          session_id: sessionId,
+          method,
+          path,
+          headers: {
+            accept: "text/html,application/xhtml+xml,*/*",
+            ...headers,
+            ...(cookieHdr ? { cookie: cookieHdr } : {}),
+          },
+          bodyBase64,
+          previewBasePath: "__srcdoc__",
+        });
+        if (seq !== loadSeqRef.current) return;
+        if (!res.reachable) {
+          setSrcDocHtml(null);
+          void portsQuery.refetch();
+          return;
+        }
+        recordCookies(res.headers ?? {});
+        const finalPath = res.headers?.["x-preview-final-path"] || path;
+        setCurrentPath(finalPath);
+        const rawHtml = base64ToUtf8(res.bodyBase64);
+        setSrcDocHtml(applyCspNonceToSrcdocHtml(rawHtml));
+      } catch {
+        if (seq === loadSeqRef.current) {
+          setSrcDocHtml(null);
+        }
+      } finally {
+        if (seq === loadSeqRef.current) {
+          setLoadingDoc(false);
+        }
+      }
+    },
+    [sessionId, portsQuery.refetch],
+  );
+
+  // Load the preview document when attached and reachable
+  useEffect(() => {
+    if (!configuredPort || reachable !== true) return;
+    void loadPreviewDocument({ method: "GET", path: currentPathRef.current });
+  }, [sessionId, configuredPort, reachable, reloadNonce, loadPreviewDocument]);
 
   // If no port is attached yet and the workspace has a listening dev server,
   // auto-attach to the first detected port when opening the Preview tab.
@@ -129,12 +211,11 @@ export function PreviewView({
     void attachPort(detectedPorts[0]!.port);
   }, [active, savingPort, portsQuery.isPending, configuredPort, detectedPorts, sessionId]);
 
-  // Bridge WebSocket commands from the preview iframe (`PreviewWebSocket` in
-  // `pilot/preview.mjs`) to the pilot's loopback WebSocket manager.
+  // Bridge HTTP requests, multi-page navigation, HMR reloads, and WebSocket
+  // frames from the preview iframe to `api.previewProxy` / `api.previewWs`.
   useEffect(() => {
     if (!active || !configuredPort || reachable !== true) return;
     let cancelled = false;
-
     let activeLoop = true;
     let wakeLoop: (() => void) | null = null;
 
@@ -150,35 +231,89 @@ export function PreviewView({
       const iframeWin = iframeRef.current?.contentWindow;
       if (!iframeWin || event.source !== iframeWin) return;
       const d = event.data;
-      if (!d || typeof d !== "object" || d.type !== "code-space:preview-ws-cmd") return;
-      const clientId = typeof d.clientId === "string" ? d.clientId : "";
-      if (!clientId) return;
+      if (!d || typeof d !== "object") return;
 
-      if (d.cmd === "open") {
-        openWsClientsRef.current.add(clientId);
+      if (d.type === "code-space:preview-http-req" && typeof d.reqId === "string") {
+        const reqId = d.reqId;
+        const cookieHdr = buildCookieHeader();
         void api
-          .previewWs({
+          .previewProxy({
             session_id: sessionId,
-            cmd: "open",
-            clientId,
+            method: typeof d.method === "string" ? d.method : "GET",
             path: typeof d.path === "string" ? d.path : "/",
-            protocols: Array.isArray(d.protocols) ? d.protocols.map(String) : [],
+            headers: {
+              ...(d.headers && typeof d.headers === "object" ? d.headers : {}),
+              ...(cookieHdr ? { cookie: cookieHdr } : {}),
+            },
+            bodyBase64: typeof d.bodyBase64 === "string" ? d.bodyBase64 : null,
+            previewBasePath: "",
           })
-          .then(() => notifyLoop());
-      } else if (d.cmd === "send") {
-        void api.previewWs({
-          session_id: sessionId,
-          cmd: "send",
-          clientId,
-          data: typeof d.data === "string" ? d.data : "",
+          .then((res) => {
+            if (cancelled) return;
+            recordCookies(res.headers ?? {});
+            iframeRef.current?.contentWindow?.postMessage(
+              {
+                type: "code-space:preview-http-res",
+                reqId,
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers,
+                bodyBase64: res.bodyBase64,
+              },
+              "*",
+            );
+          });
+        return;
+      }
+
+      if (d.type === "code-space:preview-navigate") {
+        void loadPreviewDocument({
+          method: typeof d.method === "string" ? d.method : "GET",
+          path: typeof d.path === "string" ? d.path : "/",
+          headers: d.headers && typeof d.headers === "object" ? d.headers : {},
+          bodyBase64: typeof d.bodyBase64 === "string" ? d.bodyBase64 : null,
         });
-      } else if (d.cmd === "close") {
-        openWsClientsRef.current.delete(clientId);
-        void api.previewWs({
-          session_id: sessionId,
-          cmd: "close",
-          clientId,
+        return;
+      }
+
+      if (d.type === "code-space:preview-hmr-reload") {
+        void loadPreviewDocument({
+          method: "GET",
+          path: currentPathRef.current,
         });
+        return;
+      }
+
+      if (d.type === "code-space:preview-ws-cmd") {
+        const clientId = typeof d.clientId === "string" ? d.clientId : "";
+        if (!clientId) return;
+
+        if (d.cmd === "open") {
+          openWsClientsRef.current.add(clientId);
+          void api
+            .previewWs({
+              session_id: sessionId,
+              cmd: "open",
+              clientId,
+              path: typeof d.path === "string" ? d.path : "/",
+              protocols: Array.isArray(d.protocols) ? d.protocols.map(String) : [],
+            })
+            .then(() => notifyLoop());
+        } else if (d.cmd === "send") {
+          void api.previewWs({
+            session_id: sessionId,
+            cmd: "send",
+            clientId,
+            data: typeof d.data === "string" ? d.data : "",
+          });
+        } else if (d.cmd === "close") {
+          openWsClientsRef.current.delete(clientId);
+          void api.previewWs({
+            session_id: sessionId,
+            cmd: "close",
+            clientId,
+          });
+        }
       }
     };
 
@@ -238,7 +373,7 @@ export function PreviewView({
       notifyLoop();
       window.removeEventListener("message", onMessage);
     };
-  }, [active, sessionId, configuredPort, reachable]);
+  }, [active, sessionId, configuredPort, reachable, loadPreviewDocument]);
 
   const attachPort = async (port: number | null) => {
     setPortError(null);
@@ -252,11 +387,12 @@ export function PreviewView({
       if (port !== null) {
         manuallyDetachedRef.current = false;
         setPortInput(String(port));
-        setFrameLoaded(false);
+        setCurrentPath("/");
         setReloadNonce((n) => n + 1);
       } else {
         manuallyDetachedRef.current = true;
         setPortInput("");
+        setSrcDocHtml(null);
       }
       await portsQuery.refetch();
     } catch {
@@ -282,7 +418,6 @@ export function PreviewView({
   };
 
   const reloadPreview = () => {
-    setFrameLoaded(false);
     setReloadNonce((n) => n + 1);
     void portsQuery.refetch();
   };
@@ -290,7 +425,7 @@ export function PreviewView({
   const statusKind: "unattached" | "connecting" | "live" | "exited" | "unreachable" =
     configuredPort === null
       ? "unattached"
-      : reachable === null || (reachable === true && (!swReady || !frameLoaded))
+      : reachable === null || (reachable === true && srcDocHtml === null && loadingDoc)
         ? "connecting"
         : reachable === true
           ? "live"
@@ -304,15 +439,10 @@ export function PreviewView({
       : statusKind === "connecting"
         ? `Connecting · :${configuredPort}`
         : statusKind === "live"
-          ? `Live · :${configuredPort}`
+          ? `Live · :${configuredPort}${currentPath !== "/" ? currentPath : ""}`
           : statusKind === "exited"
             ? `Server exited · :${configuredPort}`
             : `No server · :${configuredPort}`;
-
-  const previewUrl =
-    configuredPort !== null && swReady
-      ? `${previewRootUrlForSession(sessionId)}${reloadNonce > 0 ? `?__cs_reload=${reloadNonce}` : ""}`
-      : null;
 
   return (
     <div className="preview-pane">
@@ -453,14 +583,13 @@ export function PreviewView({
               Check again
             </button>
           </div>
-        ) : previewUrl ? (
+        ) : srcDocHtml !== null ? (
           <iframe
             ref={iframeRef}
-            key={`${sessionId}:${configuredPort}:${reloadNonce}`}
+            key={`${sessionId}:${configuredPort}`}
             className="preview-iframe"
-            src={previewUrl}
+            srcDoc={srcDocHtml}
             title={`Preview 127.0.0.1:${configuredPort}`}
-            onLoad={() => setFrameLoaded(true)}
           />
         ) : (
           <div className="preview-empty-state" role="status">

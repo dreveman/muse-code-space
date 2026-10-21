@@ -124,21 +124,34 @@ The fastest iteration loop. Most UI tweaks need no backend changes.
 server actions run on your machine:
 
 ```bash
-# Option 1 — fake pilot (no muse, no VM; scripted turns)
-bun run dev:fake-pilot                              # terminal 1, :18792
-MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18792 bun run dev  # terminal 2
+# Option 1 — fake pilot (no muse, no VM; scripted turns; safe on a live VM host)
+bun run dev:fake-pilot                              # terminal 1, :18793
+bun run dev                                         # terminal 2, auto-detects :18793 (or pass MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18793)
 
 # Option 2 — a local pilot running your Mac's muse serve (see "Running the pilot locally")
+# Note: on a live Muse VM where the production pilot already holds :18790–:18792,
+# use Option 1 (fake-pilot on :18793) or set a distinct MUSE_CODE_SPACE_PILOT_PORT.
 MUSE_CODE_SPACE_MUSE_BIN=$(which muse) MUSE_CODE_SPACE_RELAY_URL=none \
   node pilot/pilot.mjs   # terminal 1
 bun run dev                                                              # terminal 2
 
 # Option 3 — the VM's real pilot with live sessions
 ssh -L 18791:127.0.0.1:18791 your-vm-host           # terminal 1
-bun run dev                                         # terminal 2 (default :18791)
+MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18791 bun run dev             # terminal 2
 
-# open http://127.0.0.1:4173
+# open http://127.0.0.1:4173 (or attach the Preview tab to :4173)
 ```
+
+If you are running this local dev setup from inside a Code Space agent session
+and the `mcp__code_space__preview_screenshot` tool is available:
+1. Start `bun run dev:fake-pilot` (`:18793`) and `bun run dev` (`:4173`) in the
+   background and wait until `http://127.0.0.1:4173` is listening.
+2. Call `mcp__code_space__preview_screenshot` with `{ "port": 4173 }` and paste
+   the returned `[![...](.code-space/preview-4173.png)](http://127.0.0.1:4173/)`
+   Markdown line verbatim into your reply so the user gets a clickable preview
+   screenshot that opens the live Preview tab. (When working outside Code Space
+   where `mcp__code_space__preview_screenshot` is not available, open
+   `http://127.0.0.1:4173` directly in your browser.)
 
 How it maps to the real host:
 
@@ -1004,7 +1017,7 @@ Never claim a publication succeeded until the builder confirms submit.
 ### UI tweak
 
 1. `bun run dev:fake-pilot` with
-   `MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18792 bun run dev`
+   `MUSE_CODE_SPACE_PILOT_URL=http://127.0.0.1:18793 bun run dev`
    (or `bun run dev` against the tunnelled VM pilot); open :4173.
 2. Edit `client/src/App.tsx` / `theme.css`; the page reloads on save.
 3. `bun run typecheck` and the unit tests.

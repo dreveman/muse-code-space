@@ -67,7 +67,24 @@ mkdirSync(DEV_DIR, { recursive: true });
 // MUSE_CODE_SPACE_HOME_ROOT at import time, so ask the pilot for its home first
 // (pilots that predate the `home` field, and the fake pilot, keep the VM's
 // /home/hatch default).
-const pilotUrl = (process.env.MUSE_CODE_SPACE_PILOT_URL ?? "http://127.0.0.1:18791").replace(/\/+$/, "");
+async function resolveDefaultDevPilotUrl(): Promise<string> {
+  if (process.env.MUSE_CODE_SPACE_PILOT_URL) {
+    return process.env.MUSE_CODE_SPACE_PILOT_URL.replace(/\/+$/, "");
+  }
+  for (const candidate of ["http://127.0.0.1:18793", "http://127.0.0.1:18792"]) {
+    try {
+      const res = await fetch(`${candidate}/health`, { signal: AbortSignal.timeout(600) });
+      if (res.ok) return candidate;
+    } catch {
+      // candidate not running
+    }
+  }
+  // On a live Muse VM (/home/hatch exists), 18791 is the production pilot;
+  // default local dev to the fake-pilot port (18793) unless explicitly overridden.
+  return existsSync("/home/hatch") ? "http://127.0.0.1:18793" : "http://127.0.0.1:18791";
+}
+const pilotUrl = await resolveDefaultDevPilotUrl();
+process.env.MUSE_CODE_SPACE_PILOT_URL = pilotUrl;
 const homeCachePath = join(DEV_DIR, "pilot-home.json");
 let cachedHome: string | null = null;
 try {
@@ -392,12 +409,7 @@ async function serveStatic(pathname: string): Promise<Response> {
     return serveStatic("/");
   }
   if (rel === "index.html") {
-    const html = (await file.text())
-      .replace(
-        /<link rel="stylesheet"([^>]*?)>/g,
-        '<link rel="stylesheet"$1 media="print" onload="this.media=\'all\';window.__onCssLoaded&&window.__onCssLoaded()">',
-      )
-      .replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
+    const html = (await file.text()).replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   return new Response(file, { headers: { "cache-control": "no-store" } });

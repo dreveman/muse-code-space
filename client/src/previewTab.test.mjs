@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parsePreviewRequestPathname, previewRootUrlForSession } from "./previewServiceWorker.ts";
+import {
+  applyCspNonceToSrcdocHtml,
+  parsePreviewRequestPathname,
+  previewRootUrlForSession,
+} from "./previewServiceWorker.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(path.join(root, "App.tsx"), "utf8");
@@ -25,6 +29,14 @@ test("parsePreviewRequestPathname extracts sessionId, basePath, and subpath", ()
   });
   assert.equal(parsePreviewRequestPathname("/actions"), null);
   assert.equal(previewRootUrlForSession("abc"), "/assets/__preview/abc/");
+  assert.equal(
+    applyCspNonceToSrcdocHtml('<script nonce="__CS_CSP_NONCE__">1</script>', "n-123"),
+    '<script nonce="n-123">1</script>',
+  );
+  assert.equal(
+    applyCspNonceToSrcdocHtml('<script nonce="__CS_CSP_NONCE__">1</script>', null),
+    "<script>1</script>",
+  );
 });
 
 test("Preview tab lives in SidePanel with port control, reload button, status states, and WebSocket HMR bridge", () => {

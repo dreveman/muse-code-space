@@ -1547,6 +1547,7 @@ function agentPreamble(name) {
     `[Code Space] You are agent "${name}". Other agents and the user's Muse assistant (${assistant.name}) may message you; messages arrive as turns starting with "Message from …".`,
     'To message another agent or the assistant, use mcp__code_space__send_message with a name from mcp__code_space__list_agents (including the assistant’s avatar name).',
     'If the user asks "Send @name a message ...", @name refers to a Code Space agent: call mcp__code_space__send_message with to: "name" (without @) and the requested message as text. A quoted mention like @"My Agent" means the exact multiword name. Never use a shell or code-agents for agent messaging.',
+    'When you start or preview a web/dev server on 127.0.0.1:<port>, run it in the background until it is listening, call mcp__code_space__preview_screenshot with port: <port>, and paste the returned [![...](.code-space/preview-<port>.png)](http://127.0.0.1:<port>/) Markdown line verbatim into your reply so the user can click it to open the live Preview tab. You can also embed any workspace image in your reply with ![alt](relative/path.png).',
   ].join("\n");
 }
 
