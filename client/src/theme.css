@@ -553,6 +553,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .markdown-body blockquote { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 2px solid var(--terminal-faint); color: inherit; }
 .markdown-body a { color: var(--terminal-accent); text-underline-offset: 2px; }
 .markdown-inline-image { display: block; max-width: min(100%, 480px); height: auto; margin: 6px 0; border-radius: 8px; border: 1px solid var(--terminal-faint); background: var(--terminal-surface); }
+.tool-image-thumbnail { max-width: min(100%, 320px); }
 .markdown-image-button { display: inline-block; max-width: min(100%, 480px); margin: 6px 0; padding: 0; border: 0; background: transparent; cursor: zoom-in; text-align: left; }
 .markdown-image-button .markdown-inline-image { margin: 0; transition: border-color 140ms ease, transform 140ms ease; }
 @media (hover: hover) and (pointer: fine) {

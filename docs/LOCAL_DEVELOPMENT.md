@@ -283,7 +283,11 @@ How it maps to the real host:
   files stay plain; the lazy tokenizer caps input at 128 KiB / 2,500 lines,
   switches with Light/Dark/System, and never inserts HTML or rewrites output.
   Unrecognized, failed, and oversized file output falls back to the existing
-  raw transcript.
+  raw transcript. A completed read of a binary raster image (`.png`, `.jpg`,
+  `.jpeg`, `.gif`, `.webp`) has no numbered view; its expanded row instead
+  shows a thumbnail loaded from the workspace via `readSessionImage` (the
+  same loader and cache as Markdown images), and clicking it opens the image
+  viewer tab. SVG reads return source text and keep the numbered view.
   Native Muse `search` has its own Searching→Searched row: a bounded parser
   groups verified `path:line:match` and `path-line-context` rows by file,
   counts only matches (not context), and handles empty results, files-only,
@@ -331,7 +335,8 @@ How it maps to the real host:
   grammar, so its numbered view stays plain. `read-svg-tool` reads
   `diagram.svg` as numbered source (also plain) with the file in the
   workspace so Open renders the image tab; `read-png-tool` reads the
-  binary `picture.png`, whose simulated result has no numbered text view.
+  binary `picture.png`, whose expanded tool row shows a workspace-loaded
+  thumbnail (click to open the image viewer) instead of a numbered view.
   `dev/fixtures/edit-patch.json` is sanitized from a disposable real Muse
   `edit_file` run.
 

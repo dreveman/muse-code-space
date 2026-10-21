@@ -49,6 +49,24 @@ export function filePreviewForTool(details: ToolDetails | null): FilePreview | n
   }
   return null;
 }
+export type ImagePreview = { path: string };
+// Binary raster images have no verified text wrapper, so they can never be
+// a numbered file view. A completed read of one gets a thumbnail instead,
+// loaded from the workspace like Markdown images. SVG is deliberately not
+// here: its reads return source text and keep the numbered view above.
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
+export function imagePreviewForTool(details: ToolDetails | null): ImagePreview | null {
+  if (!details || details.status !== "completed" || details.failureReason) return null;
+  const tool = details.tool?.toLowerCase();
+  if (tool !== "read_file" && tool !== "read") return null;
+  if (filePreviewForTool(details)) return null;
+  if (!details.args || details.args.length > 200_000) return null;
+  let path: unknown;
+  try { path = (JSON.parse(details.args) as { path?: unknown }).path; } catch { return null; }
+  if (typeof path !== "string" || !path || path.length > 1000 || /[\x00-\x1f\x7f<>]/.test(path) || /^\w+:\/\//.test(path)) return null;
+  const ext = path.split(/[\\/]/).at(-1)?.split(".").at(-1)?.toLowerCase() ?? "";
+  return IMAGE_EXTENSIONS.has(ext) ? { path } : null;
+}
 export function fileMetric(preview: FilePreview): string {
   const more = preview.partial ? "+" : "";
   if (preview.bytes >= 10 * 1024) return `${Math.round(preview.bytes / 1024)}${more} KB`;

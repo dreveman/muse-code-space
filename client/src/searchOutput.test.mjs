@@ -43,5 +43,5 @@ test('the search view and raw fallback remain separately reachable', () => {
   const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
   assert.ok(app.includes('presentation.view === "search" && !showRawToolOutput ? searchPreviewForTool(displayDetails) : null'));
   assert.ok(app.includes('<ToolSearchView preview={searchPreview} />'));
-  assert.ok(app.includes('!filePreview && !searchPreview && !agentList'));
+  assert.ok(app.includes('!filePreview && !imagePreview && !searchPreview && !agentList'));
 });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileMetric, filePreviewForTool, toolPresentation } from "./toolPresentation.ts";
+import { fileMetric, filePreviewForTool, imagePreviewForTool, toolPresentation } from "./toolPresentation.ts";
 
 const details = (tool, args, output, status = "completed") => ({ tool, status, args, output,
   failureReason: null, truncated: false, outputRef: null, patchRef: null, patchSummary: null });
@@ -19,6 +19,29 @@ test("read_file strips the verified wrapper and uses the source line numbers", (
   assert.equal(fileMetric(filePreviewForTool(forty)), "40 lines");
   assert.equal(filePreviewForTool(details("read_file", d.args, "unknown response")), null, "unrecognized output remains plain text");
   assert.equal(filePreviewForTool(details("read_file", d.args, d.output, "failed")), null);
+});
+
+test("binary image reads select a thumbnail preview instead of a numbered file view", () => {
+  const png = details("read_file", '{"path":"picture.png"}', "Read image file `picture.png`.");
+  assert.deepEqual(imagePreviewForTool(png), { path: "picture.png" });
+  assert.equal(filePreviewForTool(png), null, "binary image output is never a numbered text preview");
+  assert.deepEqual(imagePreviewForTool(details("read_file", '{"path":"photo.JPG"}', "Read image file `photo.JPG`.")), { path: "photo.JPG" });
+  assert.equal(imagePreviewForTool(details("read_file", '{"path":"diagram.svg"}', "Read text file `diagram.svg`.\n1|<svg/>")), null, "SVG source keeps its numbered text view");
+  assert.equal(imagePreviewForTool(details("read_file", '{"path":"notes.md"}', "Read text file `notes.md`.\n1|# Notes")), null, "plain text files keep their numbered view");
+  assert.equal(imagePreviewForTool(details("write_file", '{"path":"picture.png","content":"x"}', "wrote 1 bytes to picture.png")), null, "only reads get an image thumbnail");
+  assert.equal(imagePreviewForTool(details("read_file", '{"path":"picture.png"}', "Read image file `picture.png`.", "failed")), null);
+  assert.equal(imagePreviewForTool(details("read_file", '{broken', "Read image file `picture.png`.")), null, "unparseable args fail closed");
+  assert.equal(imagePreviewForTool(details("read_file", '{"path":"https://example.com/picture.png"}', "Read image file.")), null, "remote paths fail closed");
+});
+
+test("image thumbnail loads workspace bytes like Markdown images and opens the viewer on click", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const component = readFileSync(new URL("./RenderedToolImage.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+  assert.ok(app.includes("imagePreviewForTool(displayDetails)") && app.includes("<ToolImageView sessionId={sessionId} preview={imagePreview}"));
+  assert.ok(component.includes("api.readSessionImage") && component.includes('queryKey: ["session-image", sessionId, relative]'), "same cache key and loader as Markdown images");
+  assert.ok(component.includes("onOpenFile(relative)") && component.includes('className="markdown-image-button"'), "click opens the image viewer tab");
+  assert.ok(css.includes(".tool-image-thumbnail { max-width: min(100%, 320px); }"), "thumbnail is smaller than a full Markdown image");
 });
 
 test("write_file shows only accepted content and substitutes a line or KB metric for time", () => {
