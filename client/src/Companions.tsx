@@ -52,25 +52,56 @@ function CompanionRatings({ companion }: { companion: Companion }) {
   );
 }
 
-function CompanionConfiguration({ companion }: { companion: Companion }) {
+let savedDetailsOpen = false;
+let savedSoulOpen = false;
+let savedSpacing: { skills?: string; details?: string } = {};
+
+function CompanionConfiguration({
+  companion,
+  soulOpen,
+  onToggleSoul,
+}: {
+  companion: Companion;
+  soulOpen: boolean;
+  onToggleSoul: (open: boolean) => void;
+}) {
   return <>
     <dl className="companion-configuration">
       <div><dt>Preferred model</dt><dd>{displayModelLabel(companion.model.preferredId)}</dd></div>
       <div><dt>Effort</dt><dd>{companion.effort === "xhigh" ? "Extra high" : companion.effort}</dd></div>
     </dl>
     <p className="companion-ratings-note">Ratings reflect relative strengths, model, and working style.</p>
-    <details className="companion-soul">
+    <details
+      className="companion-soul"
+      open={soulOpen}
+      onToggle={(event) => onToggleSoul(event.currentTarget.open)}
+    >
       <summary>SOUL.md</summary>
       <pre>{companion.artwork.soul}</pre>
     </details>
   </>;
 }
 
-const CompanionCard = memo(function CompanionCard({ companion, visible, models }: { companion: Companion; visible: boolean; models?: readonly { id: string }[] }) {
+const CompanionCard = memo(function CompanionCard({
+  companion,
+  visible,
+  models,
+  detailsOpen,
+  onToggleDetails,
+  soulOpen,
+  onToggleSoul,
+}: {
+  companion: Companion;
+  visible: boolean;
+  models?: readonly { id: string }[];
+  detailsOpen: boolean;
+  onToggleDetails: (next: boolean) => void;
+  soulOpen: boolean;
+  onToggleSoul: (next: boolean) => void;
+}) {
   const cardRef = useRef<HTMLElement>(null);
   const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const access = companionModelAccess(companion, models);
   const locked = access.status !== "ready";
   useEffect(() => subscribeIdleMotion(setIdleMotionAllowed), []);
@@ -81,9 +112,14 @@ const CompanionCard = memo(function CompanionCard({ companion, visible, models }
     companion.artwork.cardIdle,
     motion,
   );
+  const spacingStyle = {
+    "--companion-hue": agentNameHue(companion.name),
+    ...(savedSpacing.skills ? { "--companion-skills-spacing": savedSpacing.skills } : {}),
+    ...(savedSpacing.details ? { "--companion-details-spacing": savedSpacing.details } : {}),
+  } as CSSProperties;
   return (
     <article ref={cardRef} className={`companion-card${locked ? " companion-card-locked" : ""}${detailsOpen ? " companion-card-expanded" : ""}`} aria-labelledby="companion-card-name"
-      style={{ "--companion-hue": agentNameHue(companion.name) } as CSSProperties}>
+      style={spacingStyle}>
       <div className="companion-card-identity">
         <div className="companion-card-portrait">
           <img src={imageSource} width={256} height={256} alt={companion.character}
@@ -115,17 +151,24 @@ const CompanionCard = memo(function CompanionCard({ companion, visible, models }
             if (!detailsOpen && cardRef.current) {
               // Preserve the space distributed by the fixed-height card when
               // its additional content makes the expanded card grow.
-              for (const section of ["skills", "details"]) {
+              for (const section of ["skills", "details"] as const) {
                 const element = cardRef.current.querySelector<HTMLElement>(`.companion-${section}`);
-                if (element) cardRef.current.style.setProperty(`--companion-${section}-spacing`,
-                  section === "skills" ? getComputedStyle(element).marginBottom : getComputedStyle(element).marginTop);
+                if (element) {
+                  const val = section === "skills" ? getComputedStyle(element).marginBottom : getComputedStyle(element).marginTop;
+                  savedSpacing[section] = val;
+                  cardRef.current.style.setProperty(`--companion-${section}-spacing`, val);
+                }
               }
             }
-            setDetailsOpen((open) => !open);
+            onToggleDetails(!detailsOpen);
           }}>
           More about {companion.name}
         </ExpandButton>
-        {detailsOpen && <div id="companion-details-content"><CompanionConfiguration companion={companion} /></div>}
+        {detailsOpen && (
+          <div id="companion-details-content">
+            <CompanionConfiguration companion={companion} soulOpen={soulOpen} onToggleSoul={onToggleSoul} />
+          </div>
+        )}
       </section>
     </article>
   );
@@ -139,15 +182,17 @@ export function CompanionContact({ companion, selected, disabled, models, onSele
   onSelect: () => void;
 }) {
   const access = companionModelAccess(companion, models);
+  const roleLabel = companionRoleTitle(companion.role);
   return (
     <button type="button" className="companion-contact"
       aria-current={selected ? "true" : undefined}
+      title={`${companion.name} — ${roleLabel}`}
       style={{ "--companion-hue": agentNameHue(companion.name) } as CSSProperties}
       onClick={onSelect} disabled={disabled}>
       {/* Still in the Available list: motion is reserved for companions
           with a task in the sidebar (their session rows animate). */}
       <CompanionAvatar artwork={companion.artwork} animate={false} />
-      <span><strong>{companion.name}{access.status !== "ready" && <span title={access.status === "upgrade-required" ? "Upgrade required" : "Unavailable"}><CompanionLock /></span>}</strong><small>{companionRoleTitle(companion.role)}</small></span>
+      <span><strong>{companion.name}{access.status !== "ready" && <span title={access.status === "upgrade-required" ? "Upgrade required" : "Unavailable"}><CompanionLock /></span>}</strong><small>{roleLabel}</small></span>
     </button>
   );
 }
@@ -165,6 +210,16 @@ export function CompanionWelcome({ companion, visible, models, availableIds, onB
 }) {
   const welcomeRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const [detailsOpen, setDetailsOpenState] = useState(() => savedDetailsOpen);
+  const [soulOpen, setSoulOpenState] = useState(() => savedSoulOpen);
+  const setDetailsOpen = (next: boolean) => {
+    savedDetailsOpen = next;
+    setDetailsOpenState(next);
+  };
+  const setSoulOpen = (next: boolean) => {
+    savedSoulOpen = next;
+    setSoulOpenState(next);
+  };
   const index = availableIds.indexOf(companion.id);
   const canBrowse = index >= 0 && availableIds.length > 1;
   const browse = (direction: -1 | 1) => {
@@ -184,13 +239,24 @@ export function CompanionWelcome({ companion, visible, models, availableIds, onB
         <h2 id="companion-welcome-heading" className="companion-sr-only" tabIndex={-1}>Meet {companion.name}</h2>
         <div className="chat-floating-actions">{actions}</div>
       </header>
-      <div className="companion-welcome-content" ref={contentRef}>
-        <div className="companion-card-browser">
-          {canBrowse && <nav className="companion-card-navigation" aria-label="Browse available companions">
-            <button type="button" onClick={() => browse(-1)} disabled={browsingDisabled} aria-label="Previous companion">‹</button>
-            <button type="button" onClick={() => browse(1)} disabled={browsingDisabled} aria-label="Next companion">›</button>
-          </nav>}
-          <CompanionCard key={companion.id} companion={companion} visible={visible} models={models} />
+      <div className="companion-welcome-stage">
+        {canBrowse && <nav className="companion-card-navigation" aria-label="Browse available companions">
+          <button type="button" onClick={() => browse(-1)} disabled={browsingDisabled} aria-label="Previous companion">‹</button>
+          <button type="button" onClick={() => browse(1)} disabled={browsingDisabled} aria-label="Next companion">›</button>
+        </nav>}
+        <div className="companion-welcome-content" ref={contentRef}>
+          <div className="companion-card-browser">
+            <CompanionCard
+              key={companion.id}
+              companion={companion}
+              visible={visible}
+              models={models}
+              detailsOpen={detailsOpen}
+              onToggleDetails={setDetailsOpen}
+              soulOpen={soulOpen}
+              onToggleSoul={setSoulOpen}
+            />
+          </div>
         </div>
       </div>
       {composer}

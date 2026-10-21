@@ -12,9 +12,9 @@ test("context tooltip uses compact counts and a percentage, no jargon", () => {
   assert.ok(!/approx|token/i.test(contextUsageLabel(673_000, 922_000)));
 });
 
-test("voice button tooltip matches its aria label in both composers", () => {
+test("voice button tooltip matches its aria label in both composers and context ring only appears in started conversations", () => {
   const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   assert.equal(app.split('title={listening ? "Stop voice input" : "Start voice input"}').length - 1, 2);
   assert.ok(!app.includes('"Dictate"') && !app.includes('"Stop dictation"'));
-  assert.equal(app.split("title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}").length - 1, 2);
+  assert.equal(app.split("title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}").length - 1, 1);
 });

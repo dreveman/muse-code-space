@@ -38,7 +38,7 @@ test("sessions header lives above the sidebar list only", () => {
 
 test("rail resizes independently while chat content centers", () => {
   assert.ok(
-    /\.console-layout\s*\{[^}]*grid-template-columns:\s*clamp\(220px, var\(--sidebar-width, 316px\)/.test(css),
+    /\.console-layout\s*\{[^}]*grid-template-columns:\s*clamp\(244px, var\(--sidebar-width, 316px\)/.test(css),
     "sidebar column has a clamped, adjustable width",
   );
   assert.ok(app.includes('label="Resize companion sidebar and chat"'), "sidebar divider can be dragged");
