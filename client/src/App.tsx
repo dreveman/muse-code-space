@@ -18,7 +18,7 @@ import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
 import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSessionsByAge, groupSessionsByProject, resolveSelectedId, isSessionActive, sortSessions, type SortMode } from "./sessionList";
-import { newSessionIdentity } from "./sessionWorkspace";
+import { newSessionIdentity, randomUuid } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
 import { RepoPicker } from "./RepoPicker";
@@ -185,7 +185,7 @@ function QueuedEcho({ text, onCancel, sending = false }: { text: string; onCance
 }
 
 function makeNewSessionDraft(companion: (typeof companions)[number], projectKey = ""): NewSessionDraft {
-  return { ...newSessionIdentity(crypto.randomUUID(), Date.now()), projectKey, repoSlug: null, companionId: companion.id, companionName: companion.name };
+  return { ...newSessionIdentity(randomUuid(), Date.now()), projectKey, repoSlug: null, companionId: companion.id, companionName: companion.name };
 }
 
 
@@ -2134,7 +2134,7 @@ export function App() {
         const { dataBase64, mimeType } = await fileToBase64(file);
         const mediaType = /^image\/[a-z0-9.+-]+$/i.test(mimeType) ? mimeType : (file.type || "image/png");
         return {
-          id: crypto.randomUUID(),
+          id: randomUuid(),
           name: file.name || "image.png",
           mediaType,
           base64Data: dataBase64,
@@ -3554,7 +3554,7 @@ export function App() {
 
   // The header's terminal button: always a new terminal, as a new tab.
   const openTerminalTab = (sessionId: string) => {
-    const tab: SideTab = { key: crypto.randomUUID(), kind: "terminal", terminalId: null, number: null };
+    const tab: SideTab = { key: randomUuid(), kind: "terminal", terminalId: null, number: null };
     updateSidePanel(sessionId, (state) => ({ ...state, tabs: [...state.tabs, tab], activeKey: tab.key }));
     if (isNarrow) setMobileSideOpen(true);
   };
@@ -3562,7 +3562,7 @@ export function App() {
     updateSidePanel(sessionId, (state) => {
       const existing = state.tabs.find((tab) => tab.kind === "file" && tab.path === path);
       if (existing) return { ...state, activeKey: existing.key };
-      const tab: SideTab = { key: crypto.randomUUID(), kind: "file", path };
+      const tab: SideTab = { key: randomUuid(), kind: "file", path };
       return { ...state, tabs: [...state.tabs, tab], activeKey: tab.key };
     });
     if (isNarrow) setMobileSideOpen(true);
