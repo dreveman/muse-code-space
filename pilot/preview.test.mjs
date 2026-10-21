@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  bundleHtmlForSrcdocPreview,
   capturePreviewScreenshot,
   createPreviewWsManager,
   discoverWorkspaceListeningPorts,
@@ -20,14 +21,18 @@ import {
   rewriteJsForPreview,
   rewriteLocationHeader,
   rewriteSetCookieHeader,
+  transformEsModuleForSrcdoc,
 } from "./preview.mjs";
 
 test("isAllowedPreviewPort admits unprivileged loopback ports and rejects service/privileged ports", () => {
   assert.equal(isAllowedPreviewPort(5173), true);
+  assert.equal(isAllowedPreviewPort(4173), true);
   assert.equal(isAllowedPreviewPort(3000), true);
   assert.equal(isAllowedPreviewPort(80), false);
   assert.equal(isAllowedPreviewPort(443), false);
   assert.equal(isAllowedPreviewPort(18791), false);
+  assert.equal(isAllowedPreviewPort(18792), false);
+  assert.equal(isAllowedPreviewPort(18793), false);
   assert.equal(isAllowedPreviewPort(18790), false);
   assert.equal(isAllowedPreviewPort(65536), false);
 });
@@ -228,4 +233,56 @@ test("capturePreviewScreenshot saves a preview image in the workspace and return
     rmSync(wsDir, { recursive: true, force: true });
   }
 });
+
+test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces for cvm-frame srcdoc", async () => {
+  const server = createServer((req, res) => {
+    if (req.url === "/style.css") {
+      res.writeHead(200, { "content-type": "text/css" });
+      res.end("body { background: #111; }");
+      return;
+    }
+    if (req.url === "/src/util.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('export const greeting = "Hello from ES module";');
+      return;
+    }
+    if (req.url === "/src/main.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('import { greeting } from "./util.js"; document.title = greeting;');
+      return;
+    }
+    if (req.url === "/redirect-me") {
+      res.writeHead(302, { location: "/" });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(
+      '<!doctype html><html><head><link rel="stylesheet" href="/style.css"><script type="module" src="/@vite/client"></script></head><body><script type="module" src="/src/main.js"></script></body></html>',
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const res = await proxyPreviewHttpRequest({
+      port,
+      method: "GET",
+      path: "/redirect-me",
+      previewBasePath: "__srcdoc__",
+      sessionId: "sess-cvm",
+    });
+    assert.equal(res.reachable, true);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["x-preview-final-path"], "/");
+    const bundled = Buffer.from(res.bodyBase64, "base64").toString("utf8");
+    assert.ok(bundled.includes('<style data-preview-href="/style.css">body { background: #111; }</style>'));
+    assert.ok(bundled.includes('window.__cs_define("/src/util.js"'));
+    assert.ok(bundled.includes('window.__cs_define("/src/main.js"'));
+    assert.ok(bundled.includes('window.__cs_require("/src/main.js")'));
+    assert.ok(bundled.includes('nonce="__CS_CSP_NONCE__"'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 

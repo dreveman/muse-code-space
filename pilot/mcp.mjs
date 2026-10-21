@@ -73,12 +73,13 @@ export const MCP_TOOLS = [
     name: "preview_screenshot",
     title: "Capture live preview screenshot",
     description:
-      "Capture a screenshot of a web server listening on 127.0.0.1:<port> in this session's workspace and return a clickable Markdown image link (`[![title](.code-space/preview-<port>.png)](http://127.0.0.1:<port><path>)`). " +
-      "Include that Markdown in your reply so the user sees the screenshot in the transcript and can click it to open the live Preview tab.",
+      "Capture a screenshot of a web server listening on 127.0.0.1:<port> in this session's workspace and return a clickable Markdown preview card (`[![title (:<port>)](.code-space/preview-<port>.png)](http://127.0.0.1:<port><path>)`). " +
+      "Before calling this tool, make sure the server is already running in the background and listening on 127.0.0.1:<port>. " +
+      "Then paste the returned Markdown line verbatim into your reply so the user sees the screenshot in the transcript and can click it to open the live Preview tab.",
     inputSchema: {
       type: "object",
       properties: {
-        port: { type: "integer", description: "Loopback port where the dev server is listening (1024–65535)." },
+        port: { type: "integer", description: "Loopback port where the dev server is listening (1024–65535, e.g. 4173, 5173, 3000, 8000)." },
         path: { type: "string", description: "Request path on the dev server (default \"/\")." },
         title: { type: "string", description: "Short label for the preview card (default \"Live preview\")." },
       },

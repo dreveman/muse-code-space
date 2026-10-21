@@ -1501,7 +1501,7 @@ export const Actions = {
     async handler(ctx, args) {
       const denied = terminalAccessError(ctx.viewer, "file");
       if (denied) return { ok: false, port: null, reachable: null, error: denied };
-      if (args.port !== null && [443, 4173, 18790, 18791, 18792].includes(args.port)) {
+      if (args.port !== null && [443, 18790, 18791, 18792, 18793].includes(args.port)) {
         return { ok: false, port: null, reachable: null, error: `Port ${args.port} is reserved by Code Space.` };
       }
       const db = ctx.db<typeof schema>();

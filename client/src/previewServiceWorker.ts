@@ -21,8 +21,38 @@ export function isServiceWorkerContext(): boolean {
 export function previewRootUrlForSession(sessionId: string): string {
   const encoded = encodeURIComponent(sessionId);
   if (typeof window === "undefined") return `/assets/__preview/${encoded}/`;
-  const base = new URL("./", window.location.href);
-  return new URL(`assets/__preview/${encoded}/`, base).toString();
+  try {
+    const href = window.location?.href ?? "";
+    if (!href || href.startsWith("blob:") || href.startsWith("about:") || href.startsWith("data:")) {
+      return `/assets/__preview/${encoded}/`;
+    }
+    const base = new URL("./", href);
+    return new URL(`assets/__preview/${encoded}/`, base).toString();
+  } catch {
+    return `/assets/__preview/${encoded}/`;
+  }
+}
+
+/** Detect any active CSP script nonce on the host document (used inside cvm-frame). */
+export function detectHostCspNonce(): string | null {
+  if (typeof document === "undefined") return null;
+  const scripts = document.querySelectorAll("script");
+  for (let i = 0; i < scripts.length; i++) {
+    const s = scripts[i]!;
+    const nonce = s.nonce || s.getAttribute("nonce");
+    if (nonce) return nonce;
+  }
+  return null;
+}
+
+/** Inject the host CSP nonce into `<script nonce="__CS_CSP_NONCE__">` tags for `srcdoc`. */
+export function applyCspNonceToSrcdocHtml(html: string, nonce: string | null = detectHostCspNonce()): string {
+  if (!html) return "";
+  if (nonce) {
+    const safeNonce = nonce.replace(/"/g, "&quot;");
+    return html.replace(/nonce="__CS_CSP_NONCE__"/g, `nonce="${safeNonce}"`);
+  }
+  return html.replace(/\s*nonce="__CS_CSP_NONCE__"/g, "");
 }
 
 /** Extract `{ sessionId, basePath, subpath }` from a preview URL pathname. */
