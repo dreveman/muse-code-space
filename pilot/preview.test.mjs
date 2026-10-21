@@ -322,4 +322,58 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
   }
 });
 
+test("bundleHtmlForSrcdocPreview strips sourceMappingURL comments from inlined modules, scripts, and CSS", async () => {
+  const server = createServer((req, res) => {
+    if (req.url === "/style.css") {
+      res.writeHead(200, { "content-type": "text/css" });
+      res.end("body { color: red; }\n/*# sourceMappingURL=style.css.map */");
+      return;
+    }
+    if (req.url === "/src/util.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('export const greeting = "hi";\n//# sourceMappingURL=util.js.map');
+      return;
+    }
+    if (req.url === "/src/main.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('import { greeting } from "./util.js";\ndocument.title = greeting;\n//# sourceMappingURL=main.js.map');
+      return;
+    }
+    if (req.url === "/classic.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end("window.__classic = 1;\n//@ sourceMappingURL=classic.js.map");
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(
+      '<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body><script src="/classic.js"></script><script type="module" src="/src/main.js"></script></body></html>',
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    // Direct transform path (inline + crawled modules both go through it).
+    const transformed = transformEsModuleForSrcdoc(
+      'export const x = 1;\n//# sourceMappingURL=chunk.js.map\n',
+      "/src/chunk.js",
+      port,
+    );
+    assert.ok(!transformed.code.includes("sourceMappingURL"));
+    assert.ok(transformed.code.includes("const x = 1"));
+
+    const bundled = await bundleHtmlForSrcdocPreview(
+      '<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body><script src="/classic.js"></script><script type="module" src="/src/main.js"></script></body></html>',
+      { port, subpath: "/", sessionId: "sess-maps" },
+    );
+    assert.ok(!bundled.includes("sourceMappingURL"), "no sourceMappingURL comment survives inlining");
+    assert.ok(!bundled.includes(".js.map") && !bundled.includes(".css.map"));
+    assert.ok(bundled.includes('window.__cs_define("/src/main.js"'));
+    assert.ok(bundled.includes('window.__cs_define("/src/util.js"'));
+    assert.ok(bundled.includes("window.__classic = 1"));
+    assert.ok(bundled.includes("body { color: red; }"));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 

@@ -578,6 +578,7 @@ function fetchRawLocalResource(port, subpath, extraHeaders = {}, timeoutMs = 600
 
 async function inlineCssUrls(cssText, cssSubpath, port) {
   if (typeof cssText !== "string" || !cssText) return "";
+  cssText = stripSourceMappingURL(cssText);
   const urlRe = /url\(\s*(["']?)([^)"']+)\1\s*\)/gi;
   const matches = [...cssText.matchAll(urlRe)];
   if (matches.length === 0) return cssText;
@@ -600,6 +601,23 @@ async function inlineCssUrls(cssText, cssSubpath, port) {
     const rep = replacements.get(rawUrl?.trim() ?? "");
     return rep ? `url("${rep}")` : full;
   });
+}
+
+/**
+ * Strip `sourceMappingURL` comments (`//#`, legacy `//@`, and CSS
+ * `/*# … *\/`) from code that is about to be inlined into the srcdoc bundle.
+ * A relative map URL left in inlined code resolves against the iframe's
+ * opaque `about:srcdoc` origin, so the browser fetches a non-JSON error
+ * document for every chunk (WebKit logs a JSON parse error per chunk) and
+ * the map never loads. Only strip here, not in the proxied (non-srcdoc)
+ * path, where the relative URL still resolves to the dev server's real
+ * sibling `.map` file.
+ */
+export function stripSourceMappingURL(text) {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/(^|[\r\n])[ \t]*\/\/\s*[#@]\s*sourceMappingURL=[^\r\n]*/g, "$1")
+    .replace(/\/\*\s*[#@]\s*sourceMappingURL=[\s\S]*?\*\//g, "");
 }
 
 /**
@@ -645,7 +663,7 @@ export function transformEsModuleForSrcdoc(jsCode, modulePath, port) {
     return decls.join(" ");
   };
 
-  let transformed = String(jsCode ?? "");
+  let transformed = stripSourceMappingURL(String(jsCode ?? ""));
 
   // Replace import.meta.url / import.meta.hot / import.meta.env
   transformed = transformed.replace(/\bimport\.meta\b/g, "__cs_import_meta");
@@ -1398,7 +1416,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
         if (res.ok && !isHtmlResponse(res.contentType)) {
           scriptReplacements.push({
             from: fullTag,
-            to: `<script nonce="__CS_CSP_NONCE__">\n${escapeClosingScriptTag(res.buffer.toString("utf8"))}\n</script>`,
+            to: `<script nonce="__CS_CSP_NONCE__">\n${escapeClosingScriptTag(stripSourceMappingURL(res.buffer.toString("utf8")))}\n</script>`,
           });
         }
       }
