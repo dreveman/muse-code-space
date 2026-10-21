@@ -243,12 +243,22 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     }
     if (req.url === "/src/util.js") {
       res.writeHead(200, { "content-type": "application/javascript" });
-      res.end('export const greeting = "Hello from ES module";');
+      res.end('export const greeting = "Hello from ES module";\nexport const tpl = "<script></script>";');
+      return;
+    }
+    if (req.url === "/classic.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('window.__classicBoot = "<script></script>";');
       return;
     }
     if (req.url === "/src/main.js") {
       res.writeHead(200, { "content-type": "application/javascript" });
-      res.end('import { greeting } from "./util.js"; document.title = greeting;');
+      res.end('import { greeting } from "./util.js";\nconst lazy = import("./lazy.js");\ndocument.title = greeting;');
+      return;
+    }
+    if (req.url === "/src/lazy.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      res.end('export const lazyValue = 42;');
       return;
     }
     if (req.url === "/redirect-me") {
@@ -258,7 +268,7 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     }
     res.writeHead(200, { "content-type": "text/html" });
     res.end(
-      '<!doctype html><html><head><link rel="stylesheet" href="/style.css"><script type="module" src="/@vite/client"></script></head><body><script type="module" src="/src/main.js"></script></body></html>',
+      '<!doctype html><html><head><link rel="stylesheet" href="/style.css"><script type="module" src="/@vite/client"></script></head><body><script src="/classic.js"></script><script type="module" src="/src/main.js"></script></body></html>',
     );
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -279,7 +289,21 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     assert.ok(bundled.includes('window.__cs_define("/src/util.js"'));
     assert.ok(bundled.includes('window.__cs_define("/src/main.js"'));
     assert.ok(bundled.includes('window.__cs_require("/src/main.js")'));
+    // Dynamically imported chunks are crawled eagerly so the runtime finds them.
+    assert.ok(bundled.includes('window.__cs_define("/src/lazy.js"'));
+    assert.ok(bundled.includes('__cs_dynamic_import("/src/lazy.js")'));
     assert.ok(bundled.includes('nonce="__CS_CSP_NONCE__"'));
+    // `</script` inside inlined JS strings must be escaped, otherwise the HTML
+    // parser truncates the script block and the preview dies with a
+    // SyntaxError, leaving only static page text.
+    assert.ok(bundled.includes('window.__classicBoot = "<script><\\/script>";'));
+    assert.ok(bundled.includes('const tpl = "<script><\\/script>";'));
+    // Every `</script` must close a real block (string literals dequoted first
+    // so `<script>` inside JS strings is not miscounted as a block open).
+    const dequoted = bundled.replace(/(["'`])(?:\\.|(?!\1).)*\1/gs, "");
+    const opens = dequoted.match(/<script\b/gi) || [];
+    const closes = dequoted.match(/<\/script/gi) || [];
+    assert.equal(opens.length, closes.length);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
