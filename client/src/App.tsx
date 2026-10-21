@@ -3757,10 +3757,29 @@ export function App() {
       renderedRowCacheRef.current = cache;
     }
     const { rows } = cache;
-    return visibleTranscriptEvents.map((event) => {
+    const outputNodes: ReactNode[] = [];
+    let toolGroup: ReactNode[] = [];
+    let toolGroupFirstId: number | null = null;
+    const flushToolGroup = () => {
+      if (toolGroup.length === 0 || toolGroupFirstId === null) return;
+      outputNodes.push(
+        <article key={`tool-group-${toolGroupFirstId}`} className="output-event tool">
+          {toolGroup}
+        </article>,
+      );
+      toolGroup = [];
+      toolGroupFirstId = null;
+    };
+
+    for (const event of visibleTranscriptEvents) {
+      if (event.kind === "thinking") {
+        const summary = reasoningDisplay(event.content)?.summary ?? event.content;
+        if (!displayOutput(summary).trim()) continue;
+      }
       const rowTime = event.kind === "stdout" ? formatMessageTime(event.created_at, nowMs) : "";
       const runningAgents = event.kind === "agents" && !event.finished_at;
       const cached = rows.get(event.id);
+      let element: ReactNode;
       if (
         cached !== undefined &&
         cached.content === event.content &&
@@ -3771,34 +3790,58 @@ export function App() {
         cached.rowTime === rowTime &&
         (!runningAgents || cached.rowClockMs === nowMs)
       ) {
-        return cached.element;
+        element = cached.element;
+      } else {
+        const rowClockMs = runningAgents || event.kind === "stdout" ? nowMs : 0;
+        element = event.kind === "message" ? (
+          <MessageEvent key={event.id} content={event.content} agents={sessions}
+            assistantAvatar={assistantAvatarUrl} />
+        ) : event.kind === "tool" ? (
+          <ToolEvent
+            key={event.id}
+            sessionId={detailSessionIdForFiles}
+            workspaceRoot={detailWorkspaceRoot}
+            eventId={event.id}
+            text={displayOutput(event.content)}
+            details={event.tool_details}
+            startedAt={event.started_at}
+            finishedAt={event.finished_at}
+            expandedByDefault={expandTools}
+            showRawToolOutput={showRawToolOutput}
+            onOpenFile={openFileTabForDetail}
+          />
+        ) : (
+          <TranscriptEventRow
+            key={event.id}
+            event={event}
+            detailSessionId={detailSessionIdForFiles}
+            detailWorkspaceRoot={detailWorkspaceRoot}
+            nowMs={rowClockMs}
+            expandTools={expandTools}
+            showRawToolOutput={showRawToolOutput}
+            openFileTabForDetail={openFileTabForDetail}
+          />
+        );
+        rows.set(event.id, {
+          content: event.content,
+          finishedAt: event.finished_at,
+          toolDetails: event.tool_details,
+          rowTime,
+          rowClockMs,
+          element,
+        });
       }
-      const rowClockMs = runningAgents || event.kind === "stdout" ? nowMs : 0;
-      const element = event.kind === "message" ? (
-        <MessageEvent key={event.id} content={event.content} agents={sessions}
-          assistantAvatar={assistantAvatarUrl} />
-      ) : (
-        <TranscriptEventRow
-          key={event.id}
-          event={event}
-          detailSessionId={detailSessionIdForFiles}
-          detailWorkspaceRoot={detailWorkspaceRoot}
-          nowMs={rowClockMs}
-          expandTools={expandTools}
-          showRawToolOutput={showRawToolOutput}
-          openFileTabForDetail={openFileTabForDetail}
-        />
-      );
-      rows.set(event.id, {
-        content: event.content,
-        finishedAt: event.finished_at,
-        toolDetails: event.tool_details,
-        rowTime,
-        rowClockMs,
-        element,
-      });
-      return element;
-    });
+
+      if (event.kind === "tool") {
+        if (toolGroupFirstId === null) toolGroupFirstId = event.id;
+        toolGroup.push(element);
+      } else {
+        flushToolGroup();
+        outputNodes.push(element);
+      }
+    }
+    flushToolGroup();
+    return outputNodes;
   }, [
     detailSessionIdForFiles,
     detailWorkspaceRoot,

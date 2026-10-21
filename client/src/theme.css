@@ -465,6 +465,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
    show their frozen duration, and adapters may opt out of that label. The
    clickable highlight is inset within the existing full-width tool box. */
 .tool-box { min-width: 0; }
+.tool-box + .tool-box { margin-top: 10px; }
 .tool-row { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .tool-trigger { width: calc(100% + 20px); margin: -5px -10px; padding: 5px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
 .tool-trigger:active, .tool-trigger:focus-visible { background: color-mix(in srgb, var(--terminal-user) 7%, transparent); }
@@ -534,7 +535,7 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .tool-name { font-size: calc(1em - 1px); font-weight: 500; color: #4e606f; }
 :root[data-color-mode="dark"] .tool-name:not(.tool-name-error) { color: #9fb1c1; }
 .tool-name-error { color: var(--terminal-error); }
-.tool-detail { font-size: calc(1em - 2px); color: #a4b0bc; }
+.tool-detail { font-size: calc(1em - 2px); color: var(--terminal-dim); }
 .message-text { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: inherit; }
 .message-time { margin-top: 2px; color: var(--terminal-dim); font: 9px/1.4 var(--mono); }
 .markdown-body { min-width: 0; overflow-wrap: anywhere; color: inherit; }
@@ -1059,6 +1060,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .terminal-prompt textarea { min-height: 48px; padding: 14px 17px 6px; }
   .composer-toolbar { padding: 4px 9px 9px 12px; }
   .output-event { padding: 11px 20px; font-size: 14.5px; }
+  .tool-box + .tool-box { margin-top: 11px; }
   /* The chat column takes all leftover width, but its reading content stays
      centered at a fixed measure no matter how wide the window grows. */
   .output-stream, .terminal-prompt, .transcript-empty { width: 100%; max-width: 860px; margin-inline: auto; }
@@ -1234,9 +1236,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   border-bottom-width: min(1px, var(--chat-inset-bottom, 0px));
   border-radius: var(--chat-round, 0);
 }
-.output-event.user, .output-event.agents, .output-event.message { border-radius: var(--chat-round, 0); }
-.output-event.tool:not(.output-event.tool + .output-event.tool) { border-top-left-radius: var(--chat-round, 0); border-top-right-radius: var(--chat-round, 0); }
-.output-event.tool:not(:has(+ .output-event.tool)) { border-bottom-left-radius: var(--chat-round, 0); border-bottom-right-radius: var(--chat-round, 0); }
+.output-event.user, .output-event.tool, .output-event.agents, .output-event.message { border-radius: var(--chat-round, 0); }
 
 /* Permanent-delete confirmation. */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .38); }

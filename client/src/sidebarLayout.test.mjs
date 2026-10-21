@@ -69,8 +69,8 @@ test("chat boxes ease from square/full width to rounded as the chat centers", ()
     assert.ok(new RegExp(`${name}:\\s*clamp\\(0px, \\(100cqw - 880px\\)`).test(vars), `${name} ramps with the column width`);
   }
   assert.ok(/\.terminal-composer\s*\{[^}]*border-radius:\s*var\(--chat-round/.test(css));
-  assert.ok(/\.output-event\.user, \.output-event\.agents, \.output-event\.message\s*\{\s*border-radius:\s*var\(--chat-round/.test(css));
-  assert.ok(/\.output-event\.tool:not\(:has\(\+ \.output-event\.tool\)\)\s*\{[^}]*var\(--chat-round/.test(css), "tool runs round as one block");
+  assert.ok(/\.output-event\.user, \.output-event\.tool, \.output-event\.agents, \.output-event\.message\s*\{\s*border-radius:\s*var\(--chat-round/.test(css), "tool runs round as one unified block");
+  assert.ok(app.includes('className="output-event tool"'), "consecutive tools share one unified .output-event.tool container");
   // The ramp: ~4px at a 902px column, the full 11px from 940px.
   const radius = (w) => Math.min(11, Math.max(0, (w - 880) * 0.1834));
   assert.ok(radius(902) > 3 && radius(902) < 5 && radius(902) < radius(950) && radius(950) === 11);
