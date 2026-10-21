@@ -1321,7 +1321,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
     const localPath = resolveLocalPreviewPath(hrefMatch[2], subpath, port);
     if (!localPath) continue;
     const res = await fetchRawLocalResource(port, localPath, { accept: "text/css,*/*" });
-    if (res.ok) {
+    if (res.ok && !isHtmlResponse(res.contentType)) {
       const cssWithAssets = await inlineCssUrls(res.buffer.toString("utf8"), localPath, port);
       out = out.replace(tag, `<style data-preview-href="${localPath.replace(/"/g, "&quot;")}">${cssWithAssets}</style>`);
     }
@@ -1395,7 +1395,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
         });
       } else {
         const res = await fetchRawLocalResource(port, localPath, { accept: "application/javascript,*/*" });
-        if (res.ok) {
+        if (res.ok && !isHtmlResponse(res.contentType)) {
           scriptReplacements.push({
             from: fullTag,
             to: `<script nonce="__CS_CSP_NONCE__">\n${escapeClosingScriptTag(res.buffer.toString("utf8"))}\n</script>`,
@@ -1431,6 +1431,15 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
           return;
         }
         const ct = String(res.contentType || "").toLowerCase();
+        if (isHtmlResponse(res.contentType)) {
+          // Extensionless specifiers (e.g. a lazy chunk id) can resolve to an
+          // SPA fallback document instead of JS. Never bundle HTML as a
+          // module: it parses as a factory body and throws `Unexpected
+          // token '<'`, killing the whole preview. Leave it for the runtime
+          // miss path instead.
+          moduleDefinitions.set(modPath, "");
+          return;
+        }
         const rawText = res.buffer.toString("utf8");
         if (ct.includes("text/css") || (modPath.split("?")[0].endsWith(".css") && !rawText.includes("updateStyle") && !rawText.includes("export "))) {
           const inlinedCss = await inlineCssUrls(rawText, modPath, port);
@@ -2036,6 +2045,15 @@ function buildPreviewSnapshotSvg({ url, headline, subtitle, paragraphs, actions 
  */
 function escapeClosingScriptTag(jsText) {
   return String(jsText ?? "").replace(/<\/script/gi, "<\\/script");
+}
+
+/** True when a fetched preview resource is an HTML document (e.g. an SPA
+ * fallback served for an extensionless module path) rather than the JS/CSS
+ * the bundler asked for. */
+function isHtmlResponse(contentType) {
+  return String(contentType || "")
+    .toLowerCase()
+    .includes("text/html");
 }
 
 /**
