@@ -610,6 +610,7 @@ async function inlineCssUrls(cssText, cssSubpath, port) {
  */
 export function transformEsModuleForSrcdoc(jsCode, modulePath, port) {
   const discoveredImports = new Set();
+  const discoveredDynamicImports = new Set();
   let importCounter = 0;
   let reexportCounter = 0;
   const deferredExports = [];
@@ -649,11 +650,15 @@ export function transformEsModuleForSrcdoc(jsCode, modulePath, port) {
   // Replace import.meta.url / import.meta.hot / import.meta.env
   transformed = transformed.replace(/\bimport\.meta\b/g, "__cs_import_meta");
 
-  // Transform dynamic import("...") without adding lazy chunks to eager crawl
+  // Transform dynamic import("..."). Literal specs that resolve to the local
+  // server are collected for the eager crawl so `__cs_dynamic_import` finds
+  // them bundled at runtime; anything else keeps its spec and falls back to
+  // the (possibly empty) runtime miss path.
   transformed = transformed.replace(
     /\bimport\s*\(\s*(["'])([^"'\r\n]+)\1\s*\)/g,
     (_full, _q, spec) => {
       const local = resolveLocalPreviewPath(spec, modulePath, port);
+      if (local) discoveredDynamicImports.add(local);
       return `__cs_dynamic_import(${JSON.stringify(local || spec)})`;
     },
   );
@@ -809,6 +814,7 @@ export function transformEsModuleForSrcdoc(jsCode, modulePath, port) {
   return {
     code: transformed,
     imports: [...discoveredImports],
+    dynamicImports: [...discoveredDynamicImports],
   };
 }
 
@@ -1277,6 +1283,7 @@ function buildSrcdocBootstrapScript({ sessionId, port, subpath, hasViteClient })
     if (factories[id] || factories[cleanId]) {
       return window.__cs_require(id);
     }
+    console.warn("[Preview] Dynamically imported module was not bundled:", id);
     return {};
   };
 
@@ -1391,7 +1398,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
         if (res.ok) {
           scriptReplacements.push({
             from: fullTag,
-            to: `<script nonce="__CS_CSP_NONCE__">\n${res.buffer.toString("utf8")}\n</script>`,
+            to: `<script nonce="__CS_CSP_NONCE__">\n${escapeClosingScriptTag(res.buffer.toString("utf8"))}\n</script>`,
           });
         }
       }
@@ -1400,6 +1407,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
       const transformed = transformEsModuleForSrcdoc(inlineBody, subpath, port);
       moduleDefinitions.set(inlineId, transformed.code);
       for (const imp of transformed.imports) enqueueModule(imp);
+      for (const imp of transformed.dynamicImports) enqueueModule(imp);
       scriptReplacements.push({
         from: fullTag,
         to: `\x00CS_MODULE_ENTRY:${inlineId}\x00`,
@@ -1435,6 +1443,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
         const transformed = transformEsModuleForSrcdoc(rawText, modPath, port);
         moduleDefinitions.set(modPath, transformed.code);
         for (const imp of transformed.imports) enqueueModule(imp);
+        for (const imp of transformed.dynamicImports) enqueueModule(imp);
       }),
     );
   }
@@ -1450,7 +1459,7 @@ export async function bundleHtmlForSrcdocPreview(html, { port, subpath = "/", se
     for (const [modId, code] of moduleDefinitions.entries()) {
       if (typeof code !== "string") continue;
       lines.push(
-        `window.__cs_define(${JSON.stringify(modId)}, function(__cs_require, __cs_exports, __cs_import_meta) {\n${code}\n});`,
+        `window.__cs_define(${JSON.stringify(modId)}, function(__cs_require, __cs_exports, __cs_import_meta) {\n${escapeClosingScriptTag(code)}\n});`,
       );
     }
     return lines.join("\n");
@@ -2014,6 +2023,19 @@ function buildPreviewSnapshotSvg({ url, headline, subtitle, paragraphs, actions 
   ${p2 ? `<text x="72" y="260" fill="#8b949e" font-family="system-ui, -apple-system, sans-serif" font-size="14">${p2}</text>` : ""}
   ${actionRects.join("\n  ")}
 </svg>`;
+}
+
+/**
+ * Escape `</script` sequences in JavaScript that is inlined into an HTML
+ * `<script>` block (srcdoc bundling). The HTML parser terminates a script
+ * element at the first case-insensitive `</script`, even one inside a JS
+ * string literal (e.g. `innerHTML = "<script></script>"`), which truncates
+ * the block and surfaces as `Uncaught SyntaxError` with the app never
+ * booting. `<\/script` is equivalent inside string/regex literals and keeps
+ * the block intact.
+ */
+function escapeClosingScriptTag(jsText) {
+  return String(jsText ?? "").replace(/<\/script/gi, "<\\/script");
 }
 
 /**
