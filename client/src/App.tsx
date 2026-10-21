@@ -3586,12 +3586,23 @@ export function App() {
       return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
     });
   }, [isNarrow, mobileSideOpen]);
+  const disconnectPreviewPort = useCallback((sessionId: string) => {
+    setPreviewPortOverrides((prev) => ({ ...prev, [sessionId]: null }));
+    queryClient.setQueryData(
+      ["preview-ports", sessionId],
+      (prev: { ok: boolean; configured_port: number | null; reachable: boolean | null; ports: Array<{ port: number; command: string; pid: number }> } | undefined) =>
+        prev ? { ...prev, configured_port: null, reachable: null } : undefined,
+    );
+    void api.setPreviewPort({ session_id: sessionId, port: null }).catch(() => undefined);
+  }, [queryClient]);
   const togglePreviewTab = useCallback((sessionId: string) => {
+    let closedPreview = false;
     setSidePanels((current) => {
       const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
       const existing = state.tabs.find((tab) => tab.kind === "preview");
       const currentlyShowing = existing && state.activeKey === existing.key && (!isNarrow || mobileSideOpen);
       if (currentlyShowing) {
+        closedPreview = true;
         const tabs = state.tabs.filter((tab) => tab.key !== existing.key);
         const activeKey = tabs.at(-1)?.key ?? null;
         if (tabs.length === 0) setMobileSideOpen(false);
@@ -3604,7 +3615,8 @@ export function App() {
       const tab: SideTab = { key: "preview", kind: "preview" };
       return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
     });
-  }, [isNarrow, mobileSideOpen]);
+    if (closedPreview) disconnectPreviewPort(sessionId);
+  }, [isNarrow, mobileSideOpen, disconnectPreviewPort]);
   // Stable per-detail-session file opener so memoized tool rows keep an
   // identical onOpenFile prop across renders.
   const detailSessionIdForFiles = detailSession?.id ?? null;
@@ -3798,9 +3810,10 @@ export function App() {
     showRawToolOutput,
     openFileTabForDetail,
   ]);
-  // Closing a tab ends what it shows: for a terminal, its shell.
+  // Closing a tab ends what it shows: for a terminal, its shell; for a preview, its attached port.
   const closeSideTab = (sessionId: string, tab: SideTab) => {
     if (tab.kind === "terminal" && tab.terminalId) void api.closeTerminal({ terminal_id: tab.terminalId }).catch(() => undefined);
+    if (tab.kind === "preview") disconnectPreviewPort(sessionId);
     updateSidePanel(sessionId, (state) => {
       const index = state.tabs.findIndex((item) => item.key === tab.key);
       const tabs = state.tabs.filter((item) => item.key !== tab.key);

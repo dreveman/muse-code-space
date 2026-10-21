@@ -25,8 +25,8 @@
 :root[data-color-mode="dark"] .companion-task-list .status-dot.working { border-color: color-mix(in srgb, var(--text) 45%, transparent); border-top-color: var(--text); }
 .companion-task-list .session-name-block { grid-column: 2; grid-row: 1; align-self: start; padding-top: 4px; gap: 2px; }
 .companion-task-list .session-title { padding-right: 28px; font-size: 13px; font-weight: 600; line-height: 1.25; }
-.companion-task-avatar { flex: 0 0 auto; border: 1px solid #d6dad6; border-radius: 11px; }
-:root[data-color-mode="dark"] .companion-task-avatar { border-color: var(--border); }
+.companion-task-avatar { flex: 0 0 auto; border: 1px solid #e6e2dc; border-radius: 11px; }
+:root[data-color-mode="dark"] .companion-task-avatar { border-color: #1f2427; }
 .companion-task-list .session-summary { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 1.35; }
 .companion-task-state { margin-top: 2px; color: var(--dim); font-size: 10px; line-height: 1.4; }
 .companion-task-list .session-time { position: absolute; top: 6px; right: 0; margin: 0; }
@@ -53,8 +53,8 @@
   border-color: hsl(var(--companion-hue) 40% 55% / .4);
   background: color-mix(in srgb, hsl(var(--companion-hue) 55% 55%) 12%, var(--bg));
 }
-.companion-contact img { flex: 0 0 auto; border: 1px solid #d6dad6; border-radius: 11px; background: #f5f1eb; }
-:root[data-color-mode="dark"] .companion-contact img { border-color: var(--border); }
+.companion-contact img { flex: 0 0 auto; border: 1px solid #e6e2dc; border-radius: 11px; background: #f5f1eb; }
+:root[data-color-mode="dark"] .companion-contact img { border-color: #1f2427; }
 .companion-contact > span { display: grid; gap: 4px; min-width: 0; }
 .companion-contact strong { font-size: 13px; font-weight: 650; }
 .companion-lock { display: inline-block; width: 13px; height: 13px; margin-left: 6px; vertical-align: -2px; color: var(--dim); }

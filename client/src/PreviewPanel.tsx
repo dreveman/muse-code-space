@@ -17,9 +17,8 @@ export function PreviewTabIcon() {
 
 function RefreshIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 7v5h-5M4 17v-5h5" />
-      <path d="M5.5 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.5-2" />
+    <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+      <path d="M13.476.516c.42 0 .762.34.762.762v2.744c0 .421-.341.762-.762.762H10.81a.762.762 0 1 1 0-1.524h.995a6.1 6.1 0 1 0 2.44 4.88.762.762 0 0 1 1.524 0 7.624 7.624 0 1 1-3.054-6.102v-.76c0-.421.341-.762.762-.762z" />
     </svg>
   );
 }
@@ -50,6 +49,38 @@ function base64ToUtf8(base64: string): string {
   }
 }
 
+export function formatPreviewAddress(port: number | null): string {
+  return port !== null ? `127.0.0.1:${port}` : "";
+}
+
+export function parsePreviewPortInput(
+  raw: string,
+): { port: number; path?: string } | { error: string } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const bareMatch = trimmed.match(/^:?(\d{1,5})(\/.*)?$/);
+  if (bareMatch) {
+    const port = Number(bareMatch[1]);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      return { error: "Enter a port between 1024 and 65535." };
+    }
+    return { port, ...(bareMatch[2] ? { path: bareMatch[2] } : {}) };
+  }
+  const hostMatch = trimmed.match(/^(?:https?:\/\/)?([^/:]+):(\d{1,5})(\/.*)?$/i);
+  if (hostMatch) {
+    const host = hostMatch[1]!.toLowerCase();
+    if (host !== "127.0.0.1" && host !== "localhost") {
+      return { error: "Only 127.0.0.1:<port> loopback addresses are supported." };
+    }
+    const port = Number(hostMatch[2]);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      return { error: "Enter a port between 1024 and 65535." };
+    }
+    return { port, ...(hostMatch[3] ? { path: hostMatch[3] } : {}) };
+  }
+  return { error: "Enter 127.0.0.1:<port>, :<port>, or <port> (1024–65535)." };
+}
+
 export function PreviewView({
   sessionId,
   active,
@@ -59,7 +90,7 @@ export function PreviewView({
   active: boolean;
   initialPort?: number | null;
 }) {
-  const [portInput, setPortInput] = useState(initialPort ? String(initialPort) : "");
+  const [portInput, setPortInput] = useState(formatPreviewAddress(initialPort));
   const [portError, setPortError] = useState<string | null>(null);
   const [savingPort, setSavingPort] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -92,7 +123,13 @@ export function PreviewView({
 
   useEffect(() => {
     if (configuredPort !== null) {
-      setPortInput((current) => (current.trim() === "" ? String(configuredPort) : current));
+      setPortInput((current) => {
+        const parsed = parsePreviewPortInput(current);
+        if (current.trim() === "" || (parsed && "port" in parsed && parsed.port === configuredPort)) {
+          return formatPreviewAddress(configuredPort);
+        }
+        return current;
+      });
     }
   }, [configuredPort]);
 
@@ -375,7 +412,7 @@ export function PreviewView({
     };
   }, [active, sessionId, configuredPort, reachable, loadPreviewDocument]);
 
-  const attachPort = async (port: number | null) => {
+  const attachPort = async (port: number | null, initialSubpath = "/") => {
     setPortError(null);
     setSavingPort(true);
     try {
@@ -386,8 +423,8 @@ export function PreviewView({
       }
       if (port !== null) {
         manuallyDetachedRef.current = false;
-        setPortInput(String(port));
-        setCurrentPath("/");
+        setPortInput(formatPreviewAddress(port));
+        setCurrentPath(initialSubpath);
         setReloadNonce((n) => n + 1);
       } else {
         manuallyDetachedRef.current = true;
@@ -404,20 +441,28 @@ export function PreviewView({
 
   const handlePortSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmed = portInput.trim().replace(/^:+/, "");
-    if (!trimmed) {
+    const parsed = parsePreviewPortInput(portInput);
+    if (!parsed) {
       void attachPort(null);
       return;
     }
-    const num = Number(trimmed);
-    if (!Number.isInteger(num) || num < 1024 || num > 65535) {
-      setPortError("Enter a port between 1024 and 65535.");
+    if ("error" in parsed) {
+      setPortError(parsed.error);
       return;
     }
-    void attachPort(num);
+    setPortInput(formatPreviewAddress(parsed.port));
+    void attachPort(parsed.port, parsed.path ?? "/");
   };
 
   const reloadPreview = () => {
+    const parsed = parsePreviewPortInput(portInput);
+    if (parsed && "port" in parsed) {
+      setPortInput(formatPreviewAddress(parsed.port));
+      if (parsed.port !== configuredPort) {
+        void attachPort(parsed.port, parsed.path ?? "/");
+        return;
+      }
+    }
     setReloadNonce((n) => n + 1);
     void portsQuery.refetch();
   };
@@ -441,22 +486,23 @@ export function PreviewView({
         : statusKind === "live"
           ? `Live · :${configuredPort}${currentPath !== "/" ? currentPath : ""}`
           : statusKind === "exited"
-            ? `Server exited · :${configuredPort}`
+            ? `Exited · :${configuredPort}`
             : `No server · :${configuredPort}`;
+
+  const trimmedPortInput = portInput.trim();
 
   return (
     <div className="preview-pane">
       <div className="preview-toolbar">
         <form className="preview-port-form" onSubmit={handlePortSubmit}>
           <label className="sr-only" htmlFor={`preview-port-${sessionId}`}>
-            Preview port
+            Preview address
           </label>
           <input
             id={`preview-port-${sessionId}`}
             type="text"
-            inputMode="numeric"
             className="preview-port-input"
-            placeholder="Port (e.g. 5173)"
+            placeholder="127.0.0.1:port"
             value={portInput}
             disabled={savingPort}
             onChange={(event) => {
@@ -465,28 +511,15 @@ export function PreviewView({
             }}
           />
           <button
-            type="submit"
-            className="terminal-panel-button preview-attach-btn"
-            disabled={savingPort || portInput.trim().replace(/^:+/, "") === ""}
+            type="button"
+            className="preview-reload-btn"
+            onClick={reloadPreview}
+            disabled={savingPort || (configuredPort === null && trimmedPortInput === "")}
+            aria-label="Reload preview"
+            title="Reload preview"
           >
-            {configuredPort !== null && String(configuredPort) === portInput.trim().replace(/^:+/, "")
-              ? "Attached"
-              : "Attach"}
+            <RefreshIcon />
           </button>
-          {configuredPort !== null && (
-            <button
-              type="button"
-              className="terminal-panel-button preview-detach-btn"
-              disabled={savingPort}
-              title="Detach port"
-              aria-label="Detach port"
-              onClick={() => {
-                void attachPort(null);
-              }}
-            >
-              ×
-            </button>
-          )}
         </form>
 
         {detectedPorts.length > 0 && (
@@ -516,20 +549,11 @@ export function PreviewView({
             className={`preview-status-pill status-${statusKind}`}
             role="status"
             aria-live="polite"
+            aria-label={statusText}
+            title={statusText}
           >
             <i aria-hidden="true" />
-            <span>{statusText}</span>
           </span>
-          <button
-            type="button"
-            className="preview-reload-btn"
-            onClick={reloadPreview}
-            disabled={configuredPort === null}
-            aria-label="Reload preview"
-            title="Reload preview"
-          >
-            <RefreshIcon />
-          </button>
         </div>
       </div>
 

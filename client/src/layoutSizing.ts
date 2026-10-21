@@ -6,7 +6,7 @@ export const SIDEBAR_MIN = 244;
 export const SIDEBAR_MAX = 560;
 export const MIN_DETAIL_WIDTH = 440;
 export const CHAT_MIN = 280;
-export const TERMINAL_MIN = 240;
+export const TERMINAL_MIN = 274;
 export const DIVIDER_WIDTH = 1;
 export const PANE_SIZES_KEY = "muse-code-space:pane-sizes-v1";
 

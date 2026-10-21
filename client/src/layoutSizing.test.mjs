@@ -19,10 +19,10 @@ test("sidebar clamps to leave room for the detail view at desktop sizes", () => 
 });
 
 test("chat/terminal bounds preserve usable minimums as desktop width shrinks", () => {
-  assert.deepEqual(chatWidthBounds(801), { min: 280, max: 560 });
+  assert.deepEqual(chatWidthBounds(801), { min: 280, max: 526 });
   assert.deepEqual(chatWidthBounds(441), { min: 220, max: 220 });
   assert.equal(clampChatShare(0.01, 801), 280 / 800);
-  assert.equal(clampChatShare(0.99, 801), 560 / 800);
+  assert.equal(clampChatShare(0.99, 801), 526 / 800);
   assert.equal(clampChatShare(NaN, 801), DEFAULT_CHAT_SHARE);
   assert.equal(clampChatShare(0.9, 441), 0.5);
 });
