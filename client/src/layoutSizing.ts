@@ -2,7 +2,7 @@
 // enough room to use the chat and terminal at every desktop window size.
 export const DEFAULT_SIDEBAR_WIDTH = 316;
 export const DEFAULT_CHAT_SHARE = 0.5;
-export const SIDEBAR_MIN = 220;
+export const SIDEBAR_MIN = 244;
 export const SIDEBAR_MAX = 560;
 export const MIN_DETAIL_WIDTH = 440;
 export const CHAT_MIN = 280;

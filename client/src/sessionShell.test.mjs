@@ -20,11 +20,11 @@ test("zero tasks show a companion card with a first-message composer", () => {
   assert.ok(!app.includes('autoDraftedRef'), "opening the app does not silently prepare a new task");
 });
 
-test("sidebar header says Code Companions without a create button", () => {
+test("sidebar header renders without a create button", () => {
   const header = app.match(/<header className="command-bar">[\s\S]*?<\/header>/);
   assert.ok(header, "command-bar header must always render");
-  assert.ok(header[0].includes("<h1>Code Companions</h1>"));
-  assert.ok(!header[0].includes('<button'), "tasks start by messaging a companion");
+  assert.ok(header[0].includes("CODING TEAM"));
+  assert.ok(!header[0].includes("New ") && !header[0].includes("Create"), "tasks start by messaging a companion");
   assert.ok(!app.includes("active session{"), "the active-session count headline is gone");
 });
 

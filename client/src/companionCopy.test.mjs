@@ -8,7 +8,7 @@ test("shell, composer, accessibility and menu copy call Code Space agents compan
   const menu = read("./WireDebug.tsx");
   const mentions = read("./AgentMentionMenu.tsx");
   const files = read("./SidePanel.tsx");
-  assert.ok(app.includes("<h1>Code Companions</h1>"));
+  assert.ok(app.includes('aria-label="Code companions"'));
   assert.ok(app.includes('aria-label="Filter"'));
   for (const label of ["Pick a companion", "Select a task", "Rename task", "Archive task", "Restore task", "Delete task"]) assert.ok(app.includes(label), label);
   assert.ok(menu.includes('aria-label="Companion menu"') && files.includes('title="Open companion artifact"'));

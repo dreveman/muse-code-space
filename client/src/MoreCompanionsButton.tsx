@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
 
-export function ExpandButton({ expanded, controls, onToggle, children, className = "" }: {
+export function ExpandButton({ expanded, controls, onToggle, children, className = "", title }: {
   expanded: boolean;
   controls: string;
   onToggle: () => void;
   children: ReactNode;
   className?: string;
+  title?: string;
 }) {
   return <button type="button" className={`more-companions-button ${className}`}
+    title={title} aria-label={title}
     aria-expanded={expanded} aria-controls={controls} onClick={onToggle}>
     <span>{children}</span>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -22,7 +24,8 @@ export function MoreCompanionsButton({ expanded, controls, onToggle }: {
   controls: string;
   onToggle: () => void;
 }) {
-  return <ExpandButton expanded={expanded} controls={controls} onToggle={onToggle}>
-    {expanded ? "Fewer companions" : "More companions"}
+  const label = expanded ? "Fewer companions" : "More companions";
+  return <ExpandButton expanded={expanded} controls={controls} onToggle={onToggle} title={label}>
+    {label}
   </ExpandButton>;
 }

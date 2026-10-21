@@ -1143,6 +1143,26 @@ function BackIcon() {
   );
 }
 
+function SidebarCloseIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-panel-left-close lucide-sidebar-close" aria-hidden="true">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+      <path d="m16 15-3-3 3-3" />
+    </svg>
+  );
+}
+
+function SidebarOpenIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-panel-left-open lucide-sidebar-open" aria-hidden="true">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+      <path d="m14 9 3 3-3 3" />
+    </svg>
+  );
+}
+
 function ArchiveIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1586,6 +1606,35 @@ export function App() {
   const [mobileSideOpen, setMobileSideOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [paneSizes, setPaneSizes] = useState(() => loadPaneSizes(window.innerWidth));
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("muse-code-space:sidebar-collapsed", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  }, []);
+  const [sidebarHintDismissed, setSidebarHintDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:sidebar-hint-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissSidebarHint = useCallback(() => {
+    setSidebarHintDismissed(true);
+    try {
+      window.localStorage.setItem("muse-code-space:sidebar-hint-dismissed", "1");
+    } catch {}
+  }, []);
   const layoutRef = useRef<HTMLDivElement>(null);
   const detailSplitRef = useRef<HTMLDivElement>(null);
   const [detailSplitWidth, setDetailSplitWidth] = useState(0);
@@ -2411,12 +2460,22 @@ export function App() {
     () => detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0,
     [detail?.events],
   );
+  const fakePilotTurnCount = useMemo(() => {
+    const isFakeSession = Boolean(
+      detailSession?.workspace_root?.includes("/code/fake-") ||
+        detail?.events.some((event) => event.content.startsWith("**FAKE-OK**")),
+    );
+    if (!isFakeSession) return 0;
+    const userTurns = detail?.events.filter((event) => event.kind === "user").length ?? 0;
+    return Math.max(1, userTurns);
+  }, [detailSession?.workspace_root, detail?.events]);
   const estimatedContextTokens = Math.ceil(
-    (
-      (detailSession?.prompt.length ?? 0) +
-      detailEventsCharCount +
-      direction.length
-    ) / 4,
+    fakePilotTurnCount * 28_000 +
+      (
+        (detailSession?.prompt.length ?? 0) +
+        detailEventsCharCount +
+        direction.length
+      ) / 4,
   );
   const sessionActive = detailSession && detailSession.id !== draft?.id ? !detailSession.archived && isTurnLive(detailSession.status) : false;
   const awaitingPilot = detailSession?.status === "queued" && detailSession.pilot_session_id === null;
@@ -3846,13 +3905,6 @@ export function App() {
               onChoose={(id) => selectCompanion(id)} />
           </div>
           <div className="composer-actions">
-            <span
-              className="composer-budget"
-              title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
-              aria-label={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
-            >
-              <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
-            </span>
             <AttachmentButton
               onSelectFiles={(files) => { void addAttachmentFiles(files); }}
               disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
@@ -3895,10 +3947,35 @@ export function App() {
     const nowMs = sidebarClockMs;
     return (
             <aside id="agent-sidebar" className="session-rail" aria-label="Code companions">
+              <button
+                type="button"
+                className="sidebar-collapse-toggle"
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                onClick={toggleSidebarCollapsed}
+              >
+                {sidebarCollapsed ? <SidebarOpenIcon /> : <SidebarCloseIcon />}
+              </button>
               <header className="command-bar">
-                <span className="command-bar-eyebrow">THE CODING TEAM</span>
-                <h1>Code Companions</h1>
-                <p className="command-bar-description">Specialized code helpers that work for you and your assistant</p>
+                <span className="command-bar-eyebrow">
+                  <span className="command-bar-eyebrow-word">THE</span> <MuseIcon /> <span className="command-bar-eyebrow-word">CODING TEAM</span>
+                </span>
+                {!sidebarHintDismissed && (
+                  <div className="command-bar-description">
+                    <span>Specialized code helpers that work for you and your assistant</span>
+                    <button
+                      type="button"
+                      className="command-bar-hint-dismiss"
+                      aria-label="Dismiss hint"
+                      title="Dismiss"
+                      onClick={dismissSidebarHint}
+                    >
+                      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                        <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </header>
               {sessions.length > 0 && <div className="list-controls">
                 <div className="filter-bar" role="group" aria-label="Show companions">
@@ -3967,7 +4044,7 @@ export function App() {
                           {group.key !== "" && <span className="session-group-count">{group.sessions.length}</span>}
                         </button>
                       </div>
-                      {!collapsedGroups.has(group.key) && (
+                      {(sidebarCollapsed || !collapsedGroups.has(group.key)) && (
                         <div className="session-group-list companion-task-list">
                           {group.sessions.map((session) => (
                             <SessionRow
@@ -4026,9 +4103,13 @@ export function App() {
               {filter === "active" && sessionsQuery.data && <section className="available-companions" aria-label="Available companions">
                 {hasActiveTasks && <button type="button" className="session-group-header available-companions-toggle"
                   aria-expanded={availableOpen} aria-controls="available-companion-list"
+                  title={availableOpen ? "Hide available companions" : "Show available companions"}
                   onClick={() => setAvailableExpanded((value) => !value)}>
                   <span className="session-group-chevron" aria-hidden="true"><ChevronIcon /></span>
                   <span className="session-group-name">Available</span>
+                  <svg className="available-companions-plus" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                    <path d="M8 3.25v9.5M3.25 8h9.5" />
+                  </svg>
                 </button>}
                 <nav id="available-companion-list" className="companion-contact-list" hidden={!availableOpen} aria-label="Choose an available companion">
                   {visibleAvailableCompanions.map((definition) => {
@@ -4080,6 +4161,10 @@ export function App() {
     draftBusy,
     draftCompanionId,
     moreAvailableExpanded,
+    sidebarCollapsed,
+    toggleSidebarCollapsed,
+    sidebarHintDismissed,
+    dismissSidebarHint,
   ]);
   const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
   const smartlogTabActive = Boolean(
@@ -4148,15 +4233,13 @@ export function App() {
   const takeoverDisabledReason = liveWork || sendingDirection || pendingDirection !== null
     ? "Stop the current turn before handing over this task." : queuedPrompt !== null
     ? "Send or cancel the queued message before handing over this task." : connectionLost ? "Connect before handing over this task." : undefined;
-  const takeoverComposerTools = useMemo(() => (
-                            <div className="composer-tools" aria-label="Message tools">
+  const takeoverCompanionMenu = useMemo(() => (
                               <CompanionMenu name={detailAgentName} effort={effort} icon={<MuseIcon />}
                                 picking={sessionPast} models={accessibleModels}
                                 options={companions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
                                 busy={handoffBusy}
                                 disabledReason={takeoverDisabledReason}
                                 onChoose={(id) => { void handOffCompanion(id); }} />
-                            </div>
   ), [
     detailAgentName,
     effort,
@@ -4228,7 +4311,7 @@ export function App() {
       <main className="workspace">
         <div
           ref={layoutRef}
-          className={`console-layout ${mobileListOpen ? "mobile-list-view" : isNarrow && hasSidePanel && mobileSideOpen ? "mobile-side-view" : "mobile-detail-view"}`}
+          className={`console-layout ${mobileListOpen ? "mobile-list-view" : isNarrow && hasSidePanel && mobileSideOpen ? "mobile-side-view" : "mobile-detail-view"}${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
           style={{ "--sidebar-width": `${paneSizes.sidebarWidth}px` } as CSSProperties}
         >
             {sidebarElement}
@@ -4504,8 +4587,8 @@ export function App() {
                               inputRef={takeoverInputRef} mentionStart={activeMention.start} value={direction} />
                           )}
                           <div className="composer-toolbar">
-                            {takeoverComposerTools}
-                            <div className="composer-actions">
+                            <div className="composer-tools" aria-label="Message tools">
+                              {takeoverCompanionMenu}
                               <span
                                 className="composer-budget"
                                 title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
@@ -4513,6 +4596,8 @@ export function App() {
                               >
                                 <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
                               </span>
+                            </div>
+                            <div className="composer-actions">
                               <AttachmentButton
                                 onSelectFiles={(files) => { void addAttachmentFiles(files); }}
                                 disabled={handoffBusy}

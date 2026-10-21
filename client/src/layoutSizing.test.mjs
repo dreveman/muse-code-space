@@ -11,10 +11,10 @@ import {
 const dir = dirname(fileURLToPath(import.meta.url));
 
 test("sidebar clamps to leave room for the detail view at desktop sizes", () => {
-  assert.deepEqual(sidebarWidthBounds(780), { min: 220, max: 339 });
-  assert.deepEqual(sidebarWidthBounds(1400), { min: 220, max: 560 });
+  assert.deepEqual(sidebarWidthBounds(780), { min: 244, max: 339 });
+  assert.deepEqual(sidebarWidthBounds(1400), { min: 244, max: 560 });
   assert.equal(clampSidebarWidth(9999, 780), 339);
-  assert.equal(clampSidebarWidth(0, 1400), 220);
+  assert.equal(clampSidebarWidth(0, 1400), 244);
   assert.equal(clampSidebarWidth(NaN, 1400), DEFAULT_SIDEBAR_WIDTH);
 });
 
