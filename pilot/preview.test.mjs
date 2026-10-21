@@ -253,12 +253,18 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     }
     if (req.url === "/src/main.js") {
       res.writeHead(200, { "content-type": "application/javascript" });
-      res.end('import { greeting } from "./util.js";\nconst lazy = import("./lazy.js");\ndocument.title = greeting;');
+      res.end('import { greeting } from "./util.js";\nconst lazy = import("./lazy.js");\nconst phantom = import("./MyComponent");\ndocument.title = greeting;');
       return;
     }
     if (req.url === "/src/lazy.js") {
       res.writeHead(200, { "content-type": "application/javascript" });
       res.end('export const lazyValue = 42;');
+      return;
+    }
+    if (req.url === "/MyComponent" || req.url === "/src/MyComponent" || req.url === "/fallback-page") {
+      // SPA fallback: extensionless paths serve the app document as HTML.
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end('<!doctype html><html><head><title>Fallback</title></head><body><div id="phantom-marker">not a module</div></body></html>');
       return;
     }
     if (req.url === "/redirect-me") {
@@ -292,6 +298,10 @@ test("bundleHtmlForSrcdocPreview inlines CSS, ES module graphs, and CSP nonces f
     // Dynamically imported chunks are crawled eagerly so the runtime finds them.
     assert.ok(bundled.includes('window.__cs_define("/src/lazy.js"'));
     assert.ok(bundled.includes('__cs_dynamic_import("/src/lazy.js")'));
+    // An extensionless spec that resolves to an SPA fallback document must not
+    // be bundled as a module (its HTML would throw `Unexpected token '<'`).
+    assert.ok(bundled.includes('__cs_dynamic_import("/src/MyComponent")'));
+    assert.ok(!bundled.includes("phantom-marker"));
     assert.ok(bundled.includes('nonce="__CS_CSP_NONCE__"'));
     // `</script` inside inlined JS strings must be escaped, otherwise the HTML
     // parser truncates the script block and the preview dies with a
