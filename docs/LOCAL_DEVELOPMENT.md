@@ -327,6 +327,11 @@ How it maps to the real host:
   directly. The fake pilot's `read-ts-tool`, `write-ts-tool`, `edit-diff`,
   `read-tool`, `write-tool`, `search-tool`, `search-empty`, `search-bad`,
   `bash-nonzero`, and `json-tool` prompts exercise these paths.
+  `read-md-tool` reads `notes.md`, a text type with no highlighting
+  grammar, so its numbered view stays plain. `read-svg-tool` reads
+  `diagram.svg` as numbered source (also plain) with the file in the
+  workspace so Open renders the image tab; `read-png-tool` reads the
+  binary `picture.png`, whose simulated result has no numbered text view.
   `dev/fixtures/edit-patch.json` is sanitized from a disposable real Muse
   `edit_file` run.
 
@@ -396,6 +401,10 @@ the actions call:
   or GitHub is involved.
 - Each prompt plays a scripted turn: tool call → answer →
   `turn_completed`.
+- Send `help` (or `triggers` / `list-triggers`) as a prompt to list every
+  prompt trigger with a short description of what it does, rendered from
+  the `FAKE_TRIGGERS` inventory in `dev/fake-pilot.ts`. Keep that list in
+  sync when adding or changing a trigger keyword in `runTurn`.
 - `MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS=<ms>` holds starts/turns before
   admitting them (a slow pilot), to see the UI's "Sending" state.
 - `MUSE_CODE_SPACE_FAKE_PILOT_HOME=/Users/<you>` reports that home in `/health`

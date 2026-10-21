@@ -27,6 +27,9 @@ import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
 // server/src/actions.ts calls, and plays a short scripted turn for every
 // prompt: userMessage → toolCall (inProgress → completed) → agentMessage →
 // turn_completed, a few hundred ms apart. Prompt keywords change the script:
+//   "help" (or "triggers" / "list-triggers") → lists every prompt trigger
+//   below in the transcript (rendered from FAKE_TRIGGERS — keep it in sync
+//   with the keyword regexes in runTurn when adding a trigger).
 //   "fail"   → turn_error instead of an answer
 // Repo picks (`repo` on POST /sessions, from the composer's repo picker):
 // a slug containing "fail" simulates a clone failure (422 repo_clone_failed,
@@ -858,6 +861,53 @@ function buildRealisticTranscriptClosures(session: Session, turnId: string, targ
   return closures;
 }
 
+// Inventory of prompt triggers, rendered by the "help" trigger. Keep this
+// in sync with the keyword regexes in runTurn when adding/changing a trigger.
+const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> = [
+  { section: "Turn behaviour", trigger: "help / triggers / list-triggers", does: "Show this inventory as the agent's reply (no tool call)." },
+  { section: "Turn behaviour", trigger: "(no keyword)", does: "Default script: a `bash` tool call (`echo hello`), then a **FAKE-OK** reply echoing your prompt." },
+  { section: "Turn behaviour", trigger: "fail", does: "End with `turn_error` (simulated model failure) instead of an answer." },
+  { section: "Turn behaviour", trigger: "slow", does: "Wait ~10s between steps (override with MUSE_CODE_SPACE_FAKE_PILOT_SLOW_STEP_MS) — exercise spinners and Stop/interrupt. Combines with other triggers." },
+  { section: "Turn behaviour", trigger: "thinking", does: "Emit reasoning-summary revisions (empty → partial → completed) before the tool call. Raw reasoning text is never shown." },
+  { section: "Turn behaviour", trigger: "ask", does: "Ask a user-input question the UI must answer before the turn ends, then reply with your pick." },
+  { section: "Turn behaviour", trigger: "workflow", does: "Launch a fake workflow: the turn ends, two child agents progress in the background, then a host-started turn delivers the combined answer." },
+  { section: "Formatted tool output", trigger: "read-tool", does: "`read_file` of test.rs — plain numbered output (ALPHA/BETA/GAMMA)." },
+  { section: "Formatted tool output", trigger: "read-ts-tool", does: "`read_file` of alpha.ts — numbered output with TypeScript syntax highlighting." },
+  { section: "Formatted tool output", trigger: "read-md-tool", does: "`read_file` of notes.md — Markdown has no highlighting grammar, so the numbered file view stays plain." },
+  { section: "Formatted tool output", trigger: "read-svg-tool", does: "`read_file` of diagram.svg — SVG source as numbered text (plain, no grammar); the file is also in the workspace, so the row's Open action renders it as an image." },
+  { section: "Formatted tool output", trigger: "read-png-tool", does: "`read_file` of picture.png — binary image: the expanded tool row shows a thumbnail loaded from the workspace (click to open the image viewer); Show raw tool output still shows the text result. The PNG is written to the workspace for /files/read-image." },
+  { section: "Formatted tool output", trigger: "write-tool", does: "`write_file` of test.rs (17 bytes) — shows the written content when the result confirms the byte count." },
+  { section: "Formatted tool output", trigger: "write-ts-tool", does: "`write_file` of alpha.ts — TypeScript content with syntax highlighting." },
+  { section: "Formatted tool output", trigger: "edit-diff", does: "`edit_file` of test.rs with a structured patch (1 file, +2/−1) from dev/fixtures/edit-patch.json — expanding loads the diff pane." },
+  { section: "Formatted tool output", trigger: "search-tool", does: "`search` with 2 matches across 2 files, with one context line before/after each match." },
+  { section: "Formatted tool output", trigger: "search-empty", does: "`search` with no matches (empty result)." },
+  { section: "Formatted tool output", trigger: "search-bad", does: "`search` with an unrecognised result format — falls back to the raw transcript view." },
+  { section: "Formatted tool output", trigger: "bash-nonzero", does: "`bash` that exits with status 7 — failed tool row (name turns red), output `PROBE_OUTPUT`." },
+  { section: "Formatted tool output", trigger: "json-tool", does: "Unknown `mystery` tool with JSON output — syntax-coloured JSON in the transcript." },
+  { section: "Formatted tool output", trigger: "long-tool / long tool", does: "Tool with 18 visible and 35 stored output lines — truncated preview; **Show all** pages the full stored output." },
+  { section: "Formatted tool output", trigger: "list-agents-tool", does: "`mcp__code_space__list_agents` call listing you, other agents, and the Muse assistant." },
+  { section: "Messages, PRs & preview", trigger: "receive-message", does: "Incoming message **From Pip** (From Juno when you are Pip). Scripted transcript event; no sender task needed." },
+  { section: "Messages, PRs & preview", trigger: "send-message-tool", does: "Outgoing **To Pip** message — the matching successful send_message tool row is hidden in normal view (visible with Show raw tool output)." },
+  { section: "Messages, PRs & preview", trigger: "send-message-fail", does: "Failed send_message (\"Not delivered: offline\") — the tool row stays visible." },
+  { section: "Messages, PRs & preview", trigger: "create-pr [N] / create-prs", does: "`github_create_pr` for one PR, N PRs (max 8), or 3 with `create-prs`." },
+  { section: "Messages, PRs & preview", trigger: "monitor-pr / monitor-prs / pr-monitor", does: "`github_monitor_pr` for this session's created PRs (or #6, plus #7 for `monitor-prs`), then live Monitoring rows — CI fails, then the PRs merge." },
+  { section: "Messages, PRs & preview", trigger: "start-preview [port] / preview-demo / preview-screenshot", does: "Start the built-in demo dev server for this session and reply with a clickable preview screenshot." },
+  { section: "Messages, PRs & preview", trigger: "hmr-update", does: "Push a WebSocket HMR update (plus a fresh screenshot) to the running demo preview. Send `start-preview` first." },
+  { section: "Messages, PRs & preview", trigger: "stop-preview", does: "Stop this session's demo preview server." },
+  { section: "Messages, PRs & preview", trigger: "show-image / image-reply / test-image", does: "Write diagram.svg into the workspace and reply with it as an inline image." },
+  { section: "Long transcripts", trigger: "long-transcript [N] [live] / benchmark / perf-transcript", does: "Generate N realistic transcript items (default 200, clamped 12–1500): reasoning, highlighted file reads/writes, edit diffs, searches, bash, messages, workflows, Markdown. Add `live`/`stream` to stream the tail; `slow` slows the tail." },
+];
+
+function fakeTriggerHelpText(): string {
+  const sections: string[] = [];
+  for (const { section } of FAKE_TRIGGERS) if (!sections.includes(section)) sections.push(section);
+  const body = sections.map((section) =>
+    `### ${section}\n\n` +
+    FAKE_TRIGGERS.filter((t) => t.section === section).map((t) => `- \`${t.trigger}\` — ${t.does}`).join("\n"),
+  ).join("\n\n");
+  return `## Fake pilot triggers\n\nSend any of these as (or in) a prompt. Keywords match as whole words anywhere in the prompt, so triggers combine — e.g. \`thinking long-tool\`, or \`slow search-tool\`. If several tool triggers match, only the first tool in this order is shown: edit-diff → read → write → monitor-pr → create-pr → start-preview → list-agents → send-message → search → json-tool → bash (default).\n\n${body}\n\nNot a prompt trigger: picking a repo slug containing \`fail\` in the composer (e.g. \`dreveman/fail-clone\`) simulates a clone failure when a session starts.`;
+}
+
 async function runTurn(session: Session, text: string) {
   const turnId = crypto.randomUUID();
   session.openTurn = turnId;
@@ -868,6 +918,24 @@ async function runTurn(session: Session, text: string) {
   const slowStepMs = Math.max(250, Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_SLOW_STEP_MS) || 10_000);
   const step = /\bslow\b/i.test(text) ? slowStepMs : 400;
   logWire("turn/start", { sessionId: session.id, text: text.slice(0, 80) });
+
+  if (/\b(?:help|triggers|list-triggers)\b/i.test(text)) {
+    void (async () => {
+      push(session, "item", { item: { kind: "userMessage", text, status: "completed" } });
+      await sleep(step);
+      if (!cancelled) {
+        push(session, "item", { item: { kind: "agentMessage", status: "completed", text: fakeTriggerHelpText() } });
+        push(session, "turn_completed", { turnId, outcome: { status: "completed" } });
+      } else {
+        push(session, "turn_completed", { turnId, cancelled: true, outcome: { status: "cancelled" } });
+      }
+      if (session.openTurn === turnId) {
+        session.openTurn = null;
+        session.cancel = null;
+      }
+    })();
+    return turnId;
+  }
 
   const longTranscriptMatch = /\b(?:long-transcript|benchmark|perf-transcript)(?:[:\s]+(\d+))?\b/i.exec(text);
   if (longTranscriptMatch) {
@@ -923,8 +991,49 @@ async function runTurn(session: Session, text: string) {
     const outputRefId = `output-${toolItemId}`;
     const patchRefId = `patch-${toolItemId}`;
     const editDiff = /\bedit-diff\b/i.test(text);
-    const readTool = /\bread-(?:ts-)?tool\b/i.test(text);
     const readTsTool = /\bread-ts-tool\b/i.test(text);
+    const readMdTool = /\bread-md-tool\b/i.test(text);
+    const readSvgTool = /\bread-svg-tool\b/i.test(text);
+    const readPngTool = /\bread-png-tool\b/i.test(text);
+    const readTool = readTsTool || readMdTool || readSvgTool || readPngTool || /\bread-tool\b/i.test(text);
+    // Sample contents for the read-* triggers. Markdown and SVG have no
+    // syntax-highlighting grammar in the client (codeLanguage.ts), so their
+    // numbered file views must stay plain; PNG is binary and gets no
+    // numbered view at all.
+    const mdReadContent = [
+      "# Release notes",
+      "",
+      "Draft for **v2** — see the [changelog](https://example.com/changelog).",
+      "",
+      "- Added the new thing",
+      "- Fixed the other thing",
+      "",
+      "Run `bun run dev` to try it.",
+    ].join("\n");
+    const svgReadContent = [
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80" width="120" height="80">`,
+      `  <rect width="120" height="80" rx="8" fill="#161b22"/>`,
+      `  <circle cx="40" cy="40" r="18" fill="#58a6ff"/>`,
+      `  <rect x="68" y="24" width="32" height="32" fill="#3fb950"/>`,
+      `  <text x="60" y="72" text-anchor="middle" fill="#e6edf3" font-size="9">diagram.svg</text>`,
+      `</svg>`,
+    ].join("\n");
+    // 64x48 blue/green checkerboard, 214 bytes.
+    const pngReadBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAYAAAChS3wfAAAAnUlEQVR4nO3QsQ0CQRDAwOuMFgipkB6o7ungs9UswoFDS5bP631ddzw+z1t+3T86QPsN0AHab4AO0H4DdID2z/bAab8BOkD7DdAB2m+ADtB+A7YHTvsN0AHab4AO0H4DdID2G7A9cNpvgA7QfgN0gPYboAO034DtgdN+A3SA9hugA7TfAB2g/QZsD5z2G6ADtN8AHaD9BugA7f/9gC8EypPSgNJOkQAAAABJRU5ErkJggg==", "base64");
+    const numberedRead = (path: string, content: string) =>
+      `Read text file \`${path}\`.\n` + content.split("\n").map((line, i) => `${i + 1}|${line}`).join("\n");
+    const readPath = readPngTool ? "picture.png" : readSvgTool ? "diagram.svg" : readMdTool ? "notes.md" : readTsTool ? "alpha.ts" : "test.rs";
+    if (readMdTool) rememberSessionFile(session, readPath, mdReadContent + "\n");
+    if (readSvgTool) rememberSessionFile(session, readPath, svgReadContent + "\n");
+    if ((readSvgTool || readPngTool) && session.workspaceRoot) {
+      // On disk too, as in a real workspace: the SVG read's Open action then
+      // renders the image tab, and the PNG exists for /files/read-image.
+      try {
+        mkdirSync(session.workspaceRoot, { recursive: true });
+        if (readSvgTool) writeFileSync(resolve(session.workspaceRoot, readPath), svgReadContent + "\n", "utf8");
+        if (readPngTool) writeFileSync(resolve(session.workspaceRoot, readPath), pngReadBytes);
+      } catch { /* the scripted read still works without a workspace file */ }
+    }
     const writeTool = /\bwrite-(?:ts-)?tool\b/i.test(text);
     const writeTsTool = /\bwrite-ts-tool\b/i.test(text);
     const tsWriteContent = "const x: number = 3;\n";
@@ -1000,7 +1109,7 @@ async function runTurn(session: Session, text: string) {
     const longOutput = /\blong[ -]tool\b/i.test(text);
     const patchJson = editDiff ? readFileSync(new URL("./fixtures/edit-patch.json", import.meta.url), "utf8") : "";
     const fullOutput = editDiff ? "Applied patch to test.rs"
-      : readTool ? (readTsTool ? "Read text file `alpha.ts`.\n1|const x: number = 3;\n2|console.log(x)" : "Read text file `test.rs`.\n1|ALPHA\n2|BETA\n3|GAMMA")
+      : readTool ? (readPngTool ? "Read image file `picture.png`." : numberedRead(readPath, readSvgTool ? svgReadContent : readMdTool ? mdReadContent : readTsTool ? "const x: number = 3;\nconsole.log(x)" : "ALPHA\nBETA\nGAMMA"))
       : writeTool ? (writeTsTool ? `wrote ${Buffer.byteLength(tsWriteContent)} bytes to alpha.ts` : "wrote 17 bytes to test.rs")
       : monitorTool ? (
         `Now monitoring ${monitoredPrNumbers.length} PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n` +
@@ -1043,7 +1152,7 @@ async function runTurn(session: Session, text: string) {
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
       kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : startPreviewMatch ? "mcp__code_space__preview_screenshot" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readTsTool ? "alpha.ts" : "test.rs" } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readPath } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },
