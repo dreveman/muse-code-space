@@ -1815,7 +1815,7 @@ Bun.serve({
               messageId: crypto.randomUUID(),
               at: new Date().toISOString(),
               from: { kind: "code-space-ui", name: "Code Space" },
-              text: "Please initiate the Secure Vault addition of a custom API credential named custom.github-broker for Code Space GitHub broker setup (gh command support), then let the user know here when it has been added.",
+              text: "Please set up the Code Space GitHub broker (gh command support): initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker as described in hooks/code-space-assistant-job.md, and let the user know here when the broker is working.",
             });
             setTimeout(() => {
               githubSetup.brokerDone = true;

@@ -479,7 +479,7 @@ export const RepoPicker = memo(function RepoPicker({
               </li>
               {brokerWaiting && (
                 <li className="repo-setup-note" role="status">
-                  Your Muse assistant has been asked to start the Secure Vault addition for <code>custom.github-broker</code>. Go to your Muse assistant to add the GitHub credential — this step completes automatically once it’s done.
+                  Your Muse assistant has been asked to set up the GitHub broker, starting with the Secure Vault addition for <code>custom.github-broker</code>. Go to your Muse assistant to add the GitHub credential — this step completes automatically once it’s done.
                 </li>
               )}
               <li className={`repo-setup-step${githubSetup.appDone ? " done" : ""}`}>
