@@ -1125,6 +1125,7 @@ export const Actions = {
       ok: z.boolean(),
       broker_done: z.boolean(),
       app_done: z.boolean(),
+      broker_requested: z.boolean(),
       error: z.string().nullable(),
     }),
     privileged: [privileged.resolvePilotUrl],
@@ -1132,10 +1133,10 @@ export const Actions = {
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
         const res = await pilotRequest(baseUrl, "/github-setup", { method: "GET" },
-          z.object({ brokerDone: z.boolean(), appDone: z.boolean() }));
-        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, error: null };
+          z.object({ brokerDone: z.boolean(), appDone: z.boolean(), brokerRequested: z.boolean().optional() }));
+        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, broker_requested: res.brokerRequested ?? false, error: null };
       } catch (error) {
-        return { ok: false, broker_done: false, app_done: false, error: pilotRequestErrorText(error) };
+        return { ok: false, broker_done: false, app_done: false, broker_requested: false, error: pilotRequestErrorText(error) };
       }
     },
   }),
@@ -1151,31 +1152,32 @@ export const Actions = {
       ok: z.boolean(),
       broker_done: z.boolean(),
       app_done: z.boolean(),
+      broker_requested: z.boolean(),
       error: z.string().nullable(),
     }),
     privileged: [privileged.resolvePilotUrl],
     async handler(ctx, args) {
       const denied = terminalAccessError(ctx.viewer);
-      if (denied) return { ok: false, broker_done: false, app_done: false, error: denied };
+      if (denied) return { ok: false, broker_done: false, app_done: false, broker_requested: false, error: denied };
       if (args.step === "app") {
         if (!/^\d+$/.test(args.app_id ?? "") || !/^\d+$/.test(args.installation_id ?? "")) {
-          return { ok: false, broker_done: false, app_done: false, error: "App ID and installation ID must be numeric." };
+          return { ok: false, broker_done: false, app_done: false, broker_requested: false, error: "App ID and installation ID must be numeric." };
         }
         const key = args.private_key ?? "";
         if (!key.includes("-----BEGIN") || !key.includes("PRIVATE KEY-----") || !key.includes("-----END")) {
-          return { ok: false, broker_done: false, app_done: false, error: "Paste the App private key (.pem)." };
+          return { ok: false, broker_done: false, app_done: false, broker_requested: false, error: "Paste the App private key (.pem)." };
         }
       }
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
         const res = await pilotRequest(baseUrl, "/github-setup",
           { method: "POST", body: JSON.stringify({ step: args.step, appId: args.app_id, installationId: args.installation_id, privateKey: args.private_key }) },
-          z.object({ brokerDone: z.boolean(), appDone: z.boolean() }));
+          z.object({ brokerDone: z.boolean(), appDone: z.boolean(), brokerRequested: z.boolean().optional() }));
         ctx.invalidateQueries({ queryKey: ["github-setup"] });
         ctx.invalidateQueries({ queryKey: ["github-repos"] });
-        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, error: null };
+        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, broker_requested: res.brokerRequested ?? false, error: null };
       } catch (error) {
-        return { ok: false, broker_done: false, app_done: false, error: pilotRequestErrorText(error) };
+        return { ok: false, broker_done: false, app_done: false, broker_requested: false, error: pilotRequestErrorText(error) };
       }
     },
   }),

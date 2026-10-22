@@ -114,8 +114,8 @@ export const RepoPicker = memo(function RepoPicker({
   globalGitIdentity?: { name: string; email: string } | null;
   sessionGitAuthor?: { name: string; email: string } | null;
   onSaveSessionGitAuthor?: (identity: { name: string; email: string } | null) => Promise<boolean>;
-  githubSetup?: { brokerDone: boolean; appDone: boolean } | null;
-  onPerformGithubSetupStep?: (step: "broker" | "app", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null }>;
+  githubSetup?: { brokerDone: boolean; appDone: boolean; brokerRequested?: boolean } | null;
+  onPerformGithubSetupStep?: (step: "broker" | "app", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean }>;
   onSaveGlobalGitAuthor?: (identity: { name: string; email: string }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -167,6 +167,8 @@ export const RepoPicker = memo(function RepoPicker({
   const setupCompleteCount = (githubSetup?.brokerDone ? 1 : 0) + (githubSetup?.appDone ? 1 : 0) + (setupAuthorDone ? 1 : 0);
   const showGithubSetup = mode === "pick" && githubSetup !== null && Boolean(onPerformGithubSetupStep)
     && !(githubSetup.brokerDone && githubSetup.appDone && setupAuthorDone);
+  const [setupBrokerWaiting, setSetupBrokerWaiting] = useState(false);
+  const brokerWaiting = !githubSetup?.brokerDone && (setupBrokerWaiting || Boolean(githubSetup?.brokerRequested));
   const runSetupStep = async (step: "broker" | "app") => {
     if (!onPerformGithubSetupStep || setupBusy) return;
     setSetupBusy(step);
@@ -177,6 +179,10 @@ export const RepoPicker = memo(function RepoPicker({
         : undefined);
       if (result.ok) {
         if (step === "app") { setSetupPrivateKey(""); setSetupExpanded(null); }
+        // The broker step asks the Muse assistant to initiate the Secure
+        // Vault addition; the dialog waits (status polling in App) until
+        // the broker credential actually lands.
+        if (step === "broker" && result.brokerRequested) setSetupBrokerWaiting(true);
       } else {
         setSetupError(result.error ?? "That step could not be completed.");
       }
@@ -458,14 +464,24 @@ export const RepoPicker = memo(function RepoPicker({
                   <strong>GitHub broker</strong>
                   <small>Lets companions use gh and list repositories</small>
                 </div>
-                {!githubSetup.brokerDone && (
+                {!githubSetup.brokerDone && (brokerWaiting ? (
+                  <span className="repo-setup-waiting" role="status">
+                    <span className="working-spinner" aria-hidden="true" />
+                    Waiting…
+                  </span>
+                ) : (
                   <button type="button" className="repo-setup-action"
                     disabled={setupBusy !== null}
                     onClick={() => { void runSetupStep("broker"); }}>
-                    {setupBusy === "broker" ? "Setting up…" : "Set up"}
+                    {setupBusy === "broker" ? "Asking…" : "Set up"}
                   </button>
-                )}
+                ))}
               </li>
+              {brokerWaiting && (
+                <li className="repo-setup-note" role="status">
+                  Your Muse assistant has been asked to start the Secure Vault addition for <code>custom.github-broker</code>. Go to your Muse assistant to add the GitHub credential — this step completes automatically once it’s done.
+                </li>
+              )}
               <li className={`repo-setup-step${githubSetup.appDone ? " done" : ""}`}>
                 <span className="repo-setup-status" aria-hidden="true">{githubSetup.appDone ? "✓" : "2"}</span>
                 <div className="repo-setup-identity">

@@ -1574,6 +1574,10 @@ function setAssistant({ name, color, avatar_data_url }) {
 const MUSE_INBOX_PATH = `${STATE_DIR}/muse-inbox.jsonl`;
 const MUSE_INBOX_MAX = 500;
 let museInboxSeq = 0;
+// Outstanding UI request asking Muse to initiate the custom.github-broker
+// Secure Vault addition (repo picker GitHub setup, broker step). In-memory:
+// a pilot restart simply lets the user ask again.
+let brokerSetupRequested = false;
 
 function agentDirectory() {
   const busy = new Set([...openTurns.values()].map((t) => t.logId));
@@ -2181,10 +2185,32 @@ const server = createServer(async (req, res) => {
         try {
           if (existsSync(GITHUB_BROKER_CONFIG)) mode = JSON.parse(readFileSync(GITHUB_BROKER_CONFIG, "utf8"))?.mode ?? null;
         } catch { mode = null; }
-        return json(res, 200, { brokerDone: mode !== null, appDone: mode === "app" });
+        return json(res, 200, { brokerDone: mode !== null, appDone: mode === "app", brokerRequested: brokerSetupRequested });
       }
       if (req.method === "POST") {
-        return json(res, 501, { error: "GitHub setup from this dialog is not available on this pilot yet. Run setup-github-broker in a terminal.", code: "github_setup_unavailable" });
+        const body = await readBody(req).catch(() => ({}));
+        if (body.step === "broker") {
+          // Ask the user's Muse assistant to initiate the Secure Vault
+          // addition of custom.github-broker: the request lands in the Muse
+          // inbox (readMuseMessages), the assistant starts the vault flow
+          // with the user in its own surface, and this dialog polls status
+          // until the broker credential actually works. Repeated clicks
+          // while a request is outstanding do not queue duplicates.
+          if (!brokerSetupRequested) {
+            brokerSetupRequested = true;
+            readMuseInbox(); // load the seq watermark before appending
+            const record = {
+              seq: ++museInboxSeq,
+              messageId: uuidv7(),
+              at: new Date().toISOString(),
+              from: { kind: "code-space-ui", name: "Code Space" },
+              text: "Please initiate the Secure Vault addition of a custom API credential named custom.github-broker for Code Space GitHub broker setup (gh command support), then let the user know here when it has been added.",
+            };
+            appendFileSync(MUSE_INBOX_PATH, `${JSON.stringify(record)}\n`);
+          }
+          return json(res, 200, { brokerDone: false, appDone: false, brokerRequested: true });
+        }
+        return json(res, 501, { error: "GitHub App setup from this dialog is not available on this pilot yet. Run setup-github-broker in a terminal.", code: "github_setup_unavailable" });
       }
     }
     // Full assistant identity is fetched separately; avatars never enter message events.
