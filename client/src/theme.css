@@ -672,6 +672,15 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
   --terminal-dim: var(--dim);
   --terminal-faint: var(--border-strong);
 }
+/* The prompt is its own stacking context (sticky + z-index + contain), so a
+   menu opened inside it can never out-paint siblings of the prompt on its
+   own z-index: the floating chat toolbar (z-index 4) and the companion
+   card prev/next navigation (z-index 3) would cover it. While any
+   composer-anchored menu is open, lift the whole prompt above those
+   floating controls — still below modal dialog backdrops (z-index 60). */
+.terminal-prompt:has(.repo-menu, .companion-menu, .agent-mention-menu) {
+  z-index: 30;
+}
 /* Extend the input prompt's background infinitely downward through any host
    bottom padding when the composer has no bottom border; when the centered
    desktop layout adds a bottom border (--chat-inset-bottom >= 1px), extend
