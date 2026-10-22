@@ -91,6 +91,8 @@ type Session = {
   workspaceRoot?: string;
   /** Repo picked in the composer (`owner/repo`); simulated clone target. */
   repo?: string;
+  /** Per-checkout commit author override (POST /sessions/:id/git-author). */
+  gitAuthor?: { name: string; email: string } | null;
   appSessionId?: string;
   initialTurnId?: string | null;
   nextPrNumber?: number;
@@ -122,6 +124,23 @@ const sessionFiles = new Map<string, Map<string, string>>();
 const museInbox: Array<{ seq: number; messageId: string; at: string; from: unknown; text: string }> = [];
 // The user's Muse assistant (like the real pilot: default Jolly, Muse blue).
 const assistant = { name: "Jolly", color: "#d0e4fc", avatar_data_url: null as string | null };
+// Global git commit identity for the fake pilot (in-memory; POST
+// /git-identity replaces it). Defaults to a clearly fake author so the
+// composer's Commit-as prefill can be exercised; override with
+// MUSE_CODE_SPACE_FAKE_GIT_NAME / MUSE_CODE_SPACE_FAKE_GIT_EMAIL, or set
+// both empty for "no global author".
+let fakeGitIdentity: { name: string; email: string } | null =
+  process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME !== undefined || process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL !== undefined
+    ? validGitAuthor({ name: process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME ?? "", email: process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL ?? "" })
+    : { name: "Fake Dev", email: "fake-dev@example.com" };
+function validGitAuthor(value: unknown): { name: string; email: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const name = typeof (value as { name?: unknown }).name === "string" ? (value as { name: string }).name.trim() : "";
+  const email = typeof (value as { email?: unknown }).email === "string" ? (value as { email: string }).email.trim().toLowerCase() : "";
+  if (!name || name.length > 100 || /[\x00-\x1f\x7f<>]/.test(name)) return null;
+  if (!email || email.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return { name, email };
+}
 const isReserved = (name: unknown) => ["muse", "jolly", assistant.name.toLowerCase()].includes(String(name ?? "").trim().replace(/^@/, "").toLowerCase());
 loadState();
 const wire: Array<{ at: string; dir: string; method: string; ms?: number; ok?: boolean; params?: string }> = [];
@@ -1661,6 +1680,12 @@ Bun.serve({
       if (repo !== null && !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/.test(repo)) {
         return json(400, { error: "Pick a repository as owner/repo or a github.com URL.", code: "invalid_repo" });
       }
+      if (body.gitAuthor !== undefined && body.gitAuthor !== null && !validGitAuthor(body.gitAuthor)) {
+        return json(400, { error: "Provide a valid author name and email for this checkout.", code: "invalid_git_identity" });
+      }
+      if (body.gitAuthor != null && repo === null) {
+        return json(400, { error: "A commit author override needs a picked repository.", code: "invalid_git_identity" });
+      }
       if (repo !== null && repo.toLowerCase().includes("fail")) {
         return json(422, { error: `Could not clone ${repo}: simulated clone failure (fake pilot)`, code: "repo_clone_failed" });
       }
@@ -1710,6 +1735,7 @@ Bun.serve({
           modelId: session.modelId,
           workspaceRoot: session.workspaceRoot ?? null,
           repo: session.repo ?? null,
+          gitAuthor: validGitAuthor(body.gitAuthor) ?? fakeGitIdentity,
           appSessionId: session.appSessionId ?? null,
           createdAt: new Date().toISOString(),
         },
@@ -1721,6 +1747,19 @@ Bun.serve({
     }
 
     // Agent-to-agent messages, like the real pilot (deliverAgentMessage).
+    if (path === "/git-identity") {
+      if (req.method === "GET") return json(200, { identity: fakeGitIdentity });
+      if (req.method === "POST") {
+        if (body.identity === null || (body.name === null && body.email === null)) {
+          fakeGitIdentity = null;
+          return json(200, { identity: null });
+        }
+        const identity = validGitAuthor({ name: body.name ?? body.identity?.name, email: body.email ?? body.identity?.email });
+        if (!identity) return json(400, { error: "Provide a valid author name and email.", code: "invalid_git_identity" });
+        fakeGitIdentity = identity;
+        return json(200, { identity });
+      }
+    }
     if (path === "/agents" && req.method === "GET") {
       return json(200, { agents: [...sessions.values()].filter((x) => x.name).map((x) => ({ name: x.name, sessionId: x.id, busy: !!x.openTurn, workspaceRoot: x.workspaceRoot ?? null })), assistant: { name: assistant.name, color: assistant.color } });
     }
@@ -1785,7 +1824,12 @@ Bun.serve({
         const root = resolve(`${baseHome}/workspace/code`);
         const target = resolve(wsDir);
         const rel = relative(root, target);
-        if (rel && !rel.startsWith("..") && !rel.includes("/") && !rel.includes("\\") && existsSync(target)) {
+        // Dev-only safety the real pilot does not need: when the fake pilot
+        // runs inside a checkout that is itself a task workspace (the local
+        // dev setup), deleting that task must not delete the checkout the
+        // dev server and this pilot are running from.
+        const isOwnCheckout = target === resolve(process.cwd());
+        if (!isOwnCheckout && rel && !rel.startsWith("..") && !rel.includes("/") && !rel.includes("\\") && existsSync(target)) {
           try { rmSync(target, { recursive: true, force: true }); } catch { /* ignore in fake pilot */ }
         }
       }
@@ -1975,6 +2019,16 @@ Bun.serve({
       const turnId = session.openTurn;
       session.cancel?.();
       return json(200, { ok: true, turnId });
+    }
+    if (sub === "/git-author" && req.method === "POST") {
+      if (body.identity === null || (body.name === null && body.email === null)) {
+        session.gitAuthor = null;
+        return json(200, { ok: true, identity: fakeGitIdentity });
+      }
+      const identity = validGitAuthor(body);
+      if (!identity) return json(400, { error: "Provide a valid author name and email.", code: "invalid_git_identity" });
+      session.gitAuthor = identity;
+      return json(200, { ok: true, identity });
     }
     if (sub === "/recover" && req.method === "POST") return json(200, { sessionId: session.id, recovered: false });
     if (sub === "/rename" && req.method === "POST") {

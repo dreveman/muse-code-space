@@ -2003,6 +2003,18 @@ export function App() {
     staleTime: 60_000,
     retry: false,
   });
+  // Global commit identity, used to prefill the repo picker's Commit-as
+  // fields (blank per-checkout fields mean this identity applies).
+  const gitIdentityQuery = useQuery({
+    queryKey: ["git-identity"],
+    queryFn: () => api.getGitIdentity({}),
+    enabled: draft !== null || selectedCompanionId !== null,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const globalGitIdentity = gitIdentityQuery.data?.name && gitIdentityQuery.data?.email
+    ? { name: gitIdentityQuery.data.name, email: gitIdentityQuery.data.email }
+    : null;
   const cloningSessionId = startingDraft?.draft.repoSlug
     ? startingDraft.draft.id
     : null;
@@ -2480,6 +2492,20 @@ export function App() {
 
   const detail = detailQuery.data;
   const detailSession = detail?.session ?? selectedSession;
+  const detailSessionIdForAuthor = detailSession?.id ?? null;
+  const saveSessionGitAuthor = useCallback(async (identity: { name: string; email: string } | null) => {
+    if (!detailSessionIdForAuthor) return false;
+    const result = await api.setSessionGitAuthor({
+      session_id: detailSessionIdForAuthor,
+      name: identity?.name ?? null,
+      email: identity?.email ?? null,
+    });
+    if (result.ok) {
+      await queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false });
+    }
+    return result.ok;
+  }, [detailSessionIdForAuthor, queryClient]);
+
   useEffect(() => {
     if (startingDraft && !creating && (selectedId !== startingDraft.draft.id ||
       (selectedCompanionId === null && detail?.session?.id === startingDraft.draft.id))) {
@@ -3954,6 +3980,7 @@ export function App() {
         workspacePath={startingDraft?.draft.id === selectedId ? shortenHomePaths(startingDraft.workspacePath) : null}
         phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
         onChoose={chooseDraftRepo}
+        globalGitIdentity={globalGitIdentity}
       />
       <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
         <ComposerAttachmentStrip
@@ -4633,6 +4660,9 @@ export function App() {
                             smartlogOpen={smartlogTabActive}
                             onToggleSmartlog={toggleDetailSmartlog}
                             phase={detailSession.status === "queued" && detailSession.pilot_session_id === null ? "starting" : "idle"}
+                            sessionGitAuthor={detailSession.git_author ?? null}
+                            globalGitIdentity={globalGitIdentity}
+                            onSaveSessionGitAuthor={saveSessionGitAuthor}
                           />
                         )}
                         {companionBusyElsewhere && <p className="task-resume-notice" role="status">

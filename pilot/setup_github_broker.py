@@ -102,6 +102,50 @@ def write_config(config: dict, pem: str,
         os.umask(old_umask)
 
 
+# The pilot reads the identity from its runtime dir (next to its state),
+# not from the broker config dir.
+IDENTITY_PATH = pathlib.Path.home() / "workspace" / "muse-code-space-pilot" / "git-identity.json"
+
+
+def build_git_identity(name: str, email: str) -> dict | None:
+    """Validate a commit author pair; None when either side is unusable."""
+    name = (name or "").strip()
+    email = (email or "").strip().lower()
+    if not name or len(name) > 100 or any(ord(c) < 32 or ord(c) == 127 or c in "<>" for c in name):
+        return None
+    if not email or len(email) > 200 or "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        return None
+    if any(c.isspace() for c in email):
+        return None
+    return {"name": name, "email": email}
+
+
+def write_git_identity(identity: dict | None,
+                       identity_path: pathlib.Path = IDENTITY_PATH) -> None:
+    """Persist (or clear) the global commit identity next to the broker config."""
+    if identity is None:
+        identity_path.unlink(missing_ok=True)
+        return
+    identity_path.parent.mkdir(parents=True, exist_ok=True)
+    identity_path.write_text(json.dumps(identity, indent=2) + "\n")
+
+
+def prompt_git_identity(input_fn=input) -> dict | None:
+    """Optional author prompt; blank name skips (identity unchanged upstream)."""
+    print("\nCommit author for agent sessions (used for git commits).")
+    print("Leave the name blank to skip — you can set it later in the app's repo")
+    print("picker, by editing git-identity.json, or with `git config --global`")
+    print("inside a session terminal.")
+    name = input_fn("Author name (e.g. David Reveman): ")
+    if not (name or "").strip():
+        return None
+    email = input_fn("Author email (e.g. you@users.noreply.github.com): ")
+    identity = build_git_identity(name, email)
+    if identity is None:
+        print("That name/email doesn't look valid — skipping the commit author.")
+    return identity
+
+
 def validate(app_id: str, installation_id: str, pem: str, provider_factory=GitHubAppTokenProvider) -> str:
     """Exchange the App JWT for an installation token; returns its prefix-free length proof."""
     provider = provider_factory(app_id, installation_id, pem)
@@ -194,6 +238,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     write_config(build_config(app_id, installation_id), pem)
     print(f"Wrote {KEY_PATH} and {CONFIG_PATH} (both mode 600).")
+    try:
+        identity = prompt_git_identity()
+    except (KeyboardInterrupt, EOFError):
+        identity = None
+    if identity is not None:
+        write_git_identity(identity)
+        print(f"Wrote commit author {identity['name']} <{identity['email']}> to {IDENTITY_PATH}.")
     ensure_profile_block()
     print("Pinned the broker CA for login terminals (~/.profile managed block).")
     if no_restart:

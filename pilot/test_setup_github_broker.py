@@ -22,6 +22,16 @@ class SetupScriptTest(unittest.TestCase):
         subprocess.run(["openssl", "genrsa", "-out", key, "2048"], check=True, capture_output=True)
         cls.pem = pathlib.Path(key).read_text()
 
+    def test_git_identity_validation_and_write(self):
+        self.assertEqual(setup.build_git_identity(" David ", "D@Example.COM"), {"name": "David", "email": "d@example.com"})
+        self.assertIsNone(setup.build_git_identity("", "d@example.com"))
+        self.assertIsNone(setup.build_git_identity("David", "nope"))
+        path = pathlib.Path(tempfile.mkdtemp()) / "git-identity.json"
+        setup.write_git_identity({"name": "David", "email": "d@example.com"}, path)
+        self.assertEqual(json.loads(path.read_text()), {"name": "David", "email": "d@example.com"})
+        setup.write_git_identity(None, path)
+        self.assertFalse(path.exists())
+
     def test_build_config_shape(self):
         cfg = setup.build_config("123", "456", pathlib.Path("/x/key.pem"))
         self.assertEqual(cfg, {"mode": "app", "app_id": "123", "installation_id": "456",

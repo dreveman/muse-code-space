@@ -106,7 +106,13 @@ const defaultHome = !process.env.MUSE_CODE_SPACE_DEV_DIR && !existsSync("/home/h
 if (!process.env.MUSE_CODE_SPACE_HOME_ROOT) {
   process.env.MUSE_CODE_SPACE_HOME_ROOT = liveHome ?? cachedHome ?? defaultHome;
 }
-if (!process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR && (process.env.MUSE_CODE_SPACE_DEV_DIR || pilotHealth?.fake === true)) {
+// A fake pilot never owns real transcripts: force the dev pilot-state dir
+// even when the environment already carries the production state dir (a
+// Code Space session's shell exports it, and inheriting it would make the
+// dev app import — and resurrect on every delete — real session history).
+if (pilotHealth?.fake === true) {
+  process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR = join(DEV_DIR, "pilot-state");
+} else if (!process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR && process.env.MUSE_CODE_SPACE_DEV_DIR) {
   process.env.MUSE_CODE_SPACE_PILOT_STATE_DIR = join(DEV_DIR, "pilot-state");
 }
 (globalThis as { __MUSE_CODE_SPACE_HOME_ROOT__?: string }).__MUSE_CODE_SPACE_HOME_ROOT__ =

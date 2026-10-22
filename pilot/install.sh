@@ -162,7 +162,16 @@ done
 { [ -n "$SYSTEM_CA" ] && cat "$SYSTEM_CA"; cat "$RUNTIME/github-broker-cert.pem"; } > "$RUNTIME/github-broker-ca.pem"
 chmod 644 "$RUNTIME/github-broker-ca.pem"
 # Session gitconfig (pilot sets GIT_CONFIG_GLOBAL to this for sessions only;
-# ~/.gitconfig is never read or written here).
+# ~/.gitconfig is never read or written here). A [user] section set by hand
+# (e.g. `git config --global` in a session terminal writes this file) is
+# preserved across regeneration; the pilot's git-identity.json, when
+# present, is the source of truth and wins over it.
+SAVED_GIT_NAME=""
+SAVED_GIT_EMAIL=""
+if [ -f "$RUNTIME/gitconfig" ]; then
+  SAVED_GIT_NAME="$(git config --file "$RUNTIME/gitconfig" user.name 2>/dev/null || true)"
+  SAVED_GIT_EMAIL="$(git config --file "$RUNTIME/gitconfig" user.email 2>/dev/null || true)"
+fi
 cat > "$RUNTIME/gitconfig" <<EOF
 [url "https://127.0.0.1:$BROKER_PORT/"]
 	insteadOf = https://github.com/
@@ -173,6 +182,19 @@ cat > "$RUNTIME/gitconfig" <<EOF
 	helper = "!f() { test \\"\$1\\" = get && printf 'username=x-access-token\\npassword=broker-provided-sentinel\\n'; }; f"
 EOF
 chmod 644 "$RUNTIME/gitconfig"
+if [ -f "$RUNTIME/git-identity.json" ] && command -v python3 >/dev/null 2>&1; then
+  IDENTITY_PAIR="$(python3 -c 'import json,sys
+try:
+ d=json.load(open(sys.argv[1])); print(d.get("name","")); print(d.get("email",""))
+except Exception: pass' "$RUNTIME/git-identity.json")"
+  SAVED_GIT_NAME="$(printf '%s\n' "$IDENTITY_PAIR" | sed -n '1p')"
+  SAVED_GIT_EMAIL="$(printf '%s\n' "$IDENTITY_PAIR" | sed -n '2p')"
+fi
+if [ -n "$SAVED_GIT_NAME" ] && [ -n "$SAVED_GIT_EMAIL" ]; then
+  git config --file "$RUNTIME/gitconfig" user.name "$SAVED_GIT_NAME"
+  git config --file "$RUNTIME/gitconfig" user.email "$SAVED_GIT_EMAIL"
+  log "session gitconfig carries commit author $SAVED_GIT_NAME <$SAVED_GIT_EMAIL>"
+fi
 # Session gh config (pilot sets GH_CONFIG_DIR to this for sessions only).
 # gh validates api_host as a bare hostname in some commands (gh pr create
 # rejects host:port), so on the default port the port is omitted entirely.
