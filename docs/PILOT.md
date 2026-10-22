@@ -119,6 +119,36 @@ already cloned reuses it; any other content in the workspace is refused.
 The app stores the slug on the session (`sessions.repo_slug`, migration
 0025) so queued first-prompt retries clone the same repo.
 
+### Commit author (global + per-checkout)
+
+Sessions commit with a configured author, in three layers (standard git
+precedence applies — repo-local beats global):
+
+1. **Global**: the broker setup script optionally prompts for an author
+   name/email and writes `git-identity.json` in the pilot runtime dir.
+   The pilot merges it into the generated session gitconfig's `[user]`
+   section at startup and on change (`GET`/`POST /git-identity` on the
+   pilot, `getGitIdentity`/`setGitIdentity` actions). Adjust it by
+   re-running setup, editing that JSON, saving from the composer's repo
+   picker ("Save as global author"), or `git config --global` in a
+   session terminal — the installer preserves a hand-set `[user]` when
+   regenerating the gitconfig, and the identity file, when present,
+   wins over it.
+2. **Per checkout**: the conversation's repo dropdown (manage menu)
+   shows a single **Author** row below Workspace and Remote. Editing it
+   (`setSessionGitAuthor`) stores the pair on the session (migration
+   0027) and the pilot's `POST /sessions/:id/git-author` writes it as
+   repo-local `user.name` / `user.email` in the checkout (clearing both
+   inputs unsets it and reverts to the global author), so it applies to agent commits and
+   terminals in that checkout only. The create-time `gitAuthor` field
+   on `POST /sessions` remains for API callers; the repo select dialog
+   intentionally has no author fields.
+3. The effective author rides the `session_started` meta as `gitAuthor`.
+
+Commits are always local `git commit` — the GitHub tools never create
+commits through the API (`github_create_pr` requires an already-pushed
+branch).
+
 ## Supervision rules (learned from the 2026-09-30 incident)
 
 - Exactly one supervisor per port: with the unit installed, manage ONLY via

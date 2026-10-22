@@ -11,6 +11,11 @@ export const sessions = sqliteTable("sessions", {
   // clones it into workspaceRoot before the session starts. Null: the
   // companion starts in a blank generated folder.
   repoSlug: text("repo_slug"),
+  // Per-checkout commit author override picked with the repo; the pilot
+  // writes it as repo-local git config after cloning. Null: the global
+  // identity from the pilot's generated gitconfig applies.
+  gitAuthorName: text("git_author_name"),
+  gitAuthorEmail: text("git_author_email"),
   // Loopback port on the pilot host attached in the Preview tab.
   previewPort: integer("preview_port"),
   status: text("status", {

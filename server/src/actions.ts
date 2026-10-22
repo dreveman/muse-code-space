@@ -79,6 +79,7 @@ const sessionResponseSchema = z.object({
   latest_output: z.string().nullable(),
   project_id: z.string().nullable(),
   repo_slug: z.string().nullable(),
+  git_author: z.object({ name: z.string(), email: z.string() }).nullable().optional(),
   preview_port: z.number().int().nullable().optional(),
   owned_prs: z.array(ownedPrSchema).optional(),
 });
@@ -588,7 +589,7 @@ async function pilotSessionIdFor(db: ReturnType<Parameters<typeof Actions.getSes
 }
 
 type PilotStartRow = Pick<typeof schema.sessions.$inferSelect,
-  "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "modelId" | "requestedModelId" | "reasoningEffort"> & {
+  "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "gitAuthorName" | "gitAuthorEmail" | "modelId" | "requestedModelId" | "reasoningEffort"> & {
   attachments?: readonly PilotAttachmentInput[];
 };
 
@@ -630,6 +631,9 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
         generatedWorkspace: row.workspaceRoot === null || isGeneratedWorkspaceRoot(row.id, row.workspaceRoot, WORKSPACE_ROOT),
         // The pilot clones this into the workspace before the first turn.
         ...(row.repoSlug ? { repo: row.repoSlug } : {}),
+        ...(row.repoSlug && row.gitAuthorName && row.gitAuthorEmail
+          ? { gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail } }
+          : {}),
         ...(row.attachments && row.attachments.length > 0 ? { attachments: row.attachments } : {}),
       }),
     },
@@ -1056,8 +1060,121 @@ export const Actions = {
     },
   }),
 
+  // Global git commit identity (pilot git-identity.json, merged into the
+  // session gitconfig). Per-checkout overrides ride createSession instead.
+  getGitIdentity: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      name: z.string().nullable(),
+      email: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/git-identity", { method: "GET" },
+          z.object({ identity: z.object({ name: z.string(), email: z.string() }).nullable() }));
+        return { ok: true, name: res.identity?.name ?? null, email: res.identity?.email ?? null, error: null };
+      } catch (error) {
+        return { ok: false, name: null, email: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  setGitIdentity: defineAction({
+    request: z.object({
+      name: z.string().trim().min(1).max(100).nullable(),
+      email: z.string().trim().min(3).max(200).nullable(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      name: z.string().nullable(),
+      email: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, name: null, email: null, error: denied };
+      if ((args.name === null) !== (args.email === null)) {
+        return { ok: false, name: null, email: null, error: "Provide both an author name and email, or clear both." };
+      }
+      if (args.name !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(args.email ?? "")) {
+        return { ok: false, name: null, email: null, error: "Provide a valid author email." };
+      }
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/git-identity",
+          { method: "POST", body: JSON.stringify(args.name === null ? { identity: null } : { name: args.name, email: args.email }) },
+          z.object({ identity: z.object({ name: z.string(), email: z.string() }).nullable() }));
+        ctx.invalidateQueries({ queryKey: ["git-identity"] });
+        return { ok: true, name: res.identity?.name ?? null, email: res.identity?.email ?? null, error: null };
+      } catch (error) {
+        return { ok: false, name: null, email: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  // Per-checkout commit author for an already-started session (the repo
+  // dropdown in the conversation). Pilot applies it as repo-local git
+  // config in the session workspace; clearing falls back to the global
+  // identity in the session gitconfig.
+  setSessionGitAuthor: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+      name: z.string().trim().min(1).max(100).nullable(),
+      email: z.string().trim().min(3).max(200).nullable(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      name: z.string().nullable(),
+      email: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, name: null, email: null, error: denied };
+      if ((args.name === null) !== (args.email === null)) {
+        return { ok: false, name: null, email: null, error: "Provide both an author name and email, or clear both." };
+      }
+      if (args.name !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(args.email ?? "")) {
+        return { ok: false, name: null, email: null, error: "Provide a valid author email." };
+      }
+      const db = ctx.db<typeof schema>();
+      const rows = await db.select({
+        id: schema.sessions.id, pilotSessionId: schema.sessions.pilotSessionId, repoSlug: schema.sessions.repoSlug,
+      }).from(schema.sessions).where(eq(schema.sessions.id, args.session_id)).limit(1);
+      const session = rows[0];
+      if (!session) return { ok: false, name: null, email: null, error: "Session not found" };
+      if (!session.repoSlug) return { ok: false, name: null, email: null, error: "This session has no repository checkout." };
+      // Pilot first: a failed apply must not leave the row claiming an
+      // author the checkout does not have. Queued sessions have no pilot
+      // session yet; their stored author rides the start payload instead.
+      if (session.pilotSessionId) {
+        try {
+          const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+          await pilotRequest(baseUrl, `/sessions/${encodeURIComponent(session.pilotSessionId)}/git-author`,
+            { method: "POST", body: JSON.stringify(args.name === null ? { identity: null } : { name: args.name, email: args.email }) },
+            z.object({ ok: z.boolean() }));
+        } catch (error) {
+          return { ok: false, name: null, email: null, error: `Couldn't apply the author to the checkout (${pilotRequestErrorText(error).slice(0, 200)}). Nothing was changed.` };
+        }
+      }
+      await db.update(schema.sessions)
+        .set({ gitAuthorName: args.name, gitAuthorEmail: args.email, updatedAt: new Date() })
+        .where(eq(schema.sessions.id, session.id));
+      ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
+      return { ok: true, name: args.name, email: args.email, error: null };
+    },
+  }),
+
   // Messageable agents plus the user's current Muse assistant avatar name.
   listAgents: defineAction({
+
+
     request: z.object({}),
     response: z.object({
       ok: z.boolean(),
@@ -2100,6 +2217,7 @@ export const Actions = {
             latest_output: latest ? latest.slice(0, 220) : null,
             project_id: row.projectId ?? null,
             repo_slug: row.repoSlug ?? null,
+            git_author: row.gitAuthorName && row.gitAuthorEmail ? { name: row.gitAuthorName, email: row.gitAuthorEmail } : null,
             preview_port: row.previewPort ?? null,
             owned_prs: ownedPrs,
           };
@@ -2171,6 +2289,7 @@ export const Actions = {
           latest_output: latest ? latest.slice(0, 220) : null,
           project_id: row.projectId ?? null,
           repo_slug: row.repoSlug ?? null,
+          git_author: row.gitAuthorName && row.gitAuthorEmail ? { name: row.gitAuthorName, email: row.gitAuthorEmail } : null,
           preview_port: row.previewPort ?? null,
         },
         events: events.map((event) => ({
@@ -2447,6 +2566,12 @@ export const Actions = {
       // Repo picked before the first message (`owner/repo` or a github.com
       // URL); the pilot clones it into the workspace before starting.
       repo: z.string().trim().min(1).max(300).nullable().optional(),
+      // Per-checkout commit author override (requires `repo`); the pilot
+      // writes it as repo-local git config after cloning.
+      git_author: z.object({
+        name: z.string().trim().min(1).max(100),
+        email: z.string().trim().min(3).max(200),
+      }).nullable().optional(),
       attachments: z.array(attachmentInputSchema).max(8).optional(),
     }).strict(),
     response: createSessionResponseSchema,
@@ -2470,6 +2595,12 @@ export const Actions = {
           start_status: null,
           error: "Pick a repository as owner/repo or a github.com URL.",
         };
+      }
+      if (args.git_author != null && !repoSlug) {
+        return { ok: false, id: null, start_status: null, error: "A commit author override needs a picked repository." };
+      }
+      if (args.git_author != null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(args.git_author.email)) {
+        return { ok: false, id: null, start_status: null, error: "Provide a valid author email for this checkout." };
       }
       // Generated short paths cannot accidentally be assigned to two app
       // sessions. Explicitly chosen shared project directories stay allowed.
@@ -2536,6 +2667,8 @@ export const Actions = {
             projectId,
             workspaceRoot: workspace.path,
             repoSlug,
+            gitAuthorName: args.git_author?.name ?? null,
+            gitAuthorEmail: args.git_author?.email ?? null,
             status: "queued",
             pilotRetryAt: new Date(Date.now() + (repoSlug ? 150_000 : PILOT_START_LEASE_MS)),
             startedAt: now,
@@ -2582,6 +2715,8 @@ export const Actions = {
             prompt,
             workspaceRoot: workspace.path,
             repoSlug,
+            gitAuthorName: args.git_author?.name ?? null,
+            gitAuthorEmail: args.git_author?.email ?? null,
             modelId,
             requestedModelId: modelId,
             reasoningEffort: effort,

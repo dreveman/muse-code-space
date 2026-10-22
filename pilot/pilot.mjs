@@ -62,6 +62,13 @@ import {
 } from "./preview.mjs";
 import { createPrMonitorRegistry } from "./prMonitor.mjs";
 import { validateAssistantAvatar } from "./assistant-avatar.mjs";
+import {
+  mergeGitIdentityIntoGitconfig,
+  parseGitIdentity,
+  readGitIdentityFile,
+  readGitconfigIdentity,
+  writeGitIdentityFile,
+} from "./gitIdentity.mjs";
 
 const HOME = process.env.HOME;
 const PORT = Number(process.env.MUSE_CODE_SPACE_PILOT_PORT ?? 18791);
@@ -327,6 +334,33 @@ function writableDirs(source = process.env) {
   const dirs = configured ? configured.split(/[\n:]/).map((d) => d.trim()).filter(Boolean) : [`${HOME}/workspace`];
   for (const dir of dirs) mkdirSync(dir, { recursive: true }); // the launcher requires existing dirs
   return dirs;
+}
+
+// Global commit identity for sessions (gitIdentity.mjs): a JSON file in
+// the runtime dir is the source of truth; it is merged into the generated
+// gitconfig's [user] section so agent shells and terminals inherit it.
+// Without an identity file, a [user] section set by hand in the generated
+// gitconfig (e.g. `git config --global` in a session terminal) is kept.
+const GIT_IDENTITY_PATH = process.env.MUSE_CODE_SPACE_GIT_IDENTITY_PATH
+  ?? join(dirname(STATE_DIR), "git-identity.json");
+function syncGitIdentityToGitconfig() {
+  const runtime = dirname(STATE_DIR);
+  const gitconfig = join(runtime, "gitconfig");
+  if (!existsSync(gitconfig)) return;
+  try {
+    const identity = readGitIdentityFile(GIT_IDENTITY_PATH);
+    const current = readFileSync(gitconfig, "utf8");
+    const merged = mergeGitIdentityIntoGitconfig(current, identity);
+    if (merged !== current) writeFileSync(gitconfig, merged);
+  } catch { /* identity sync must never block session startup */ }
+}
+function effectiveGitIdentity() {
+  const fromFile = readGitIdentityFile(GIT_IDENTITY_PATH);
+  if (fromFile) return fromFile;
+  const gitconfig = join(dirname(STATE_DIR), "gitconfig");
+  try {
+    return existsSync(gitconfig) ? readGitconfigIdentity(readFileSync(gitconfig, "utf8")) : null;
+  } catch { return null; }
 }
 
 // GitHub broker wiring for spawned sessions only (install.sh generates the
@@ -1163,6 +1197,25 @@ function gitRead(workspaceRoot, args) {
   });
 }
 
+// Set repo-local git config (per-checkout author override). Resolves
+// true only when the values were actually written.
+function gitConfigLocal(workspaceRoot, identity) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", workspaceRoot, "config", "user.name", identity.name], { timeout: 5000 }, (nameError) => {
+      if (nameError) return resolve(false);
+      execFile("git", ["-C", workspaceRoot, "config", "user.email", identity.email], { timeout: 5000 }, (emailError) => resolve(!emailError));
+    });
+  });
+}
+
+function gitConfigUnsetLocal(workspaceRoot) {
+  return new Promise((resolve) => {
+    execFile("git", ["-C", workspaceRoot, "config", "--unset", "user.name"], { timeout: 5000 }, () => {
+      execFile("git", ["-C", workspaceRoot, "config", "--unset", "user.email"], { timeout: 5000 }, () => resolve(true));
+    });
+  });
+}
+
 function gitReadRaw(workspaceRoot, args) {
   return new Promise((resolve) => {
     execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
@@ -1404,6 +1457,7 @@ if (typeof userInputProber.unref === "function") userInputProber.unref();
 
 async function boot() {
   bootReady = false;
+  syncGitIdentityToGitconfig();
   relayUpSyncCache = await relayUp();
   await waitForRelay();
   client = await spawnHost();
@@ -1834,6 +1888,15 @@ async function createPilotSessionInner(body, appSessionId) {
     if (body.repo !== undefined && body.repo !== null && !repoPick) {
       return { code: 400, body: { error: "Pick a repository as owner/repo or a github.com URL.", code: "invalid_repo" } };
     }
+    // Per-checkout commit author override: only meaningful with a repo, and
+    // validated here exactly as at the app layer (fail before any clone).
+    const gitAuthor = body.gitAuthor === undefined || body.gitAuthor === null ? null : parseGitIdentity(body.gitAuthor);
+    if (body.gitAuthor !== undefined && body.gitAuthor !== null && !gitAuthor) {
+      return { code: 400, body: { error: "Provide a valid author name and email for this checkout.", code: "invalid_git_identity" } };
+    }
+    if (gitAuthor && !repoPick) {
+      return { code: 400, body: { error: "A commit author override needs a picked repository.", code: "invalid_git_identity" } };
+    }
     // Direct pilot callers also get a short, stable directory without
     // leaking their mutable title or the full workspaceName into the path.
     const wsDir = body.workspaceRoot ?? defaultWorkspacePath(appSessionId);
@@ -1874,6 +1937,12 @@ async function createPilotSessionInner(body, appSessionId) {
     } else if (!createWorkspacePath(wsDir, !body.workspaceRoot || body.generatedWorkspace === true)) {
       return { code: 409, body: { error: "generated working directory already exists; start a new companion", code: "workspace_conflict" } };
     }
+    // Apply the per-checkout author as repo-local config (beats the global
+    // identity in the session gitconfig). Failure must not lose the session.
+    let appliedGitAuthor = null;
+    if (gitAuthor && existsSync(join(wsDir, ".git"))) {
+      appliedGitAuthor = (await gitConfigLocal(wsDir, gitAuthor)) ? gitAuthor : null;
+    }
     const meta = {
       title: body.title ?? null,
       name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : null,
@@ -1881,6 +1950,7 @@ async function createPilotSessionInner(body, appSessionId) {
       createdAt: new Date().toISOString(),
       workspaceRoot: wsDir,
       repo: repoPick?.slug ?? null,
+      gitAuthor: appliedGitAuthor ?? effectiveGitIdentity(),
       appSessionId,
       initialTurnId: null,
     };
@@ -2073,6 +2143,31 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && path === "/agents") {
       return json(res, 200, { agents: agentDirectory(), assistant: { name: assistant.name, color: assistant.color } });
     }
+    // Global git commit identity: GET -> {identity} (identity file, else a
+    // [user] section set by hand in the generated gitconfig, else null).
+    // POST {name,email} sets it; POST {identity:null} clears it. Changes are
+    // merged into the generated gitconfig immediately.
+    if (path === "/git-identity") {
+      if (req.method === "GET") return json(res, 200, { identity: effectiveGitIdentity() });
+      if (req.method === "POST") {
+        const body = await readBody(req).catch(() => ({}));
+        if (body.identity === null || (body.name === null && body.email === null)) {
+          writeGitIdentityFile(GIT_IDENTITY_PATH, null);
+          const gitconfig = join(dirname(STATE_DIR), "gitconfig");
+          if (existsSync(gitconfig)) {
+            const current = readFileSync(gitconfig, "utf8");
+            const cleared = mergeGitIdentityIntoGitconfig(current, null, { clear: true });
+            if (cleared !== current) writeFileSync(gitconfig, cleared);
+          }
+          return json(res, 200, { identity: null });
+        }
+        const identity = parseGitIdentity({ name: body.name ?? body.identity?.name, email: body.email ?? body.identity?.email });
+        if (!identity) return json(res, 400, { error: "Provide a valid author name and email.", code: "invalid_git_identity" });
+        writeGitIdentityFile(GIT_IDENTITY_PATH, identity);
+        syncGitIdentityToGitconfig();
+        return json(res, 200, { identity });
+      }
+    }
     // Full assistant identity is fetched separately; avatars never enter message events.
     if (path === "/assistant") {
       if (req.method === "GET") return json(res, 200, assistant);
@@ -2109,6 +2204,35 @@ const server = createServer(async (req, res) => {
       const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
       const messages = readMuseInbox(since);
       return json(res, 200, { messages, latest: museInboxSeq });
+    }
+
+    // POST /sessions/:id/git-author {name,email} | {identity:null}: set or
+    // clear the per-checkout commit author as repo-local git config in the
+    // session workspace. Clearing unsets it, so the global identity in the
+    // session gitconfig applies again.
+    const mGitAuthor = path.match(/^\/sessions\/([^/]+)\/git-author$/);
+    if (req.method === "POST" && mGitAuthor) {
+      const entry = resolveEntry(decodeURIComponent(mGitAuthor[1]));
+      if (!entry) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      const body = await readBody(req).catch(() => ({}));
+      const wsDir = entry.meta?.workspaceRoot ?? null;
+      if (!wsDir || !existsSync(join(wsDir, ".git"))) {
+        return json(res, 409, { error: "session workspace is not a git checkout", code: "not_a_checkout" });
+      }
+      if (body.identity === null || (body.name === null && body.email === null)) {
+        await gitConfigUnsetLocal(wsDir);
+        entry.meta.gitAuthor = effectiveGitIdentity();
+        saveRegistry();
+        return json(res, 200, { ok: true, identity: entry.meta.gitAuthor });
+      }
+      const identity = parseGitIdentity(body);
+      if (!identity) return json(res, 400, { error: "Provide a valid author name and email.", code: "invalid_git_identity" });
+      if (!(await gitConfigLocal(wsDir, identity))) {
+        return json(res, 500, { error: "could not write git config in the session workspace", code: "git_config_failed" });
+      }
+      entry.meta.gitAuthor = identity;
+      saveRegistry();
+      return json(res, 200, { ok: true, identity });
     }
 
     // POST /sessions/:id/rename {name} -> {name}: rename the agent in Muse

@@ -14,6 +14,7 @@ import {
   type RepoOption,
 } from "./repoOptions";
 import { formatRelativeTime } from "./sessionList";
+import { formatGitAuthor, parseGitAuthorText } from "./gitAuthor";
 import { smartlogCheckoutLabel, type SessionVcsStatus } from "./smartlogLayout";
 
 function UncommittedDraftRingIcon() {
@@ -88,6 +89,9 @@ export const RepoPicker = memo(function RepoPicker({
   smartlogOpen = false,
   onToggleSmartlog,
   onChoose,
+  globalGitIdentity = null,
+  sessionGitAuthor = null,
+  onSaveSessionGitAuthor,
 }: {
   repos: readonly RepoOption[];
   githubEnabled: boolean;
@@ -103,12 +107,43 @@ export const RepoPicker = memo(function RepoPicker({
   smartlogOpen?: boolean;
   onToggleSmartlog?: () => void;
   onChoose?: (slug: string | null) => void;
+  globalGitIdentity?: { name: string; email: string } | null;
+  sessionGitAuthor?: { name: string; email: string } | null;
+  onSaveSessionGitAuthor?: (identity: { name: string; email: string } | null) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [openPrKey, setOpenPrKey] = useState<string | null>(null);
   const [moreExpanded, setMoreExpanded] = useState(false);
   const [menuMaxHeight, setMenuMaxHeight] = useState<number>();
   const [connectDismissed, setConnectDismissed] = useState(false);
+  const [manageAuthorText, setManageAuthorText] = useState("");
+  const [editingAuthor, setEditingAuthor] = useState(false);
+  const [savingAuthor, setSavingAuthor] = useState(false);
+  const parsedManageAuthor = parseGitAuthorText(manageAuthorText);
+  // Editing is local until Save: Edit seeds the field with the effective
+  // author (per-checkout override, else the global identity); Save parses
+  // "Name <email>", stores it as this checkout's override (blank, or a value
+  // equal to the global identity, clears the override back to global).
+  const startEditingAuthor = () => {
+    const effective = sessionGitAuthor ?? globalGitIdentity;
+    setManageAuthorText(effective ? formatGitAuthor(effective) : "");
+    setEditingAuthor(true);
+  };
+  const saveAuthor = async () => {
+    if (!onSaveSessionGitAuthor || parsedManageAuthor === "invalid" || savingAuthor) return;
+    const override = parsedManageAuthor
+      && globalGitIdentity
+      && parsedManageAuthor.name === globalGitIdentity.name
+      && parsedManageAuthor.email === globalGitIdentity.email
+      ? null
+      : parsedManageAuthor;
+    setSavingAuthor(true);
+    try {
+      if (await onSaveSessionGitAuthor(override)) setEditingAuthor(false);
+    } finally {
+      setSavingAuthor(false);
+    }
+  };
   const [copiedField, setCopiedField] = useState<"url" | "path" | "pr-url" | null>(null);
   const [query, setQuery] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -311,6 +346,36 @@ export const RepoPicker = memo(function RepoPicker({
                 {copiedField === "url" ? <CopiedCheckIcon /> : <CopyButtonIcon />}
               </button>
             </div>
+            {onSaveSessionGitAuthor && (
+              <div className="repo-manage-field">
+                <span className="repo-manage-field-label">Author</span>
+                {editingAuthor ? (
+                  <input type="text" className="repo-manage-field-value repo-author-input" aria-label="Author"
+                    value={manageAuthorText} maxLength={300} autoComplete="name" autoFocus
+                    placeholder="Name <email>"
+                    aria-invalid={parsedManageAuthor === "invalid"}
+                    onChange={(event) => setManageAuthorText(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void saveAuthor(); } }} />
+                ) : (
+                  <code className="repo-manage-field-value">
+                    {sessionGitAuthor
+                      ? formatGitAuthor(sessionGitAuthor)
+                      : globalGitIdentity
+                        ? formatGitAuthor(globalGitIdentity)
+                        : "Not set"}
+                  </code>
+                )}
+                <button type="button" className={`repo-manage-copy repo-author-edit${editingAuthor ? " pressed" : ""}`}
+                  title={editingAuthor ? "Save commit author for this checkout" : "Edit commit author for this checkout"}
+                  aria-label={editingAuthor ? "Save commit author for this checkout" : "Edit commit author for this checkout"}
+                  aria-expanded={editingAuthor}
+                  aria-pressed={editingAuthor}
+                  disabled={editingAuthor && (parsedManageAuthor === "invalid" || savingAuthor)}
+                  onClick={() => { if (editingAuthor) void saveAuthor(); else startEditingAuthor(); }}>
+                  {editingAuthor ? "Save" : "Edit"}
+                </button>
+              </div>
+            )}
             <div className="repo-manage-actions">
               <a className="repo-manage-action" href={repoHtmlUrl} target="_blank" rel="noopener noreferrer">
                 <span>Open on GitHub</span>
@@ -335,12 +400,6 @@ export const RepoPicker = memo(function RepoPicker({
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
             <div id={`${id}-repos`} className="repo-menu-list" role="listbox" aria-label="Repositories">
-              {selected !== null && (
-                <button type="button" className="repo-menu-option"
-                  aria-selected={false} onClick={() => choose(null)}>
-                  <span className="repo-menu-identity"><strong>No repo</strong><small>Blank workspace, as today</small></span>
-                </button>
-              )}
               {visible.map((repo) => (
                 <button type="button" key={repo.slug}
                   className={`repo-menu-option${selected === repo.slug ? " selected" : ""}`}

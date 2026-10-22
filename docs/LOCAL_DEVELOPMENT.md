@@ -428,6 +428,18 @@ the actions call:
   pilot's 422 `repo_clone_failed`; any other slug drops a `FAKE-CLONE.md`
   marker into the workspace and rides the `session_started` meta. No git
   or GitHub is involved.
+- Deleting a session removes its workspace directory under
+  `~/workspace/code/<token>` (mirroring the real pilot's owned-workspace
+  cleanup). When this checkout is itself such a workspace, deleting the
+  task that owns it deletes the checkout under the running dev server —
+  the fake pilot refuses to delete its own `process.cwd()` as a
+  dev-only guard, but expect the task list (`.dev/app.db`) to be
+  recreated from scratch after any real workspace loss.
+- `/git-identity` holds the fake global commit author (default
+  `Fake Dev <fake-dev@example.com>`; `MUSE_CODE_SPACE_FAKE_GIT_NAME` /
+  `MUSE_CODE_SPACE_FAKE_GIT_EMAIL` override, both empty for none). A
+  `gitAuthor` on session start is validated like the real pilot's and
+  rides the `session_started` meta as the effective author.
 - Each prompt plays a scripted turn: tool call → answer →
   `turn_completed`.
 - Send `help` (or `triggers` / `list-triggers`) as a prompt to list every
