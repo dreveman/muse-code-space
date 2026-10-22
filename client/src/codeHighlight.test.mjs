@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { codeLanguageForPath, codeLanguageForTag } from "./codeLanguage.ts";
+import { codeLanguageForPath, codeLanguageForTag, fenceTagForLine } from "./codeLanguage.ts";
 import { highlightCode, highlightCodeForLanguage } from "./codeHighlight.ts";
 
 test("only explicitly supported file extensions select a language", () => {
@@ -22,6 +22,27 @@ test("only explicitly supported fence tags select a language", () => {
   }
 });
 
+test("any info string opens a fence, even one that names no known language", () => {
+  assert.equal(fenceTagForLine("```bash"), "bash");
+  assert.equal(fenceTagForLine("```made-up-lang"), "made-up-lang");
+  assert.equal(fenceTagForLine("```c++"), "c++");
+  assert.equal(fenceTagForLine("```python3"), "python3");
+  assert.equal(fenceTagForLine("```"), "");
+  assert.equal(fenceTagForLine("  ```ts  "), "ts");
+  assert.equal(fenceTagForLine("``bash"), undefined);
+  assert.equal(fenceTagForLine("```bash extra"), undefined);
+  assert.equal(fenceTagForLine("just text"), undefined);
+  // Unknown tags open a plain block, never a highlighted one.
+  assert.equal(codeLanguageForTag(fenceTagForLine("```made-up-lang")), null);
+  assert.equal(codeLanguageForTag(fenceTagForLine("```c++")), null);
+});
+
+test("the Markdown renderer detects fences with fenceTagForLine", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  assert.ok(app.includes("fenceTagForLine(trimmed)"), "fence detection accepts hyphenated/unknown tags");
+  assert.ok(!app.includes("/^```(\\w*)"), "the word-character-only fence regex is gone");
+});
+
 test("a shell fence tokenizes in both themes and preserves the source exactly", async () => {
   const source = 'echo "hello"\npwd';
   const lang = codeLanguageForTag("bash");
@@ -37,7 +58,7 @@ test("a shell fence tokenizes in both themes and preserves the source exactly", 
 test("Markdown fences render through the highlighting code block", () => {
   const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const block = readFileSync(new URL("./MarkdownCodeBlock.tsx", import.meta.url), "utf8");
-  assert.ok(app.includes("<MarkdownCodeBlock") && app.includes("languageTag={fenceMatch[1] || null}"), "the fence tag reaches the code block");
+  assert.ok(app.includes("<MarkdownCodeBlock") && app.includes("languageTag={fenceTag || null}"), "the fence tag reaches the code block");
   assert.ok(block.includes("codeLanguageForTag(languageTag)"), "unknown tags stay plain");
   assert.ok(block.includes("highlightCodeForLanguage(code, lang, theme)"), "known tags highlight like file views");
 });

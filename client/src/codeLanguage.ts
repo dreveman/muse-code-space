@@ -16,6 +16,18 @@ const FENCE_TAGS: Record<string, CodeLanguage> = {
   python: "python", py: "python", rust: "rust", rs: "rust", sql: "sql",
   shellscript: "shellscript", shell: "shellscript", sh: "shellscript", bash: "shellscript", zsh: "shellscript",
 };
+// Opening-fence detection for the Markdown renderer. The info string is
+// any run of non-space, non-backtick characters (`made-up-lang`, `c++`,
+// `python3`): whether it names a supported language is codeLanguageForTag's
+// call, but a fence with an unknown tag is still a code block and must be
+// consumed up to its closing fence, not rendered as paragraphs. Returns
+// the tag ("" for an untagged fence), or undefined when the line is not an
+// opening fence at all.
+export function fenceTagForLine(line: string): string | undefined {
+  const match = /^```([^\s`]*)\s*$/.exec(line.trim());
+  return match ? match[1] ?? "" : undefined;
+}
+
 export function codeLanguageForTag(tag: string | null | undefined): CodeLanguage | null {
   if (!tag || /[\x00-\x1f\x7f\s]/.test(tag)) return null;
   return FENCE_TAGS[tag.toLowerCase()] ?? null;

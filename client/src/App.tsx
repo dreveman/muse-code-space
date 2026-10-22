@@ -52,6 +52,7 @@ import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDoc
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
+import { fenceTagForLine } from "./codeLanguage";
 import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
 import { ToolImageView } from "./RenderedToolImage";
@@ -555,8 +556,8 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
       continue;
     }
 
-    const fenceMatch = /^```(\w*)\s*$/.exec(trimmed);
-    if (fenceMatch) {
+    const fenceTag = fenceTagForLine(trimmed);
+    if (fenceTag !== undefined) {
       flushParagraph();
       flushList();
       flushQuote();
@@ -569,7 +570,7 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
       i += 1;
       const current = key++;
       nodes.push(
-        <MarkdownCodeBlock key={current} code={codeLines.join("\n").replace(/\n$/, "")} languageTag={fenceMatch[1] || null} />,
+        <MarkdownCodeBlock key={current} code={codeLines.join("\n").replace(/\n$/, "")} languageTag={fenceTag || null} />,
       );
       continue;
     }
