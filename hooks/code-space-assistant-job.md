@@ -106,13 +106,21 @@ file for a normal installation. Never combine `--worker-identity` with
    `ok/error`; this action sends as Muse. Agents use their own session-scoped MCP
    tools. Do not send any test messages merely to verify this job's configuration.
 5. A message from **Code Space** (GitHub setup in the repo picker) asking you
-   to initiate the Secure Vault addition of `custom.github-broker`: start
-   that Secure Vault flow with the user in your own surface — a fine-grained
-   GitHub PAT, Contents + Pull requests read/write, selected repositories
-   only, stored as a custom API credential named exactly
-   `custom.github-broker` — and tell the user here when it has been added.
-   The setup dialog polls broker status itself; do not acknowledge the
-   message until the vault flow has been initiated with the user.
+   to set up the GitHub broker: first start the Secure Vault flow with the
+   user in your own surface — a fine-grained GitHub PAT, Contents + Pull
+   requests read/write, selected repositories only, stored as a custom API
+   credential named exactly `custom.github-broker`. Then finish the broker
+   setup on the host: write
+   `~/.config/muse-code-space-pilot/github-broker.json` (chmod 600)
+   containing `{"mode": "surrogate", "credential_name":
+   "custom.github-broker"}` (the config holds no secret), restart the
+   broker with `systemctl restart muse-code-space-github-broker.service`
+   (sudo if needed), and verify
+   `https://127.0.0.1:443/__code_space/health` answers `ok: true`. Only then
+   tell the user the broker is working. The setup dialog polls broker status
+   itself; do not acknowledge the message until the broker is verified, and
+   report the exact failing step instead of acknowledging if the Vault
+   addition, config write, restart, or health check cannot be completed.
 
 ## Supply missing session summaries
 

@@ -61,9 +61,12 @@ test("the fake pilot simulates the whole setup flow", () => {
 test("the real pilot reports genuine status and asks Muse for the broker credential", () => {
   assert.ok(pilot.includes('path === "/github-setup"'), "pilot serves setup status");
   assert.ok(pilot.includes('appDone: mode === "app"'), "App step reflects an app-mode broker config");
-  assert.ok(pilot.includes("initiate the Secure Vault addition of a custom API credential named custom.github-broker"), "broker step asks the Muse assistant via its inbox");
+  assert.ok(pilot.includes("initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker"), "broker step asks the Muse assistant via its inbox");
   assert.ok(pilot.includes("MUSE_INBOX_PATH"), "the request lands where readMuseMessages reads");
   assert.ok(pilot.includes("github_setup_unavailable"), "the App step is not faked on the real pilot yet");
   const hook = readFileSync(new URL("../../hooks/code-space-assistant-job.md", import.meta.url), "utf8");
   assert.ok(hook.includes("custom.github-broker"), "the assistant job knows how to handle the broker credential request");
+  assert.ok(hook.includes('{"mode": "surrogate", "credential_name":') || hook.includes('"mode": "surrogate"'), "the assistant writes the surrogate broker config");
+  assert.ok(hook.includes("systemctl restart muse-code-space-github-broker.service"), "the assistant activates the broker");
+  assert.ok(hook.includes("__code_space/health"), "the assistant verifies the broker before reporting success");
 });
