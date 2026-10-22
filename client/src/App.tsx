@@ -2038,12 +2038,12 @@ export function App() {
     },
   });
   const githubSetup = githubSetupQuery.data?.ok
-    ? { brokerDone: githubSetupQuery.data.broker_done, appDone: githubSetupQuery.data.app_done, brokerRequested: githubSetupQuery.data.broker_requested }
+    ? { brokerDone: githubSetupQuery.data.broker_done, appDone: githubSetupQuery.data.app_done, brokerRequested: githubSetupQuery.data.broker_requested, appRequested: githubSetupQuery.data.app_requested, appHelpRequested: githubSetupQuery.data.app_help_requested }
     : null;
   const performGithubSetupStep = useCallback(async (
-    step: "broker" | "app",
+    step: "broker" | "app" | "app-help",
     payload?: { appId: string; installationId: string; privateKey: string },
-  ): Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean }> => {
+  ): Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean }> => {
     const result = await api.performGithubSetupStep({
       step,
       app_id: payload?.appId,
@@ -2056,7 +2056,7 @@ export function App() {
         queryClient.invalidateQueries({ queryKey: ["github-repos"] }, { cancelRefetch: false }),
       ]);
     }
-    return { ok: result.ok, error: result.error, brokerRequested: result.broker_requested };
+    return { ok: result.ok, error: result.error, brokerRequested: result.broker_requested, appRequested: result.app_requested, appHelpRequested: result.app_help_requested };
   }, [queryClient]);
   const saveGlobalGitAuthor = useCallback(async (identity: { name: string; email: string }) => {
     const result = await api.setGitIdentity({ name: identity.name, email: identity.email });

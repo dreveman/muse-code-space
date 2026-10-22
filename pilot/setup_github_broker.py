@@ -211,8 +211,40 @@ def broker_health(port: int = 443, attempts: int = 15) -> bool:
     return False
 
 
+def non_interactive_main(argv: list[str], stdin_text: str, validate_fn=validate) -> int:
+    """Validate + write App credentials without prompting (pilot dialog).
+
+    App ID / installation ID arrive as flags; the private key arrives on
+    stdin so it never appears in argv, the process list, or logs. Nothing
+    is written unless GitHub validation succeeds. The broker is NOT
+    restarted here (the pilot cannot); activation is a separate step.
+    """
+    def flag(name: str) -> str:
+        return argv[argv.index(name) + 1].strip() if name in argv and argv.index(name) + 1 < len(argv) else ""
+
+    app_id, installation_id = flag("--app-id"), flag("--installation-id")
+    pem = (stdin_text or "").strip() + "\n"
+    if not app_id.isdigit() or not installation_id.isdigit():
+        print("App ID and installation ID must be numeric.", file=sys.stderr)
+        return 2
+    if "-----BEGIN" not in pem or "PRIVATE KEY-----" not in pem or "-----END" not in pem:
+        print("That did not look like a PEM private key.", file=sys.stderr)
+        return 2
+    try:
+        validate_fn(app_id, installation_id, pem)
+    except Exception as exc:  # noqa: BLE001 - clean failure, never the key
+        print(f"Validation failed ({type(exc).__name__}: {exc}) — nothing written.", file=sys.stderr)
+        return 1
+    write_config(build_config(app_id, installation_id, KEY_PATH), pem, CONFIG_PATH, KEY_PATH)
+    ensure_profile_block()
+    print(json.dumps({"ok": True}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if "--non-interactive" in argv:
+        return non_interactive_main(argv, sys.stdin.read())
     no_restart = "--no-restart" in argv
     print("GitHub App setup for the Code Space broker.")
     print("Create the App first if you haven't: https://github.com/settings/apps/new")

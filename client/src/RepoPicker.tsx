@@ -114,8 +114,8 @@ export const RepoPicker = memo(function RepoPicker({
   globalGitIdentity?: { name: string; email: string } | null;
   sessionGitAuthor?: { name: string; email: string } | null;
   onSaveSessionGitAuthor?: (identity: { name: string; email: string } | null) => Promise<boolean>;
-  githubSetup?: { brokerDone: boolean; appDone: boolean; brokerRequested?: boolean } | null;
-  onPerformGithubSetupStep?: (step: "broker" | "app", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean }>;
+  githubSetup?: { brokerDone: boolean; appDone: boolean; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean } | null;
+  onPerformGithubSetupStep?: (step: "broker" | "app" | "app-help", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean }>;
   onSaveGlobalGitAuthor?: (identity: { name: string; email: string }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -169,6 +169,23 @@ export const RepoPicker = memo(function RepoPicker({
     && !(githubSetup.brokerDone && githubSetup.appDone && setupAuthorDone);
   const [setupBrokerWaiting, setSetupBrokerWaiting] = useState(false);
   const brokerWaiting = !githubSetup?.brokerDone && (setupBrokerWaiting || Boolean(githubSetup?.brokerRequested));
+  const [setupAppWaiting, setSetupAppWaiting] = useState(false);
+  const appWaiting = !githubSetup?.appDone && (setupAppWaiting || Boolean(githubSetup?.appRequested));
+  const [setupAppHelpAsked, setSetupAppHelpAsked] = useState(false);
+  const appHelpAsked = setupAppHelpAsked || Boolean(githubSetup?.appHelpRequested);
+  const [setupHelpBusy, setSetupHelpBusy] = useState(false);
+  const askAppHelp = async () => {
+    if (!onPerformGithubSetupStep || setupHelpBusy || appHelpAsked) return;
+    setSetupHelpBusy(true);
+    setSetupError(null);
+    try {
+      const result = await onPerformGithubSetupStep("app-help");
+      if (result.ok) setSetupAppHelpAsked(true);
+      else setSetupError(result.error ?? "Your Muse assistant could not be asked.");
+    } finally {
+      setSetupHelpBusy(false);
+    }
+  };
   const runSetupStep = async (step: "broker" | "app") => {
     if (!onPerformGithubSetupStep || setupBusy) return;
     setSetupBusy(step);
@@ -183,6 +200,7 @@ export const RepoPicker = memo(function RepoPicker({
         // Vault addition; the dialog waits (status polling in App) until
         // the broker credential actually lands.
         if (step === "broker" && result.brokerRequested) setSetupBrokerWaiting(true);
+        if (step === "app" && result.appRequested) setSetupAppWaiting(true);
       } else {
         setSetupError(result.error ?? "That step could not be completed.");
       }
@@ -488,15 +506,25 @@ export const RepoPicker = memo(function RepoPicker({
                   <strong>GitHub App</strong>
                   <small>Lets companions clone, pull, and push to repositories</small>
                 </div>
-                {!githubSetup.appDone && (
+                {!githubSetup.appDone && (appWaiting ? (
+                  <span className="repo-setup-waiting" role="status">
+                    <span className="working-spinner" aria-hidden="true" />
+                    Waiting…
+                  </span>
+                ) : (
                   <button type="button" className={`repo-setup-action${setupExpanded === "app" ? " pressed" : ""}`}
                     aria-expanded={setupExpanded === "app"}
                     disabled={setupBusy !== null}
                     onClick={() => setSetupExpanded((value) => (value === "app" ? null : "app"))}>
                     Connect
                   </button>
-                )}
+                ))}
               </li>
+              {appWaiting && (
+                <li className="repo-setup-note" role="status">
+                  Credentials validated and saved. Your Muse assistant has been asked to restart the GitHub broker to activate them — this step completes automatically once it’s working.
+                </li>
+              )}
               {setupExpanded === "app" && !githubSetup.appDone && (
                 <li className="repo-setup-form">
                   <label className="repo-setup-field">
@@ -518,8 +546,19 @@ export const RepoPicker = memo(function RepoPicker({
                   <button type="button" className="repo-setup-action repo-setup-submit"
                     disabled={setupBusy !== null || !setupAppId.trim() || !setupInstallationId.trim() || !setupPrivateKey.trim()}
                     onClick={() => { void runSetupStep("app"); }}>
-                    {setupBusy === "app" ? "Connecting…" : "Connect GitHub App"}
+                    {setupBusy === "app" ? "Validating…" : "Connect GitHub App"}
                   </button>
+                  {appHelpAsked ? (
+                    <p className="repo-setup-help-note" role="status">
+                      Asked — go to your Muse assistant for the walkthrough, then come back here and enter the values. Don’t paste the private key into the assistant conversation.
+                    </p>
+                  ) : (
+                    <button type="button" className="repo-setup-help"
+                      disabled={setupHelpBusy}
+                      onClick={() => { void askAppHelp(); }}>
+                      {setupHelpBusy ? "Asking…" : "Don’t have these yet? Ask your Muse assistant"}
+                    </button>
+                  )}
                 </li>
               )}
               <li className={`repo-setup-step${setupAuthorDone ? " done" : ""}`}>
