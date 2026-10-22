@@ -45,14 +45,28 @@ export function detectHostCspNonce(): string | null {
   return null;
 }
 
-/** Inject the host CSP nonce into `<script nonce="__CS_CSP_NONCE__">` tags for `srcdoc`. */
+/**
+ * Inject the host CSP nonce into `<script nonce="__CS_CSP_NONCE__">` tags for `srcdoc`.
+ *
+ * Only the opening `<script>` tag is rewritten. A document-wide replace also
+ * hits the placeholder inside inlined script bodies — e.g. this function's own
+ * regexes when Code Space previews itself — deleting `nonce="__CS_CSP_NONCE__"`
+ * there and leaving `html.replace(//g, …)`, where `//` starts a comment and
+ * the enclosing block then fails with `Unexpected token '}'`.
+ */
 export function applyCspNonceToSrcdocHtml(html: string, nonce: string | null = detectHostCspNonce()): string {
   if (!html) return "";
-  if (nonce) {
-    const safeNonce = nonce.replace(/"/g, "&quot;");
-    return html.replace(/nonce="__CS_CSP_NONCE__"/g, `nonce="${safeNonce}"`);
-  }
-  return html.replace(/\s*nonce="__CS_CSP_NONCE__"/g, "");
+  const rewriteOpenTag = (openTag: string): string => {
+    if (nonce) {
+      const safeNonce = nonce.replace(/"/g, "&quot;");
+      return openTag.replace(/nonce="__CS_CSP_NONCE__"/g, `nonce="${safeNonce}"`);
+    }
+    return openTag.replace(/\s*nonce="__CS_CSP_NONCE__"/g, "");
+  };
+  return html.replace(
+    /(<script\b[^>]*>)([\s\S]*?)(<\/script\s*>|$)/gi,
+    (_full, openTag: string, body: string, closeTag: string) => `${rewriteOpenTag(openTag)}${body}${closeTag}`,
+  );
 }
 
 /** Extract `{ sessionId, basePath, subpath }` from a preview URL pathname. */
