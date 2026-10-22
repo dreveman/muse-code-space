@@ -634,6 +634,19 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .markdown-body code { font: 0.86em/1.55 var(--mono); background: color-mix(in srgb, var(--terminal-faint) 55%, transparent); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
 .markdown-body pre { margin: 10px 0; padding: 10px 12px; overflow-x: auto; border: 1px solid var(--terminal-faint); background: var(--terminal-surface); }
 .markdown-body pre code { display: block; padding: 0; border-radius: 0; background: transparent; white-space: pre; }
+.markdown-code-block { position: relative; }
+/* Identical treatment to the repo dialog's .repo-manage-copy button:
+   borderless, transparent, dim icon that fills faint on hover. */
+.markdown-code-copy { position: absolute; right: 6px; bottom: 6px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--terminal-dim); cursor: pointer; display: inline-grid; place-items: center; }
+.markdown-code-copy svg { width: 13px; height: 13px; }
+.markdown-code-copy:hover { background: var(--terminal-faint); color: var(--terminal-text); }
+.markdown-code-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch devices (no hover / coarse pointer) keep the button visible; only
+   fine-pointer devices hide it until the block is hovered or focused. */
+@media (hover: hover) and (pointer: fine) {
+  .markdown-code-copy { opacity: 0; }
+  .markdown-code-block:hover .markdown-code-copy, .markdown-code-block:focus-within .markdown-code-copy { opacity: 1; }
+}
 .transcript-empty { min-height: 260px; display: grid; place-items: center; padding: 28px; color: var(--terminal-dim); font: 12px var(--mono); text-align: center; }
 .working-indicator { min-height: 24px; display: flex; align-items: center; gap: 8px; margin: 18px 13px 0; color: var(--terminal-text); white-space: nowrap; font: 600 11px/1.4 var(--mono); }
 .transcript-empty .working-indicator { margin: 0; }

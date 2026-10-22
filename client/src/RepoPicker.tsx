@@ -15,6 +15,7 @@ import {
 } from "./repoOptions";
 import { formatRelativeTime } from "./sessionList";
 import { formatGitAuthor, parseGitAuthorText } from "./gitAuthor";
+import { copyTextToClipboard } from "./clipboard";
 import { smartlogCheckoutLabel, type SessionVcsStatus } from "./smartlogLayout";
 
 function UncommittedDraftRingIcon() {
@@ -235,9 +236,11 @@ export const RepoPicker = memo(function RepoPicker({
   };
 
   const copyText = (field: "url" | "path" | "pr-url", value: string) => {
-    void navigator.clipboard?.writeText(value);
-    setCopiedField(field);
-    window.setTimeout(() => setCopiedField((current) => (current === field ? null : current)), 1500);
+    void copyTextToClipboard(value).then((ok) => {
+      if (!ok) return;
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField((current) => (current === field ? null : current)), 1500);
+    });
   };
 
   const checkoutLabel = smartlogCheckoutLabel(vcsStatus);

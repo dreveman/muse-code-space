@@ -63,6 +63,41 @@ test("Markdown fences render through the highlighting code block", () => {
   assert.ok(block.includes("highlightCodeForLanguage(code, lang, theme)"), "known tags highlight like file views");
 });
 
+test("Markdown code blocks have a copy button, hover-only on fine pointers", () => {
+  const block = readFileSync(new URL("./MarkdownCodeBlock.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+  assert.ok(block.includes("copyTextToClipboard(code)"), "the button copies the exact block source via the shared helper");
+  assert.ok(block.includes('className="markdown-code-copy"'), "the button is part of the code block");
+  assert.ok(block.includes('aria-label={copied ? "Copied" : "Copy code"}'), "copy state is announced");
+  assert.ok(block.includes('title={copied ? "Copied" : "Copy"}'), "the tooltip just says Copy");
+  assert.ok(css.includes(".markdown-code-copy { position: absolute; right: 6px; bottom: 6px;"), "button sits in the bottom right corner");
+  assert.ok(css.includes("@media (hover: hover) and (pointer: fine)"), "hover reveal is limited to non-touch devices");
+  assert.ok(css.includes(".markdown-code-block:hover .markdown-code-copy"), "hovering the block reveals the button");
+});
+
+test("the code block copy button matches the repo dialog copy button", () => {
+  const block = readFileSync(new URL("./MarkdownCodeBlock.tsx", import.meta.url), "utf8");
+  const repoPicker = readFileSync(new URL("./RepoPicker.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+  const repoRule = /\.repo-manage-copy \{([^}]*)\}/.exec(css)?.[1] ?? "";
+  const codeRule = /\.markdown-code-copy \{([^}]*)\}/.exec(css)?.[1] ?? "";
+  for (const shared of ["width: 24px; height: 24px;", "border: 0;", "border-radius: 5px;", "background: transparent;", "color: var(--terminal-dim);"]) {
+    assert.ok(repoRule.includes(shared) && codeRule.includes(shared), `both copy buttons share ${shared}`);
+  }
+  assert.ok(css.includes(".markdown-code-copy:hover { background: var(--terminal-faint); color: var(--terminal-text); }"), "same hover treatment as the repo dialog");
+  // Identical icon artwork as the repo dialog's CopyButtonIcon/CopiedCheckIcon.
+  const iconPaths = (source, fn) => {
+    const start = source.indexOf(`function ${fn}(`);
+    const body = source.slice(start, source.indexOf("\n}\n", start));
+    return [...body.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1]);
+  };
+  const blockPaths = new Set([...block.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1]));
+  for (const fn of ["CopyButtonIcon", "CopiedCheckIcon"]) {
+    const paths = iconPaths(repoPicker, fn);
+    assert.ok(paths.length > 0 && paths.every((d) => blockPaths.has(d)), `${fn} artwork matches the repo dialog`);
+  }
+});
+
 test("the fake pilot can demo highlighted and plain fences", () => {
   const fakePilot = readFileSync(new URL("../../dev/fake-pilot.ts", import.meta.url), "utf8");
   assert.ok(fakePilot.includes('trigger: "code-fence / markdown-code"'), "help inventory lists the trigger");
