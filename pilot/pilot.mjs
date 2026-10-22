@@ -1189,6 +1189,51 @@ async function githubBrokerRequest(method, path, body) {
   return result;
 }
 
+function appendMuseInboxRequest(text) {
+  readMuseInbox(); // load the seq watermark before appending
+  const record = {
+    seq: ++museInboxSeq,
+    messageId: uuidv7(),
+    at: new Date().toISOString(),
+    from: { kind: "code-space-ui", name: "Code Space" },
+    text,
+  };
+  appendFileSync(MUSE_INBOX_PATH, `${JSON.stringify(record)}\n`);
+  return record;
+}
+
+// Runs the runtime setup script non-interactively: the PEM travels on
+// stdin only (never argv/logs), GitHub validation happens before any
+// write, and the broker is not restarted (activation is Muse's step).
+function runGithubAppSetup(appId, installationId, privateKey) {
+  return new Promise((resolve) => {
+    const script = join(dirname(STATE_DIR), "setup_github_broker.py");
+    execFile("python3", [script, "--non-interactive", "--app-id", String(appId), "--installation-id", String(installationId)],
+      { timeout: 90_000, maxBuffer: 1_000_000, input: String(privateKey ?? "") },
+      (error, _stdout, stderr) => {
+        if (!error) return resolve({ ok: true, error: null });
+        const detail = String(stderr ?? "").trim().split("\n").at(-1)?.slice(0, 240) ?? "";
+        resolve({ ok: false, error: detail || "GitHub App setup failed." });
+      });
+  });
+}
+
+// After App credentials are written, the step is only truly done once the
+// restarted broker can use them. Probe through the broker at most every
+// 10s while activation is pending; a 200 clears the pending flag.
+async function probeAppActivation() {
+  if (!appActivationPending) return true;
+  const now = Date.now();
+  if (now - appActivationProbe.at < 10_000) return appActivationProbe.ok;
+  appActivationProbe = { at: now, ok: false };
+  try {
+    const result = await githubBrokerRequestOnce("GET", "/installation/repositories?per_page=1");
+    appActivationProbe.ok = result.status === 200;
+  } catch { appActivationProbe.ok = false; }
+  if (appActivationProbe.ok) { appActivationPending = false; appActivationRequested = false; }
+  return appActivationProbe.ok;
+}
+
 function gitRead(workspaceRoot, args) {
   return new Promise((resolve) => {
     execFile("git", ["-C", workspaceRoot, ...args], { timeout: 5000, maxBuffer: 2_000_000 }, (error, stdout) => {
@@ -1578,6 +1623,12 @@ let museInboxSeq = 0;
 // Secure Vault addition (repo picker GitHub setup, broker step). In-memory:
 // a pilot restart simply lets the user ask again.
 let brokerSetupRequested = false;
+// GitHub App step (dialog): help requested from Muse, and credentials
+// written by the pilot but not yet activated (broker restart pending).
+let appHelpRequested = false;
+let appActivationPending = false;
+let appActivationRequested = false;
+let appActivationProbe = { at: 0, ok: false };
 
 function agentDirectory() {
   const busy = new Set([...openTurns.values()].map((t) => t.logId));
@@ -2175,17 +2226,20 @@ const server = createServer(async (req, res) => {
     // GitHub setup progress for the repo picker's setup dialog. Status is
     // derived from the broker config on disk: any config means the broker
     // is provisioned (gh + repo listing), an "app"-mode config additionally
-    // means GitHub App authentication (git clone/push). Performing a step
-    // from the dialog is not wired up on the real pilot yet — the setup
-    // script (setup-github-broker) remains the supported path, and the
-    // dialog says so instead of pretending.
+    // means GitHub App authentication (git clone/push) — except while an
+    // App credential written by this pilot still awaits broker activation,
+    // when the broker probe decides.
     if (path === "/github-setup") {
       if (req.method === "GET") {
         let mode = null;
         try {
           if (existsSync(GITHUB_BROKER_CONFIG)) mode = JSON.parse(readFileSync(GITHUB_BROKER_CONFIG, "utf8"))?.mode ?? null;
         } catch { mode = null; }
-        return json(res, 200, { brokerDone: mode !== null, appDone: mode === "app", brokerRequested: brokerSetupRequested });
+        const appDone = mode === "app" && (appActivationPending ? await probeAppActivation() : true);
+        return json(res, 200, {
+          brokerDone: mode !== null, appDone, brokerRequested: brokerSetupRequested && mode === null,
+          appRequested: appActivationPending, appHelpRequested,
+        });
       }
       if (req.method === "POST") {
         const body = await readBody(req).catch(() => ({}));
@@ -2198,19 +2252,44 @@ const server = createServer(async (req, res) => {
           // while a request is outstanding do not queue duplicates.
           if (!brokerSetupRequested) {
             brokerSetupRequested = true;
-            readMuseInbox(); // load the seq watermark before appending
-            const record = {
-              seq: ++museInboxSeq,
-              messageId: uuidv7(),
-              at: new Date().toISOString(),
-              from: { kind: "code-space-ui", name: "Code Space" },
-              text: "Please set up the Code Space GitHub broker (gh command support): initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker as described in hooks/code-space-assistant-job.md, and let the user know here when the broker is working.",
-            };
-            appendFileSync(MUSE_INBOX_PATH, `${JSON.stringify(record)}\n`);
+            appendMuseInboxRequest("Please set up the Code Space GitHub broker (gh command support): initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker as described in hooks/code-space-assistant-job.md, and let the user know here when the broker is working.");
           }
           return json(res, 200, { brokerDone: false, appDone: false, brokerRequested: true });
         }
-        return json(res, 501, { error: "GitHub App setup from this dialog is not available on this pilot yet. Run setup-github-broker in a terminal.", code: "github_setup_unavailable" });
+        if (body.step === "app-help") {
+          // Guidance only: Muse walks the user through creating the App
+          // and finding the IDs/key; the key itself is entered in the
+          // dialog, never in the assistant conversation.
+          if (!appHelpRequested) {
+            appHelpRequested = true;
+            appendMuseInboxRequest("Please guide me through creating the GitHub App for Code Space (GitHub App step in the repo picker): the App settings, Contents + Pull requests permissions, generating the private key, installing it on selected repositories, and where to find the App ID and installation ID. Remind me not to paste the private key into this conversation — I will enter it in the Code Space dialog.");
+          }
+          return json(res, 200, { brokerDone: false, appDone: false, appHelpRequested: true });
+        }
+        if (body.step === "app") {
+          const appId = typeof body.appId === "string" ? body.appId.trim() : "";
+          const installationId = typeof body.installationId === "string" ? body.installationId.trim() : "";
+          const privateKey = typeof body.privateKey === "string" ? body.privateKey : "";
+          if (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId)) {
+            return json(res, 400, { error: "App ID and installation ID must be numeric.", code: "invalid_github_app" });
+          }
+          if (!privateKey.includes("-----BEGIN") || !privateKey.includes("PRIVATE KEY-----") || !privateKey.includes("-----END")) {
+            return json(res, 400, { error: "That did not look like a PEM private key.", code: "invalid_github_app" });
+          }
+          const setup = await runGithubAppSetup(appId, installationId, privateKey);
+          if (!setup.ok) return json(res, 422, { error: setup.error ?? "GitHub App validation failed — nothing written.", code: "github_app_validation_failed" });
+          // Credentials are written and validated; the broker still has to
+          // be restarted to load them. Ask Muse to activate + verify, and
+          // let the status probe confirm before the step shows done.
+          appActivationPending = true;
+          appActivationProbe = { at: 0, ok: false };
+          if (!appActivationRequested) {
+            appActivationRequested = true;
+            appendMuseInboxRequest("Please activate the Code Space GitHub App broker credential I just entered in the repo picker: restart muse-code-space-github-broker.service (sudo if needed), verify https://127.0.0.1:443/__code_space/health answers ok, and let me know here when git access is working. If the restart or health check fails, tell me the exact failing step.");
+          }
+          return json(res, 200, { brokerDone: true, appDone: false, appRequested: true });
+        }
+        return json(res, 400, { error: "Unknown setup step.", code: "invalid_github_setup_step" });
       }
     }
     // Full assistant identity is fetched separately; avatars never enter message events.

@@ -137,7 +137,7 @@ let fakeGitIdentity: { name: string; email: string } | null =
 // Connected mode (the default) starts complete; disconnected mode starts
 // with nothing done — including no global author, unless one was explicitly
 // provided with the FAKE_GIT_* env vars — so every step can be exercised.
-const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED, brokerRequested: false };
+const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED, brokerRequested: false, appRequested: false, appHelpRequested: false };
 if (!GITHUB_ENABLED && process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME === undefined && process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL === undefined) {
   fakeGitIdentity = null;
 }
@@ -1801,7 +1801,7 @@ Bun.serve({
     }
 
     if (path === "/github-setup") {
-      if (req.method === "GET") return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, brokerRequested: githubSetup.brokerRequested });
+      if (req.method === "GET") return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, brokerRequested: githubSetup.brokerRequested, appRequested: githubSetup.appRequested, appHelpRequested: githubSetup.appHelpRequested });
       if (req.method === "POST") {
         if (body.step === "broker") {
           // Ask the Muse assistant (via its inbox) to initiate the Secure
@@ -1834,11 +1834,39 @@ Bun.serve({
           if (!privateKey.includes("-----BEGIN") || !privateKey.includes("PRIVATE KEY-----") || !privateKey.includes("-----END")) {
             return json(400, { error: "That did not look like a PEM private key.", code: "invalid_github_app" });
           }
-          // Simulated validation succeeds; a real App credential also
-          // provisions the broker, so both steps complete.
-          githubSetup.appDone = true;
-          githubSetup.brokerDone = true;
-          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+          // Simulated validation succeeds. Like the real pilot, the step
+          // then waits for Muse to activate the broker credential; the
+          // simulated activation lands a few seconds later and completes
+          // both steps (an App credential also provisions the broker).
+          if (!githubSetup.appRequested) {
+            githubSetup.appRequested = true;
+            museInbox.push({
+              seq: (museInbox.at(-1)?.seq ?? 0) + 1,
+              messageId: crypto.randomUUID(),
+              at: new Date().toISOString(),
+              from: { kind: "code-space-ui", name: "Code Space" },
+              text: "Please activate the Code Space GitHub App broker credential I just entered in the repo picker: restart muse-code-space-github-broker.service (sudo if needed), verify https://127.0.0.1:443/__code_space/health answers ok, and let me know here when git access is working. If the restart or health check fails, tell me the exact failing step.",
+            });
+            setTimeout(() => {
+              githubSetup.appDone = true;
+              githubSetup.brokerDone = true;
+              githubSetup.appRequested = false;
+            }, 4000);
+          }
+          return json(200, { brokerDone: githubSetup.brokerDone, appDone: false, appRequested: true });
+        }
+        if (body.step === "app-help") {
+          if (!githubSetup.appHelpRequested) {
+            githubSetup.appHelpRequested = true;
+            museInbox.push({
+              seq: (museInbox.at(-1)?.seq ?? 0) + 1,
+              messageId: crypto.randomUUID(),
+              at: new Date().toISOString(),
+              from: { kind: "code-space-ui", name: "Code Space" },
+              text: "Please guide me through creating the GitHub App for Code Space (GitHub App step in the repo picker): the App settings, Contents + Pull requests permissions, generating the private key, installing it on selected repositories, and where to find the App ID and installation ID. Remind me not to paste the private key into this conversation — I will enter it in the Code Space dialog.",
+            });
+          }
+          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, appHelpRequested: true });
         }
         return json(400, { error: "Unknown setup step.", code: "invalid_github_setup_step" });
       }

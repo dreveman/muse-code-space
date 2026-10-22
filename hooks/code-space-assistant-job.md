@@ -121,6 +121,17 @@ file for a normal installation. Never combine `--worker-identity` with
    itself; do not acknowledge the message until the broker is verified, and
    report the exact failing step instead of acknowledging if the Vault
    addition, config write, restart, or health check cannot be completed.
+6. Messages from **Code Space** about the GitHub App step come in two kinds.
+   A *guide* request: walk the user through creating the GitHub App
+   (settings, Contents + Pull requests permissions, generating the private
+   key, installing on selected repositories, finding the App ID and
+   installation ID) and remind them to enter the private key in the Code
+   Space dialog — never ask them to paste it to you. An *activation*
+   request: the user already entered validated App credentials in the
+   dialog and the pilot wrote them; restart
+   `muse-code-space-github-broker.service` (sudo if needed), verify the
+   health endpoint above, and report the exact failing step instead of
+   acknowledging if either cannot be completed.
 
 ## Supply missing session summaries
 

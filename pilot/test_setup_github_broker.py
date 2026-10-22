@@ -83,6 +83,39 @@ class SetupScriptTest(unittest.TestCase):
         self.assertIn('GIT_SSL_CAINFO="/runtime/github-broker-ca.pem"', text)
         self.assertTrue(text.startswith("# user profile"), "user content preserved")
 
+    def test_non_interactive_validates_then_writes_without_restart(self):
+        import unittest.mock as mock
+        with tempfile.TemporaryDirectory() as td:
+            cfgp, keyp = pathlib.Path(td) / "c.json", pathlib.Path(td) / "k.pem"
+            seen = {}
+            with mock.patch.object(setup, "CONFIG_PATH", cfgp), \
+                 mock.patch.object(setup, "KEY_PATH", keyp), \
+                 mock.patch.object(setup, "ensure_profile_block", lambda: None), \
+                 mock.patch.object(setup, "validate", side_effect=lambda a, i, p: seen.update(app=a, inst=i)):
+                rc = setup.non_interactive_main(
+                    ["--non-interactive", "--app-id", "111", "--installation-id", "222"],
+                    self.pem, validate_fn=setup.validate)
+            self.assertEqual(rc, 0)
+            self.assertEqual(seen, {"app": "111", "inst": "222"})
+            self.assertEqual(json.loads(cfgp.read_text())["mode"], "app")
+            self.assertEqual(stat.S_IMODE(keyp.stat().st_mode), 0o600)
+
+    def test_non_interactive_rejects_bad_input_without_writing(self):
+        import unittest.mock as mock
+        with tempfile.TemporaryDirectory() as td:
+            cfgp, keyp = pathlib.Path(td) / "c.json", pathlib.Path(td) / "k.pem"
+            with mock.patch.object(setup, "CONFIG_PATH", cfgp), \
+                 mock.patch.object(setup, "KEY_PATH", keyp), \
+                 mock.patch.object(setup, "validate", side_effect=RuntimeError("nope")):
+                self.assertEqual(setup.non_interactive_main(
+                    ["--non-interactive", "--app-id", "x", "--installation-id", "2"], self.pem,
+                    validate_fn=lambda *a: None), 2)
+                self.assertEqual(setup.non_interactive_main(
+                    ["--non-interactive", "--app-id", "1", "--installation-id", "2"], self.pem,
+                    validate_fn=lambda *a: (_ for _ in ()).throw(RuntimeError("nope"))), 1)
+            self.assertFalse(cfgp.exists())
+            self.assertFalse(keyp.exists())
+
     def test_main_aborts_cleanly_on_bad_validation(self):
         # Drive main with stubbed prompts/validation: nothing should be written.
         import unittest.mock as mock

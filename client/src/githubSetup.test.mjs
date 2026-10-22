@@ -31,6 +31,9 @@ test("each step can be performed from inside the dialog", () => {
   assert.ok(picker.includes("brokerWaiting"), "an outstanding assistant request keeps the waiting state");
   assert.ok(picker.includes('aria-label="App ID"') && picker.includes('aria-label="Installation ID"') && picker.includes('aria-label="Private key"'), "App step collects its credentials in the dialog");
   assert.ok(picker.includes("Connect GitHub App"), "App step submits from the dialog");
+  assert.ok(picker.includes("Ask your Muse assistant"), "App step offers Muse guidance for getting the values");
+  assert.ok(picker.includes("Don’t paste the private key into the assistant conversation"), "help keeps the key out of the assistant chat");
+  assert.ok(picker.includes("appWaiting"), "App step waits for broker activation after validation");
   assert.ok(picker.includes("onSaveGlobalGitAuthor(setupAuthorParsed)"), "author step saves the global author through the existing identity path");
   assert.ok(picker.includes("setupPrivateKey(\"\")") || picker.includes('setSetupPrivateKey("")'), "the private key is cleared after a successful App step");
 });
@@ -40,7 +43,7 @@ test("App wires setup status and steps through the server actions", () => {
   assert.ok(app.includes("api.performGithubSetupStep({"), "App performs steps");
   assert.ok(app.includes("api.setGitIdentity({"), "author step reuses the git identity action");
   assert.ok(actions.includes("getGithubSetup: defineAction") && actions.includes("performGithubSetupStep: defineAction"), "server actions exist");
-  assert.ok(actions.includes('step: z.enum(["broker", "app"])'), "steps are a closed enum");
+  assert.ok(actions.includes('step: z.enum(["broker", "app", "app-help"])'), "steps are a closed enum");
   assert.ok(actions.includes("App ID and installation ID must be numeric."), "App credentials are validated server-side");
 });
 
@@ -60,10 +63,13 @@ test("the fake pilot simulates the whole setup flow", () => {
 
 test("the real pilot reports genuine status and asks Muse for the broker credential", () => {
   assert.ok(pilot.includes('path === "/github-setup"'), "pilot serves setup status");
-  assert.ok(pilot.includes('appDone: mode === "app"'), "App step reflects an app-mode broker config");
+  assert.ok(pilot.includes('mode === "app" && (appActivationPending ? await probeAppActivation() : true)'), "App step completes only once the restarted broker proves the credential");
   assert.ok(pilot.includes("initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker"), "broker step asks the Muse assistant via its inbox");
   assert.ok(pilot.includes("MUSE_INBOX_PATH"), "the request lands where readMuseMessages reads");
-  assert.ok(pilot.includes("github_setup_unavailable"), "the App step is not faked on the real pilot yet");
+  assert.ok(pilot.includes("runGithubAppSetup(appId, installationId, privateKey)"), "App step validates and writes through the setup script");
+  assert.ok(pilot.includes("--non-interactive"), "the setup script is driven non-interactively with the key on stdin");
+  assert.ok(pilot.includes("guide me through creating the GitHub App for Code Space"), "App help asks Muse for a walkthrough");
+  assert.ok(pilot.includes("activate the Code Space GitHub App broker credential"), "App step asks Muse to activate the broker");
   const hook = readFileSync(new URL("../../hooks/code-space-assistant-job.md", import.meta.url), "utf8");
   assert.ok(hook.includes("custom.github-broker"), "the assistant job knows how to handle the broker credential request");
   assert.ok(hook.includes('{"mode": "surrogate", "credential_name":') || hook.includes('"mode": "surrogate"'), "the assistant writes the surrogate broker config");
