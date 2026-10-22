@@ -105,6 +105,14 @@ file for a normal installation. Never combine `--worker-identity` with
    with an agent **name** from `listAgents({})`, not an app session ID. Check
    `ok/error`; this action sends as Muse. Agents use their own session-scoped MCP
    tools. Do not send any test messages merely to verify this job's configuration.
+5. A message from **Code Space** (GitHub setup in the repo picker) asking you
+   to initiate the Secure Vault addition of `custom.github-broker`: start
+   that Secure Vault flow with the user in your own surface — a fine-grained
+   GitHub PAT, Contents + Pull requests read/write, selected repositories
+   only, stored as a custom API credential named exactly
+   `custom.github-broker` — and tell the user here when it has been added.
+   The setup dialog polls broker status itself; do not acknowledge the
+   message until the vault flow has been initiated with the user.
 
 ## Supply missing session summaries
 

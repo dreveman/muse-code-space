@@ -2029,14 +2029,21 @@ export function App() {
     enabled: draft !== null || selectedCompanionId !== null,
     staleTime: 60_000,
     retry: false,
+    // While the broker/App steps are incomplete (e.g. waiting on the Muse
+    // assistant Secure Vault flow), keep polling so the dialog completes
+    // on its own when the credential lands.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.ok && !(data.broker_done && data.app_done) ? 3000 : false;
+    },
   });
   const githubSetup = githubSetupQuery.data?.ok
-    ? { brokerDone: githubSetupQuery.data.broker_done, appDone: githubSetupQuery.data.app_done }
+    ? { brokerDone: githubSetupQuery.data.broker_done, appDone: githubSetupQuery.data.app_done, brokerRequested: githubSetupQuery.data.broker_requested }
     : null;
   const performGithubSetupStep = useCallback(async (
     step: "broker" | "app",
     payload?: { appId: string; installationId: string; privateKey: string },
-  ): Promise<{ ok: boolean; error: string | null }> => {
+  ): Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean }> => {
     const result = await api.performGithubSetupStep({
       step,
       app_id: payload?.appId,
@@ -2049,7 +2056,7 @@ export function App() {
         queryClient.invalidateQueries({ queryKey: ["github-repos"] }, { cancelRefetch: false }),
       ]);
     }
-    return { ok: result.ok, error: result.error };
+    return { ok: result.ok, error: result.error, brokerRequested: result.broker_requested };
   }, [queryClient]);
   const saveGlobalGitAuthor = useCallback(async (identity: { name: string; email: string }) => {
     const result = await api.setGitIdentity({ name: identity.name, email: identity.email });

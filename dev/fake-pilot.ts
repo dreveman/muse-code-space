@@ -137,7 +137,7 @@ let fakeGitIdentity: { name: string; email: string } | null =
 // Connected mode (the default) starts complete; disconnected mode starts
 // with nothing done — including no global author, unless one was explicitly
 // provided with the FAKE_GIT_* env vars — so every step can be exercised.
-const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED };
+const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED, brokerRequested: false };
 if (!GITHUB_ENABLED && process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME === undefined && process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL === undefined) {
   fakeGitIdentity = null;
 }
@@ -1801,11 +1801,28 @@ Bun.serve({
     }
 
     if (path === "/github-setup") {
-      if (req.method === "GET") return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+      if (req.method === "GET") return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, brokerRequested: githubSetup.brokerRequested });
       if (req.method === "POST") {
         if (body.step === "broker") {
-          githubSetup.brokerDone = true;
-          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+          // Ask the Muse assistant (via its inbox) to initiate the Secure
+          // Vault addition, like the real pilot. Simulated completion: the
+          // "assistant + user" finish the vault addition a few seconds
+          // later and the broker step completes.
+          if (!githubSetup.brokerDone && !githubSetup.brokerRequested) {
+            githubSetup.brokerRequested = true;
+            museInbox.push({
+              seq: (museInbox.at(-1)?.seq ?? 0) + 1,
+              messageId: crypto.randomUUID(),
+              at: new Date().toISOString(),
+              from: { kind: "code-space-ui", name: "Code Space" },
+              text: "Please initiate the Secure Vault addition of a custom API credential named custom.github-broker for Code Space GitHub broker setup (gh command support), then let the user know here when it has been added.",
+            });
+            setTimeout(() => {
+              githubSetup.brokerDone = true;
+              githubSetup.brokerRequested = false;
+            }, 6000);
+          }
+          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, brokerRequested: githubSetup.brokerRequested });
         }
         if (body.step === "app") {
           const appId = typeof body.appId === "string" ? body.appId.trim() : "";
