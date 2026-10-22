@@ -19,6 +19,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 export const PR_MONITOR_POLL_MS = 60_000;
+// A CI-scoped monitor whose head reports no checks at all ends after this
+// grace (GitHub cannot distinguish "not reported yet" from "no CI").
+export const PR_MONITOR_NO_CHECKS_GRACE_MS = 15 * 60_000;
 const MAX_CHANGE_LOG = 5;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -27,11 +30,45 @@ function checksRollup(runs) {
   const done = list.filter((run) => run.status === "completed");
   const failed = done.filter((run) => !["success", "skipped", "neutral"].includes(run.conclusion));
   return {
+    total: list.length,
     passed: done.filter((run) => run.conclusion === "success").length,
     failed: failed.length,
     pending: list.length - done.length,
     failing: failed.map((run) => run.name).slice(0, 5),
   };
+}
+
+/** Monitor scope: "ci" (until CI finishes, the default) or "full" (until merge/close). */
+export function normalizeMonitorScope(scope) {
+  return scope === "full" ? "full" : "ci";
+}
+
+function ciChecksTerminal(checks) {
+  return checks.total > 0 && checks.pending === 0;
+}
+
+function ciTerminalStatus(checks) {
+  return checks.failed > 0 ? "ci-failed" : "ci-passed";
+}
+
+function ciTerminalChange(checks) {
+  if (checks.failed > 0) {
+    return `CI finished: ${checks.passed} passed, ${checks.failed} failed${checks.failing.length ? ` (${checks.failing.join(", ")})` : ""} — monitoring ended`;
+  }
+  return `All checks passed (${checks.passed} checks) — monitoring ended`;
+}
+
+/** Changes a CI-scoped monitor reports: state flips and the terminal CI result only. */
+function ciChanges(prev, next) {
+  if (!prev) return [];
+  const changes = [];
+  if (next.state === "merged" && prev.state !== "merged") changes.push("PR was merged");
+  else if (next.state === "closed" && prev.state === "open") changes.push("PR was closed without merging");
+  else if (next.state === "open" && prev.state === "closed") changes.push("PR was reopened");
+  if (next.state === "open" && ciChecksTerminal(next.checks) && !ciChecksTerminal(prev.checks)) {
+    changes.push(ciTerminalChange(next.checks));
+  }
+  return changes;
 }
 
 /** Reduce GitHub API payloads to the signals worth diffing. */
@@ -97,7 +134,8 @@ export function monitorRow(monitor) {
     title: snap?.title ?? "",
     url: snap?.url ?? `https://github.com/${monitor.owner}/${monitor.repo}/pull/${monitor.number}`,
     status: monitor.status,
-    checks: snap?.checks ?? { passed: 0, failed: 0, pending: 0, failing: [] },
+    scope: normalizeMonitorScope(monitor.scope),
+    checks: snap?.checks ?? { total: 0, passed: 0, failed: 0, pending: 0, failing: [] },
     approvals: snap?.approvals ?? 0,
     comments: snap?.commentCount ?? 0,
     changes: monitor.changes.slice(-MAX_CHANGE_LOG),
@@ -114,6 +152,7 @@ export function createPrMonitorRegistry({
   sessionExists = () => true,
   log = () => {},
   pollIntervalMs = PR_MONITOR_POLL_MS,
+  noChecksGraceMs = PR_MONITOR_NO_CHECKS_GRACE_MS,
   now = () => new Date().toISOString(),
   mintId = () => randomUUID(),
 }) {
@@ -138,7 +177,8 @@ export function createPrMonitorRegistry({
       if (Array.isArray(parsed)) {
         // Monitors for sessions that no longer exist are dropped: their
         // transcript (and row) is gone, so there is nothing to update.
-        monitors = parsed.filter((m) => m && typeof m.id === "string" && sessionExists(m.logId));
+        monitors = parsed.filter((m) => m && typeof m.id === "string" && sessionExists(m.logId))
+          .map((m) => ({ ...m, scope: normalizeMonitorScope(m.scope) }));
       }
     } catch { monitors = []; }
   };
@@ -154,11 +194,18 @@ export function createPrMonitorRegistry({
       throw error;
     }
     const sha = pr.json?.head?.sha;
+    // CI-scoped monitors only need the PR and its checks; reviews/comments
+    // are neither reported nor worth the API calls.
+    const engagement = normalizeMonitorScope(monitor.scope) === "full"
+      ? [
+          brokerRequest("GET", `${base}/pulls/${monitor.number}/reviews?per_page=100`),
+          brokerRequest("GET", `${base}/issues/${monitor.number}/comments?per_page=100`),
+          brokerRequest("GET", `${base}/pulls/${monitor.number}/comments?per_page=100`),
+        ]
+      : [Promise.resolve({ json: [] }), Promise.resolve({ json: [] }), Promise.resolve({ json: [] })];
     const [checks, reviews, issueComments, reviewComments] = await Promise.all([
       sha ? brokerRequest("GET", `${base}/commits/${sha}/check-runs?per_page=100`) : Promise.resolve({ status: 200, json: { check_runs: [] } }),
-      brokerRequest("GET", `${base}/pulls/${monitor.number}/reviews?per_page=100`),
-      brokerRequest("GET", `${base}/issues/${monitor.number}/comments?per_page=100`),
-      brokerRequest("GET", `${base}/pulls/${monitor.number}/comments?per_page=100`),
+      ...engagement,
     ]);
     return prSnapshot(
       pr.json,
@@ -190,12 +237,29 @@ export function createPrMonitorRegistry({
       return;
     }
     monitor.failures = 0;
-    const changes = prChanges(monitor.snapshot, next);
+    const scope = normalizeMonitorScope(monitor.scope);
+    monitor.scope = scope;
+    const changes = scope === "ci" ? ciChanges(monitor.snapshot, next) : prChanges(monitor.snapshot, next);
+    // A CI monitor retargets when the head moves and its no-checks grace
+    // restarts from the new head.
+    if (scope === "ci" && next.headSha && next.headSha !== monitor.ciHeadSha) {
+      monitor.ciHeadSha = next.headSha;
+      monitor.ciHeadSince = now();
+    }
     monitor.snapshot = next;
     monitor.updatedAt = now();
     if (next.state === "merged" || next.state === "closed") {
       monitor.active = false;
       monitor.status = next.state;
+    } else if (scope === "ci" && ciChecksTerminal(next.checks)) {
+      monitor.active = false;
+      monitor.status = ciTerminalStatus(next.checks);
+      if (!changes.some((text) => text.includes("monitoring ended"))) changes.push(ciTerminalChange(next.checks));
+    } else if (scope === "ci" && next.checks.total === 0 && monitor.ciHeadSince
+      && Date.parse(now()) - Date.parse(monitor.ciHeadSince) >= noChecksGraceMs) {
+      monitor.active = false;
+      monitor.status = "ci-none";
+      changes.push("No CI checks reported for the latest commit — monitoring ended");
     }
     if (changes.length) {
       for (const text of changes) monitor.changes.push({ at: now(), text });
@@ -209,30 +273,56 @@ export function createPrMonitorRegistry({
   };
 
   return {
-    /** Start (or reuse) a monitor; resolves after the first snapshot so the row opens with real data. */
-    async start({ logId, owner, repo, number }) {
-      const existing = monitors.find((m) => m.active && m.logId === logId && m.owner === owner && m.repo === repo && m.number === number);
-      if (existing) return { monitor: existing, created: false };
-      const monitor = {
+    /** Start, reuse, upgrade, or re-arm a monitor; resolves after the first snapshot so the row opens with real data. */
+    async start({ logId, owner, repo, number, scope }) {
+      const wanted = normalizeMonitorScope(scope);
+      const samePr = (m) => m.logId === logId && m.owner === owner && m.repo === repo && m.number === number;
+      const existing = monitors.find((m) => m.active && samePr(m));
+      if (existing) {
+        // Asking for full monitoring upgrades a live CI monitor in place.
+        if (wanted === "full" && normalizeMonitorScope(existing.scope) !== "full") {
+          existing.scope = "full";
+          existing.updatedAt = now();
+          persist();
+          emit(existing);
+        }
+        return { monitor: existing, created: false };
+      }
+      // A finished monitor for the same PR re-arms (e.g. new commits pushed
+      // after CI completed) instead of accumulating a second row.
+      const finished = [...monitors].reverse().find((m) => !m.active && samePr(m));
+      const monitor = finished ?? {
         id: mintId(), logId, owner, repo, number,
         status: "monitoring", active: true, failures: 0,
         snapshot: null, changes: [], startedAt: now(), updatedAt: now(),
       };
-      monitors.push(monitor);
+      const rearmed = Boolean(finished);
+      Object.assign(monitor, {
+        scope: wanted, status: "monitoring", active: true, failures: 0,
+        snapshot: null, ciHeadSha: "", ciHeadSince: "", startedAt: now(), updatedAt: now(),
+      });
+      if (!finished) monitors.push(monitor);
       try {
         monitor.snapshot = await fetchSnapshot(monitor);
+        monitor.ciHeadSha = monitor.snapshot.headSha ?? "";
+        monitor.ciHeadSince = now();
         if (monitor.snapshot.state === "merged" || monitor.snapshot.state === "closed") {
           monitor.active = false;
           monitor.status = monitor.snapshot.state;
+        } else if (wanted === "ci" && ciChecksTerminal(monitor.snapshot.checks)) {
+          // CI already finished before monitoring started: open terminal.
+          monitor.active = false;
+          monitor.status = ciTerminalStatus(monitor.snapshot.checks);
         }
       } catch (error) {
-        monitors = monitors.filter((m) => m !== monitor);
+        if (!rearmed) monitors = monitors.filter((m) => m !== monitor);
+        else { monitor.active = false; monitor.status = "error"; }
         throw error;
       }
       monitor.updatedAt = now();
       persist();
       emit(monitor);
-      return { monitor, created: true };
+      return { monitor, created: !rearmed, rearmed };
     },
     stop({ logId, owner, repo, number }) {
       const monitor = monitors.find((m) => m.active && m.logId === logId && m.owner === owner && m.repo === repo && m.number === number);
