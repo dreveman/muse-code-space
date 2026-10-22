@@ -51,6 +51,7 @@ import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, todosPrev
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
+import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
 import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
 import { ToolImageView } from "./RenderedToolImage";
@@ -568,7 +569,7 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
       i += 1;
       const current = key++;
       nodes.push(
-        <pre key={current}><code>{codeLines.join("\n").replace(/\n$/, "")}</code></pre>,
+        <MarkdownCodeBlock key={current} code={codeLines.join("\n").replace(/\n$/, "")} languageTag={fenceMatch[1] || null} />,
       );
       continue;
     }

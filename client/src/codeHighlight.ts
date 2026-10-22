@@ -27,6 +27,11 @@ export function getCachedHighlight(text: string, path: string | null, theme: Cod
   return highlightCache.get(cacheKey(text, lang, theme));
 }
 
+export function getCachedHighlightForLanguage(text: string, lang: CodeLanguage | null, theme: CodeTheme): HighlightLines | null | undefined {
+  if (!lang) return null;
+  return highlightCache.get(cacheKey(text, lang, theme));
+}
+
 const languages: Record<CodeLanguage, () => Promise<unknown>> = {
   typescript: () => import("shiki/langs/typescript.mjs"), tsx: () => import("shiki/langs/tsx.mjs"),
   javascript: () => import("shiki/langs/javascript.mjs"), jsx: () => import("shiki/langs/jsx.mjs"),
@@ -77,8 +82,12 @@ function enqueueTokenize<T>(work: () => Promise<T>): Promise<T> {
 
 // Null means plain text: no known filename, oversized/partial view, grammar
 // unavailable, or any token mismatch. The source text is never rewritten.
+// Path-based entry point; Markdown fences use highlightCodeForLanguage.
 export async function highlightCode(text: string, path: string | null, theme: CodeTheme): Promise<HighlightLines | null> {
-  const lang = codeLanguageForPath(path);
+  return highlightCodeForLanguage(text, codeLanguageForPath(path), theme);
+}
+
+export async function highlightCodeForLanguage(text: string, lang: CodeLanguage | null, theme: CodeTheme): Promise<HighlightLines | null> {
   if (!lang || (text.length * 3 > MAX_HIGHLIGHT_BYTES && new TextEncoder().encode(text).length > MAX_HIGHLIGHT_BYTES) || text.split("\n").length > MAX_HIGHLIGHT_LINES) return null;
   const key = cacheKey(text, lang, theme);
   const cached = highlightCache.get(key);
