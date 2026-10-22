@@ -39,6 +39,25 @@ test("parsePreviewRequestPathname extracts sessionId, basePath, and subpath", ()
   );
 });
 
+test("applyCspNonceToSrcdocHtml rewrites only script opening tags, never script bodies", () => {
+  // Previewing Code Space in itself inlines this function's own regexes into
+  // the srcdoc. A document-wide replace deleted the placeholder there,
+  // leaving `html.replace(//g, …)` — `//` comments out the rest of the line,
+  // so the enclosing `if (nonce) {` block failed with Unexpected token '}'.
+  const body = 'const a = html.replace(/nonce="__CS_CSP_NONCE__"/g, "x"); const b = html.replace(/\\s*nonce="__CS_CSP_NONCE__"/g, "");';
+  const doc = `<script nonce="__CS_CSP_NONCE__">${body}</script><script type="module" nonce="__CS_CSP_NONCE__">2</script><p>nonce="__CS_CSP_NONCE__"</p>`;
+  assert.equal(
+    applyCspNonceToSrcdocHtml(doc, null),
+    `<script>${body}</script><script type="module">2</script><p>nonce="__CS_CSP_NONCE__"</p>`,
+  );
+  assert.equal(
+    applyCspNonceToSrcdocHtml(doc, "n-123"),
+    `<script nonce="n-123">${body}</script><script type="module" nonce="n-123">2</script><p>nonce="__CS_CSP_NONCE__"</p>`,
+  );
+  // The preserved body must still parse as JavaScript.
+  assert.doesNotThrow(() => new Function(body));
+});
+
 test("Preview tab lives in SidePanel with port control, reload button, status states, and WebSocket HMR bridge", () => {
   assert.ok(side.includes('kind: "preview"'), "SideTab includes preview kind");
   assert.ok(side.includes('if (tab.kind === "preview") return "Preview"'), "tab label is Preview");
