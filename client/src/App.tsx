@@ -18,7 +18,7 @@ import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
 import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSessionsByAge, groupSessionsByProject, resolveSelectedId, isSessionActive, sortSessions, type SortMode } from "./sessionList";
-import { isLiveToTerminalTransition, isTurnLiveStatus, shouldPollSessionDetail } from "./sessionDetailPoll";
+import { isLiveToTerminalTransition, isStartedListSession, isTurnLiveStatus, shouldEnableSessionDetail, shouldPollSessionDetail, shouldShowConversationLoading } from "./sessionDetailPoll";
 import { newSessionIdentity, randomUuid } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
@@ -2349,7 +2349,10 @@ export function App() {
       }
       return data;
     },
-    enabled: selectedId !== null && selectedId !== draft?.id,
+    // A local draft gates this query only while the server has not started
+    // that session; once the list shows it started (pilot_session_id or a
+    // non-queued status) the draft is converted and the query must run.
+    enabled: shouldEnableSessionDetail({ selectedId, draftId: draft?.id ?? null, listSession: selectedSession }),
     staleTime: 1000,
     // Keep polling while EITHER the list copy or this query's own last-known
     // copy says the turn is live. The list flips terminal first; gating only
@@ -2522,6 +2525,22 @@ export function App() {
       setStartingDraft(null);
     }
   }, [startingDraft, creating, selectedId, selectedCompanionId, detail?.session?.id]);
+  // Reconcile local start state against the list: a start that took minutes
+  // (repo clone) or spanned a backend restart can leave draft/startingDraft
+  // behind after the server completed it. Once the list shows that session
+  // started, the draft is converted — clear the local state so nothing
+  // keeps gating the detail query or the conversation view on it.
+  useEffect(() => {
+    if (creating) return;
+    const candidateIds = [draft?.id, startingDraft?.draft.id].filter((value): value is string => Boolean(value));
+    for (const id of [...new Set(candidateIds)]) {
+      const listSession = sessions.find((item) => item.id === id) ?? null;
+      if (!isStartedListSession(listSession)) continue;
+      setDraft((current) => (current?.id === id ? null : current));
+      setStartingDraft((current) => (current?.draft.id === id ? null : current));
+      if (selectedId === id) setSelectedCompanionId(null);
+    }
+  }, [sessions, draft?.id, startingDraft?.draft.id, creating, selectedId]);
   // The session list can have a fresher companion name just after a handoff.
   const detailAgentName = displayAgentName(selectedSession?.title ?? detailSession?.title ?? "");
   const storedPreference = selectedSession ?? (detailSession?.id === selectedId ? detailSession : null);
@@ -4528,7 +4547,7 @@ export function App() {
                 actions={<SessionMenu actions={viewMenuActions} colorMode={colorMode}
                   onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
                   showRawToolOutput={showRawToolOutput} onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)} />} /> : <>
-              {!draftSelected && (selectedId === null || !detailSession || detailQuery.isPending || !sessionsQuery.data || sessions.length === 0) && (
+              {!draftSelected && (selectedId === null || shouldShowConversationLoading({ isPending: detailQuery.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null }) || !sessionsQuery.data || sessions.length === 0) && (
                 <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
                   <button type="button" className="mobile-back-button" aria-label="Back to companions"
                     onClick={() => setMobileListOpen(true)}><BackIcon /></button>
@@ -4553,7 +4572,7 @@ export function App() {
                 <p className="detail-loading">Pick a companion and tell them what you’d like to do.</p>
               ) : selectedId === null ? (
                 <p className="detail-loading">Select a task to see its conversation.</p>
-              ) : detailQuery.isPending || !detailSession ? (
+              ) : shouldShowConversationLoading({ isPending: detailQuery.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null }) || !detailSession ? (
                 <p className="detail-loading">Loading conversation…</p>
               ) : (
                 <>

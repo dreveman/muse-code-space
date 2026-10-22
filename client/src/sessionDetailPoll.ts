@@ -27,3 +27,39 @@ export function isLiveToTerminalTransition(
   return isTurnLiveStatus(previous) && next != null && !isTurnLiveStatus(next);
 }
 
+export type ListSessionStart = {
+  pilot_session_id?: string | null;
+  status: SessionStatus;
+};
+
+// The server says this session has started: it has a pilot session, or it
+// has moved past the queued state a not-yet-started local draft sits in.
+export function isStartedListSession(session: ListSessionStart | null | undefined): boolean {
+  return session != null && (Boolean(session.pilot_session_id) || session.status !== "queued");
+}
+
+// A local draft must not gate off the detail query once the server says the
+// session has started. An interrupted start handshake can leave the draft in
+// place forever; a disabled query with no cached data stays pending forever
+// and no getSession is ever issued for the session.
+export function shouldEnableSessionDetail(args: {
+  selectedId: string | null;
+  draftId: string | null;
+  listSession: ListSessionStart | null | undefined;
+}): boolean {
+  if (args.selectedId === null) return false;
+  if (args.selectedId !== args.draftId) return true;
+  return isStartedListSession(args.listSession);
+}
+
+// Never spin forever on a pending detail query when the list already has
+// the session: render from the list copy (detailSession falls back to it)
+// and let the detail fetch fill in the transcript when it lands.
+export function shouldShowConversationLoading(args: {
+  isPending: boolean;
+  hasDetailSession: boolean;
+  hasListSession: boolean;
+}): boolean {
+  if (!args.hasDetailSession) return true;
+  return args.isPending && !args.hasListSession;
+}

@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { isLiveToTerminalTransition, isTurnLiveStatus, shouldPollSessionDetail } from "./sessionDetailPoll.ts";
+import { isLiveToTerminalTransition, isStartedListSession, isTurnLiveStatus, shouldEnableSessionDetail, shouldPollSessionDetail, shouldShowConversationLoading } from "./sessionDetailPoll.ts";
 
 test("only queued/running count as live", () => {
   assert.equal(isTurnLiveStatus("queued"), true);
@@ -43,6 +43,39 @@ test("live -> terminal is detected per turn, including repeated turns", () => {
   assert.equal(isLiveToTerminalTransition("running", null), false);
 });
 
+test("the server having started a session is recognised from the list copy", () => {
+  assert.equal(isStartedListSession({ pilot_session_id: "pilot-1", status: "queued" }), true);
+  assert.equal(isStartedListSession({ pilot_session_id: null, status: "running" }), true);
+  assert.equal(isStartedListSession({ pilot_session_id: null, status: "succeeded" }), true);
+  assert.equal(isStartedListSession({ pilot_session_id: null, status: "queued" }), false);
+  assert.equal(isStartedListSession({ pilot_session_id: "", status: "queued" }), false);
+  assert.equal(isStartedListSession(null), false);
+  assert.equal(isStartedListSession(undefined), false);
+});
+
+test("a local draft does not gate off the detail query once the list says the session started", () => {
+  // Regression: draft X exists while the list returns session X started ->
+  // the detail query is enabled and getSession can load the transcript.
+  const started = { pilot_session_id: "pilot-1", status: "succeeded" };
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: "X", listSession: started }), true);
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: "X", listSession: { pilot_session_id: null, status: "running" } }), true);
+  // A genuinely unstarted draft stays gated: no server session to load yet.
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: "X", listSession: { pilot_session_id: null, status: "queued" } }), false);
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: "X", listSession: null }), false);
+  // Ordinary sessions and no selection behave as before.
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: "Y", listSession: null }), true);
+  assert.equal(shouldEnableSessionDetail({ selectedId: "X", draftId: null, listSession: null }), true);
+  assert.equal(shouldEnableSessionDetail({ selectedId: null, draftId: null, listSession: started }), false);
+});
+
+test("a pending detail query with list data renders from the list, not an endless spinner", () => {
+  assert.equal(shouldShowConversationLoading({ isPending: true, hasDetailSession: true, hasListSession: true }), false);
+  assert.equal(shouldShowConversationLoading({ isPending: true, hasDetailSession: false, hasListSession: false }), true);
+  assert.equal(shouldShowConversationLoading({ isPending: true, hasDetailSession: true, hasListSession: false }), true);
+  assert.equal(shouldShowConversationLoading({ isPending: false, hasDetailSession: false, hasListSession: true }), true);
+  assert.equal(shouldShowConversationLoading({ isPending: false, hasDetailSession: true, hasListSession: true }), false);
+});
+
 test("App wires the detail query to both copies and forces a full fetch on live -> terminal", () => {
   const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
   const detailQuery = app.slice(app.indexOf('queryKey: ["code-session", selectedId]'), app.indexOf("const detailLoadedSession"));
@@ -56,3 +89,14 @@ test("App wires the detail query to both copies and forces a full fetch on live 
   assert.match(app, /forceFullDetailRef\.current\.add\(selectedId\)/);
 });
 
+test("App enables the detail query for a converted draft, reconciles draft state, and falls back to the list copy", () => {
+  const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const detailQuery = app.slice(app.indexOf('queryKey: ["code-session", selectedId]'), app.indexOf("const detailLoadedSession"));
+  assert.match(detailQuery, /enabled: shouldEnableSessionDetail\(\{ selectedId, draftId: draft\?\.id \?\? null, listSession: selectedSession \}\)/);
+  // Local start state is cleared once the list shows the session started.
+  assert.match(app, /isStartedListSession\(listSession\)/);
+  assert.match(app, /setDraft\(\(current\) => \(current\?\.id === id \? null : current\)\)/);
+  assert.match(app, /setStartingDraft\(\(current\) => \(current\?\.draft\.id === id \? null : current\)\)/);
+  // The loading branch falls back to the list session instead of spinning.
+  assert.match(app, /shouldShowConversationLoading\(\{ isPending: detailQuery\.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null \}\)/);
+});
