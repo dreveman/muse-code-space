@@ -20,7 +20,9 @@ test("the Copy markdown button is smaller than the code block button and follows
   const rule = /\.message-copy-markdown \{([^}]*)\}/.exec(css)?.[1] ?? "";
   assert.ok(rule.includes("width: 18px; height: 18px;"), "smaller button than the 24px code block button");
   assert.ok(css.includes(".message-copy-markdown svg { width: 11px; height: 11px; }"), "smaller icon to match the 9px timestamp");
-  assert.ok(css.includes(".output-event:hover .message-copy-markdown"), "hovering the response reveals the button on fine pointers");
+  assert.ok(css.includes(".message-time-row:hover .message-copy-markdown"), "hovering the timestamp row reveals the button on fine pointers");
+  assert.ok(!css.includes(".output-event:hover .message-copy-markdown"), "hovering the rest of the response does not reveal it");
+  assert.ok(css.includes(".message-time-row { display: flex; align-items: center; gap: 4px; width: fit-content;"), "the hover area is only as wide as the timestamp and button");
   // Always visible by default (touch); only hidden under the fine-pointer media query.
   const mediaIndex = css.indexOf("@media (hover: hover) and (pointer: fine)", css.indexOf(".message-copy-markdown"));
   assert.ok(mediaIndex > 0 && css.slice(mediaIndex, mediaIndex + 400).includes(".message-copy-markdown { opacity: 0; }"), "hidden only on hover-capable fine pointers");
