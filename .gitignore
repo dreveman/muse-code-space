@@ -12,6 +12,7 @@ app.db-wal
 
 # local caches / generated
 .bun-cache/
+.code-space/
 .space-build/
 audits/
 /output/

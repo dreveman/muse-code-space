@@ -149,7 +149,11 @@ and the `mcp__code_space__preview_screenshot` tool is available:
 2. Call `mcp__code_space__preview_screenshot` with `{ "port": 4173 }` and paste
    the returned `[![...](.code-space/preview-4173.png)](http://127.0.0.1:4173/)`
    Markdown line verbatim into your reply so the user gets a clickable preview
-   screenshot that opens the live Preview tab. (When working outside Code Space
+   screenshot that opens the live Preview tab. Captures live in
+   `.code-space/` inside the workspace (the transcript image loader refuses
+   outside paths); the pilot writes a self-ignoring `.gitignore` there on
+   first capture so generated screenshots never pollute git status.
+   (When working outside Code Space
    where `mcp__code_space__preview_screenshot` is not available, open
    `http://127.0.0.1:4173` directly in your browser.)
 
