@@ -18,6 +18,7 @@ import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
 import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSessionsByAge, groupSessionsByProject, resolveSelectedId, isSessionActive, sortSessions, type SortMode } from "./sessionList";
+import { isLiveToTerminalTransition, isTurnLiveStatus, shouldPollSessionDetail } from "./sessionDetailPoll";
 import { newSessionIdentity, randomUuid } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
@@ -233,7 +234,7 @@ function statusLabel(status: Session["status"], pilotSessionId?: string | null):
 }
 
 function isTurnLive(status: Session["status"]): boolean {
-  return status === "queued" || status === "running";
+  return isTurnLiveStatus(status);
 }
 
 function StatusMark({ visual, label }: { visual: AgentVisualStatus; label?: string }) {
@@ -1779,6 +1780,11 @@ export function App() {
   const backgroundCursorRef = useRef(0);
   const backgroundTargetsRef = useRef<Array<{ id: string; status: Session["status"] }>>([]);
   const requestedSeenRef = useRef(new Map<string, number>());
+  // Sessions whose next detail fetch must be a full getSession (no after_id):
+  // set on the list's live -> terminal transition so the incremental merge
+  // cannot strand the open view on its pre-finish snapshot.
+  const forceFullDetailRef = useRef(new Set<string>());
+  const prevListStatusRef = useRef<{ id: string; status: Session["status"] | null } | null>(null);
   const takeoverFormRef = useRef<HTMLFormElement>(null);
   const draftFormRef = useRef<HTMLFormElement>(null);
   const takeoverInputRef = useRef<HTMLTextAreaElement>(null);
@@ -2239,9 +2245,10 @@ export function App() {
     queryFn: async () => {
       const id = selectedId ?? "";
       const cached = queryClient.getQueryData<ApiResponse<typeof api, "getSession">>(["code-session", id]);
+      const forceFull = forceFullDetailRef.current.has(id);
       let afterId: number | undefined;
       let immutablePrefix: TranscriptEvent[] = [];
-      if (cached?.session?.id === id && cached.events.length > 0) {
+      if (!forceFull && cached?.session?.id === id && cached.events.length > 0) {
         let cutoff = cached.events.length;
         for (let i = 0; i < cached.events.length; i++) {
           const ev = cached.events[i]!;
@@ -2269,6 +2276,11 @@ export function App() {
         }),
         preloadCompanionStill(stillUrl),
       ]);
+      // Consume the request only once the full fetch has actually landed; a
+      // failed fetch keeps it set so the retry/next poll is still full. A
+      // fetch that started before the request (forceFull false) must not
+      // consume it.
+      if (forceFull) forceFullDetailRef.current.delete(id);
       const mergedEvents = afterId !== undefined && rawData.session
         ? rawData.events.length === 0 && immutablePrefix.length === cached?.events.length
           ? cached.events
@@ -2339,9 +2351,33 @@ export function App() {
     },
     enabled: selectedId !== null && selectedId !== draft?.id,
     staleTime: 1000,
-    refetchInterval: selectedSession && isTurnLive(selectedSession.status) ? 5000 : false,
+    // Keep polling while EITHER the list copy or this query's own last-known
+    // copy says the turn is live. The list flips terminal first; gating only
+    // on it stopped all further fetches and stranded the view mid-turn. Once
+    // both agree the session is terminal/idle, polling stops.
+    refetchInterval: (query) => {
+      const detailStatus = query.state.data?.session?.status;
+      return shouldPollSessionDetail(selectedSession?.status, detailStatus) ? 5000 : false;
+    },
   });
   const detailLoadedSession = detailQuery.data?.session ?? null;
+  // On the list's live -> terminal transition, force one FULL getSession (no
+  // after_id) so the incremental merge cannot strand the view on a
+  // pre-finish snapshot. Declared before the disagreement effect below so
+  // the flag is set before any refetch that effect triggers.
+  useEffect(() => {
+    if (!selectedId) {
+      prevListStatusRef.current = null;
+      return;
+    }
+    const prev = prevListStatusRef.current;
+    prevListStatusRef.current = { id: selectedId, status: selectedSession?.status ?? null };
+    if (!prev || prev.id !== selectedId || !selectedSession) return;
+    if (isLiveToTerminalTransition(prev.status, selectedSession.status)) {
+      forceFullDetailRef.current.add(selectedId);
+      void queryClient.invalidateQueries({ queryKey: ["code-session", selectedId] }, { cancelRefetch: true });
+    }
+  }, [selectedId, selectedSession?.id, selectedSession?.status, queryClient]);
   useEffect(() => {
     if (!selectedSession || !detailLoadedSession || detailLoadedSession.id !== selectedSession.id) return;
     if (
