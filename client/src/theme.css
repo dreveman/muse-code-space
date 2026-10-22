@@ -552,6 +552,10 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .markdown-body li::marker { color: var(--terminal-dim); }
 .markdown-body blockquote { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 2px solid var(--terminal-faint); color: inherit; }
 .markdown-body a { color: var(--terminal-accent); text-underline-offset: 2px; }
+.markdown-table-wrap { margin: 0 0 10px; overflow-x: auto; }
+.markdown-body table { border-collapse: collapse; font-size: 13px; line-height: 1.45; }
+.markdown-body th, .markdown-body td { padding: 5px 10px; border: 1px solid var(--terminal-faint); vertical-align: top; }
+.markdown-body th { background: var(--terminal-surface); font-weight: 600; }
 .markdown-inline-image { display: block; max-width: min(100%, 480px); height: auto; margin: 6px 0; border-radius: 8px; border: 1px solid var(--terminal-faint); background: var(--terminal-surface); }
 .tool-image-thumbnail { max-width: min(100%, 320px); }
 .markdown-image-button { display: inline-block; max-width: min(100%, 480px); margin: 6px 0; padding: 0; border: 0; background: transparent; cursor: zoom-in; text-align: left; }

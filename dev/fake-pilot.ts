@@ -871,6 +871,7 @@ const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> =
   { section: "Turn behaviour", trigger: "thinking", does: "Emit reasoning-summary revisions (empty → partial → completed) before the tool call. Raw reasoning text is never shown." },
   { section: "Turn behaviour", trigger: "ask", does: "Ask a user-input question the UI must answer before the turn ends, then reply with your pick." },
   { section: "Turn behaviour", trigger: "workflow", does: "Launch a fake workflow: the turn ends, two child agents progress in the background, then a host-started turn delivers the combined answer." },
+  { section: "Turn behaviour", trigger: "markdown-table", does: "Reply with a GFM pipe table (left/centre/right alignment, inline formatting, escaped pipe, pipe in a code span) followed by a pipe-containing paragraph that must stay plain text." },
   { section: "Formatted tool output", trigger: "read-tool", does: "`read_file` of test.rs — plain numbered output (ALPHA/BETA/GAMMA)." },
   { section: "Formatted tool output", trigger: "read-ts-tool", does: "`read_file` of alpha.ts — numbered output with TypeScript syntax highlighting." },
   { section: "Formatted tool output", trigger: "read-md-tool", does: "`read_file` of notes.md — Markdown has no highlighting grammar, so the numbered file view stays plain." },
@@ -1044,6 +1045,7 @@ async function runTurn(session: Session, text: string) {
     const hmrUpdateTool = /\bhmr-update\b/i.test(text);
     const stopPreviewTool = /\bstop-preview\b/i.test(text);
     const showImageTool = /\b(?:show-image|image-reply|test-image)\b/i.test(text);
+    const markdownTable = /\bmarkdown-table\b/i.test(text);
     if (showImageTool && session.workspaceRoot) {
       mkdirSync(session.workspaceRoot, { recursive: true });
       const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" width="560" height="220">
@@ -1274,6 +1276,25 @@ async function runTurn(session: Session, text: string) {
             text:
               "Here is the generated diagram from your workspace (`diagram.svg`):\n\n" +
               "![Architecture diagram](diagram.svg)",
+          },
+        }),
+      );
+      steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
+    } else if (markdownTable) {
+      steps.push(() =>
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text:
+              "Here is a Markdown table with left, centre, and right alignment, inline formatting, an escaped pipe, and a pipe inside a code span:\n\n" +
+              "| Tool | Formatter | Example |\n" +
+              "| :--- | :---: | ---: |\n" +
+              "| `bash` | Dedicated view | `a|b` |\n" +
+              "| **search** | Dedicated view | one \\| two |\n" +
+              "| mystery | None (generic) | [docs](https://example.com) |\n\n" +
+              "A paragraph with a | pipe in it stays plain text, because the next line is not a delimiter row.\n" +
+              "This line is still the same paragraph.",
           },
         }),
       );
