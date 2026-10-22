@@ -19,14 +19,16 @@ function harness({ storePath = null } = {}) {
     issueComments: [],
     reviewComments: [],
     failWith: null,
+    now: "2026-10-16T00:00:00.000Z",
   };
   const broadcasts = [];
   const notifications = [];
   const registry = createPrMonitorRegistry({
     storePath,
     pollIntervalMs: 0,
+    noChecksGraceMs: 15 * 60_000,
     mintId: () => "mon-1",
-    now: () => "2026-10-16T00:00:00.000Z",
+    now: () => state.now,
     broadcast: (logId, event) => broadcasts.push({ logId, event }),
     notify: async (monitor, changes) => { notifications.push({ id: monitor.id, changes }); },
     brokerRequest: async (method, path) => {
@@ -58,7 +60,7 @@ test("start snapshots the PR, broadcasts the row, and dedupes", async () => {
 
 test("poll detects CI failure, approval, comments, then merge — notifying once per poll", async () => {
   const { state, registry, broadcasts, notifications } = harness();
-  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3, scope: "full" });
 
   state.runs = [run("fast", "completed", "success"), run("typecheck", "completed", "failure")];
   state.reviews = [{ id: 10, state: "APPROVED", user: { login: "rev" } }];
@@ -79,6 +81,86 @@ test("poll detects CI failure, approval, comments, then merge — notifying once
   assert.equal(broadcasts.at(-1).event.monitor.status, "merged");
   await registry.pollNow();
   assert.equal(notifications.length, 2, "terminal monitors stop polling");
+});
+
+test("a CI monitor ignores reviews and interim failures, then ends at the terminal result", async () => {
+  const { state, registry, notifications } = harness();
+  const { monitor } = await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  assert.equal(monitor.scope, "ci", "ci is the default scope");
+  state.reviews = [{ id: 10, state: "APPROVED", user: { login: "rev" } }];
+  state.issueComments = [{ id: 20, user: { login: "kim" } }];
+  state.runs = [run("fast", "completed", "failure"), run("typecheck", "in_progress")];
+  await registry.pollNow();
+  assert.equal(notifications.length, 0, "interim failure and engagement are not reported in ci scope");
+  assert.equal(registry.list()[0].active, true, "still waiting for the remaining check");
+  state.runs = [run("fast", "completed", "failure"), run("typecheck", "completed", "success")];
+  await registry.pollNow();
+  const done = registry.list()[0];
+  assert.equal(done.active, false);
+  assert.equal(done.status, "ci-failed");
+  assert.deepEqual(notifications.at(-1).changes, ["CI finished: 1 passed, 1 failed (fast) — monitoring ended"]);
+  assert.equal(notifications.length, 1, "the terminal result is reported exactly once");
+});
+
+test("a CI monitor reports the terminal pass exactly once and then stops polling", async () => {
+  const { state, registry, notifications } = harness();
+  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  state.runs = [run("fast", "completed", "success"), run("typecheck", "completed", "success")];
+  await registry.pollNow();
+  const monitor = registry.list()[0];
+  assert.equal(monitor.active, false);
+  assert.equal(monitor.status, "ci-passed");
+  assert.deepEqual(notifications.at(-1).changes, ["All checks passed (2 checks) — monitoring ended"]);
+  await registry.pollNow();
+  assert.equal(notifications.length, 1, "terminal CI monitors stop polling");
+});
+
+test("a finished CI monitor re-arms for a new head and retargets while pending", async () => {
+  const { state, registry, notifications } = harness();
+  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  state.runs = [run("fast", "completed", "success"), run("typecheck", "completed", "success")];
+  await registry.pollNow();
+  assert.equal(registry.list()[0].status, "ci-passed");
+
+  state.pr = pr({ head: { sha: "def", ref: "feat" } });
+  state.runs = [run("fast", "in_progress")];
+  const rearmed = await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  assert.equal(rearmed.rearmed, true);
+  assert.equal(registry.list().length, 1, "re-arm reuses the same monitor row");
+  assert.equal(registry.list()[0].active, true);
+  state.runs = [run("fast", "completed", "success")];
+  await registry.pollNow();
+  assert.equal(registry.list()[0].status, "ci-passed");
+  assert.equal(notifications.length, 2, "each CI run reports its own finish");
+});
+
+test("a CI monitor with no checks ends after the grace, reset by a new head", async () => {
+  const { state, registry, notifications } = harness();
+  state.runs = [];
+  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
+  state.now = "2026-10-16T00:10:00.000Z";
+  state.pr = pr({ head: { sha: "def", ref: "feat" } });
+  await registry.pollNow();
+  assert.equal(registry.list()[0].active, true, "the new head restarts the grace");
+  state.now = "2026-10-16T00:24:59.000Z";
+  await registry.pollNow();
+  assert.equal(registry.list()[0].active, true);
+  state.now = "2026-10-16T00:25:00.000Z";
+  await registry.pollNow();
+  const monitor = registry.list()[0];
+  assert.equal(monitor.active, false);
+  assert.equal(monitor.status, "ci-none");
+  assert.deepEqual(notifications.at(-1).changes, ["No CI checks reported for the latest commit — monitoring ended"]);
+});
+
+test("a full monitor does not stop at CI completion", async () => {
+  const { state, registry } = harness();
+  await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3, scope: "full" });
+  state.runs = [run("fast", "completed", "success"), run("typecheck", "completed", "success")];
+  await registry.pollNow();
+  const monitor = registry.list()[0];
+  assert.equal(monitor.active, true);
+  assert.equal(monitor.status, "monitoring");
 });
 
 test("stop ends monitoring and emits the final row", async () => {

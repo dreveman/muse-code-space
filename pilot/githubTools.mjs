@@ -17,7 +17,8 @@ export const GITHUB_TOOLS = [
     description:
       "Create a pull request through Code Space's GitHub broker. Defaults: repo from your workspace's origin remote, " +
       "head from its current branch, base is the repo's default branch. The head branch must already be pushed. " +
-      "Returns the PR number and URL.",
+      "By default this also monitors the PR's CI until it finishes and then stops; pass monitor: \"full\" to watch " +
+      "reviews/comments until merge, or \"none\" not to monitor. Returns the PR number and URL.",
     inputSchema: {
       type: "object",
       properties: {
@@ -26,9 +27,32 @@ export const GITHUB_TOOLS = [
         head: { type: "string", description: "Head branch (or owner:branch for a fork). Defaults to the workspace's current branch." },
         base: { type: "string", description: "Base branch. Defaults to the repository's default branch." },
         draft: { type: "boolean", description: "Create as a draft pull request." },
+        monitor: { type: "string", enum: ["ci", "full", "none"], description: "Monitoring after creation: \"ci\" (default) watches CI until it finishes then stops, \"full\" watches until merge/close, \"none\" starts no monitor." },
         repo: { type: "string", description: "Repository as owner/repo. Defaults to the workspace's origin remote." },
       },
       required: ["title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "github_update_pr",
+    title: "Update a GitHub pull request",
+    description:
+      "Update a pull request's title, body, or base branch through Code Space's GitHub broker. Code changes still " +
+      "go through git push; call this after pushing (with or without field changes) to re-arm CI monitoring for the " +
+      "new head. By default it monitors CI until it finishes and then stops; pass monitor: \"full\" to watch until " +
+      "merge, or \"none\" not to monitor. Returns the PR number and URL.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        number: { type: "integer", description: "Pull request number." },
+        title: { type: "string", description: "New pull request title. Optional." },
+        body: { type: "string", description: "New pull request description (Markdown). Optional." },
+        base: { type: "string", description: "New base branch. Optional." },
+        monitor: { type: "string", enum: ["ci", "full", "none"], description: "Monitoring after the update: \"ci\" (default), \"full\", or \"none\"." },
+        repo: { type: "string", description: "Repository as owner/repo. Defaults to the workspace's origin remote." },
+      },
+      required: ["number"],
       additionalProperties: false,
     },
   },
@@ -52,14 +76,17 @@ export const GITHUB_TOOLS = [
     name: "github_monitor_pr",
     title: "Monitor pull requests in the background",
     description:
-      "Start or stop background monitoring of one or more pull requests. Code Space polls them about once a minute and posts an update " +
-      "to this session when something material changes — a review or approval, new comments, CI checks failing or " +
-      "passing, or a PR merging/closing — and a live Monitoring row in the transcript tracks each PR. Monitoring " +
-      "survives restarts and runs until the PR merges or closes. Pass action: \"unsubscribe\" or stop: true to end it early.",
+      "Start or stop background monitoring of one or more pull requests. By default a monitor watches CI only and " +
+      "stops automatically when the checks finish (pass or fail); pass until: \"merge\" to also watch reviews and " +
+      "comments until the PR merges or closes. Code Space polls about once a minute and posts an update to this " +
+      "session when CI finishes or the PR state changes, and a live Monitoring row in the transcript tracks each PR. " +
+      "After pushing new commits to a PR whose CI monitor already finished, call this again to re-arm it for the new " +
+      "head. Monitoring survives restarts. Pass action: \"unsubscribe\" or stop: true to end it early.",
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["subscribe", "unsubscribe"], description: "Whether to start (subscribe) or stop (unsubscribe) monitoring. Default subscribe." },
+        until: { type: "string", enum: ["ci", "merge"], description: "Monitor lifetime: \"ci\" (default) stops when CI finishes; \"merge\" watches reviews/comments until merge/close." },
         pr_ids: {
           type: "array",
           items: { type: ["string", "number"] },
@@ -142,6 +169,28 @@ function formatCreatedPr(pr) {
   return lines.filter(Boolean).join("\n");
 }
 
+function monitorMode(value) {
+  return value === "full" || value === "none" ? value : "ci";
+}
+
+function monitorScopeForMode(mode) {
+  return mode === "full" ? "full" : "ci";
+}
+
+function formatMonitorOutcome(monitor, requestedScope) {
+  const scope = monitor.scope === "full" ? "full" : requestedScope;
+  const checks = monitor.snapshot?.checks;
+  const rollup = checks ? `${checks.passed} passed, ${checks.failed} failed, ${checks.pending} pending` : "checks unknown";
+  if (!monitor.active) {
+    if (monitor.status === "ci-passed") return `CI already passed (${rollup}); no monitoring needed.`;
+    if (monitor.status === "ci-failed") return `CI already finished with failures (${rollup}); no monitoring started.`;
+    return `PR is ${monitor.status}; no monitoring started.`;
+  }
+  return scope === "full"
+    ? `Monitoring this PR until it merges or closes (checks: ${rollup}). You will be notified automatically when something changes.`
+    : `Monitoring CI until it finishes, then monitoring stops (checks: ${rollup}). You will be notified automatically when CI finishes.`;
+}
+
 function formatPrStatus(pr, checkRuns) {
   const state = pr.merged_at ? "merged" : pr.state === "closed" ? "closed" : pr.draft ? "open (draft)" : "open";
   const mergeable = pr.state === "open"
@@ -210,6 +259,19 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext, monito
     return result.json;
   };
 
+  // Start (or re-arm) monitoring for one PR and describe the outcome.
+  // Monitoring problems never fail the GitHub operation that triggered it.
+  const startMonitor = async (entry, owner, repo, number, mode) => {
+    if (mode === "none") return null;
+    if (!monitors) return "Monitoring isn't available in this Code Space, so no monitor was started.";
+    try {
+      const { monitor } = await monitors.start({ logId: entry.logId, owner, repo, number, scope: monitorScopeForMode(mode) });
+      return formatMonitorOutcome(monitor, monitorScopeForMode(mode));
+    } catch (error) {
+      return `Monitoring could not be started (${error?.message ?? error}); the PR itself was updated.`;
+    }
+  };
+
   return {
     enabled,
     async call(entry, name, args = {}) {
@@ -231,7 +293,26 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext, monito
           if (typeof args.body === "string") body.body = args.body;
           if (typeof args.base === "string" && args.base.trim()) body.base = args.base.trim();
           const pr = await request("POST", `/repos/${owner}/${repo}/pulls`, body);
-          return { text: formatCreatedPr(pr) };
+          const monitorLine = await startMonitor(entry, owner, repo, pr.number, monitorMode(args.monitor));
+          return { text: [formatCreatedPr(pr), monitorLine].filter(Boolean).join("\n") };
+        }
+        if (name === "github_update_pr") {
+          const number = Number.isInteger(args.number) && args.number > 0 ? args.number : null;
+          if (!number) return fail("github_update_pr needs a positive integer `number`.");
+          const { owner, repo } = await resolveRepo(entry, args);
+          const patch = {};
+          if (typeof args.title === "string") {
+            if (!args.title.trim()) return fail("github_update_pr `title` must not be empty.");
+            patch.title = args.title.trim();
+          }
+          if (typeof args.body === "string") patch.body = args.body;
+          if (typeof args.base === "string" && args.base.trim()) patch.base = args.base.trim();
+          const pr = Object.keys(patch).length
+            ? await request("PATCH", `/repos/${owner}/${repo}/pulls/${number}`, patch)
+            : await request("GET", `/repos/${owner}/${repo}/pulls/${number}`);
+          const monitorLine = await startMonitor(entry, owner, repo, number, monitorMode(args.monitor));
+          const headline = Object.keys(patch).length ? `Updated PR ${formatPrLine(pr)}` : `PR ${formatPrLine(pr)}`;
+          return { text: [headline, pr.html_url, monitorLine].filter(Boolean).join("\n") };
         }
         if (name === "github_pr_status") {
           const number = Number.isInteger(args.number) && args.number > 0 ? args.number : null;
@@ -285,29 +366,35 @@ export function createGitHubToolset({ enabled, brokerRequest, gitContext, monito
                 : `Stopped monitoring ${stopped.map((n) => `${owner}/${repo}#${n}`).join(", ")}.`,
             };
           }
+          const scope = args.until === "merge" ? "full" : "ci";
           const results = [];
           for (const num of prNumbers) {
-            const res = await monitors.start({ logId: entry.logId, owner, repo, number: num });
+            const res = await monitors.start({ logId: entry.logId, owner, repo, number: num, scope });
             results.push({ number: num, ...res });
           }
           const lines = [];
-          for (const { number: num, monitor, created } of results) {
+          for (const { number: num, monitor, created, rearmed } of results) {
             const snap = monitor.snapshot;
             const checks = snap ? `${snap.checks.passed} passed, ${snap.checks.failed} failed, ${snap.checks.pending} pending` : "checks unknown";
-            const stateTag = monitor.active ? (snap?.draft ? "DRAFT" : "OPEN") : String(monitor.status).toUpperCase();
+            const stateTag = monitor.active ? (snap?.draft ? "DRAFT" : "OPEN") : String(monitor.status).toUpperCase().replaceAll("-", " ");
             const comments = snap?.commentCount ?? 0;
-            const headLine = `${created ? "Monitoring" : "Already monitoring"} ${owner}/${repo}#${num}${snap?.title ? ` — ${snap.title}` : ""} (checks: ${checks})`;
+            const label = rearmed ? "Re-armed monitoring" : created ? "Monitoring" : monitor.active ? "Already monitoring" : "Monitoring ended";
+            const until = (monitor.scope === "full" || scope === "full") ? "until merge/close" : "until CI finishes";
+            const headLine = `${label} ${owner}/${repo}#${num}${snap?.title ? ` — ${snap.title}` : ""} (${until}; checks: ${checks})`;
             lines.push(`  #${num} — ${stateTag} · CI: ${checks} · ${comments} comment${comments === 1 ? "" : "s"} · ${headLine}`);
           }
           const activeList = typeof monitors.list === "function"
             ? monitors.list().filter((m) => m.active && m.logId === entry.logId).map((m) => `#${m.number}`)
             : results.filter((r) => r.monitor.active).map((r) => `#${r.number}`);
-          const activeIds = activeList.length > 0 ? activeList : results.map((r) => `#${r.number}`);
+          const activeIds = activeList.length > 0 ? activeList : results.filter((r) => r.monitor.active).map((r) => `#${r.number}`);
+          const stillActive = results.some((r) => r.monitor.active);
           return {
             text:
-              `Now monitoring ${results.length} PR(s). You will be notified automatically via an incoming message when something changes — continue with other work.\n\n` +
-              `Current state:\n${lines.join("\n")}\n\n` +
-              `Active subscriptions: ${activeIds.join(", ")}.`,
+              (stillActive
+                ? `Now monitoring ${results.filter((r) => r.monitor.active).length} PR(s) ${scope === "full" ? "until merge/close" : "until CI finishes"}. You will be notified automatically via an incoming message — continue with other work.\n\n`
+                : `No PR is still being monitored (CI already finished or the PR is closed).\n\n`) +
+              `Current state:\n${lines.join("\n")}` +
+              (activeIds.length ? `\n\nActive subscriptions: ${activeIds.join(", ")}.` : ""),
           };
         }
         if (name === "github_list_prs") {

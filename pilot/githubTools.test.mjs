@@ -73,6 +73,75 @@ test("github_create_pr validates input and surfaces GitHub errors", async () => 
   assert.match((await noBranch.toolset.call(entry, "github_create_pr", { title: "x" })).text, /pass `head` explicitly/);
 });
 
+function monitorSpy() {
+  const started = [];
+  return {
+    started,
+    monitors: {
+      start: async (spec) => {
+        started.push(spec);
+        return { created: true, monitor: { active: true, status: "monitoring", snapshot: { title: "Work", checks: { passed: 1, failed: 0, pending: 2, failing: [] } } } };
+      },
+      stop: () => null,
+    },
+  };
+}
+
+test("github_create_pr monitors CI by default and can opt out", async () => {
+  const spy = monitorSpy();
+  const responses = {
+    "POST /repos/o/r/pulls": {
+      status: 201,
+      json: { number: 7, title: "Fix it", html_url: "https://github.com/o/r/pull/7", draft: false, head: { ref: "feat" }, base: { ref: "main" } },
+    },
+  };
+  const make = () => createGitHubToolset({
+    enabled: () => true,
+    gitContext: async () => ({ remote: "https://github.com/o/r.git", branch: "feat" }),
+    brokerRequest: async (method, path) => responses[`${method} ${path}`] ?? { status: 404, json: { message: "Not Found" } },
+    monitors: spy.monitors,
+  });
+  const created = await make().call(entry, "github_create_pr", { title: "Fix it" });
+  assert.match(created.text, /Monitoring CI until it finishes/);
+  assert.deepEqual(spy.started[0], { logId: "s1", owner: "o", repo: "r", number: 7, scope: "ci" });
+
+  spy.started.length = 0;
+  const optedOut = await make().call(entry, "github_create_pr", { title: "Fix it", monitor: "none" });
+  assert.doesNotMatch(optedOut.text, /Monitoring CI/);
+  assert.equal(spy.started.length, 0, "monitor none starts nothing");
+
+  const full = await make().call(entry, "github_create_pr", { title: "Fix it", monitor: "full" });
+  assert.match(full.text, /Monitoring this PR until it merges or closes/);
+  assert.equal(spy.started.at(-1).scope, "full");
+});
+
+test("github_update_pr patches fields and re-arms CI monitoring for the new head", async () => {
+  const spy = monitorSpy();
+  const calls = [];
+  const toolset = createGitHubToolset({
+    enabled: () => true,
+    gitContext: async () => ({ remote: "https://github.com/o/r.git", branch: "feat" }),
+    brokerRequest: async (method, path, body) => {
+      calls.push({ method, path, body });
+      if (method === "PATCH") return { status: 200, json: { number: 7, title: "New title", html_url: "https://github.com/o/r/pull/7" } };
+      return { status: 200, json: { number: 7, title: "Fix it", html_url: "https://github.com/o/r/pull/7" } };
+    },
+    monitors: spy.monitors,
+  });
+  const updated = await toolset.call(entry, "github_update_pr", { number: 7, title: "New title", repo: "o/r" });
+  assert.match(updated.text, /Updated PR #7 New title/);
+  assert.match(updated.text, /Monitoring CI until it finishes/);
+  assert.deepEqual(calls[0], { method: "PATCH", path: "/repos/o/r/pulls/7", body: { title: "New title" } });
+  assert.deepEqual(spy.started[0], { logId: "s1", owner: "o", repo: "r", number: 7, scope: "ci" });
+
+  calls.length = 0;
+  const rearmed = await toolset.call(entry, "github_update_pr", { number: 7, repo: "o/r" });
+  assert.match(rearmed.text, /PR #7 Fix it/);
+  assert.equal(calls[0].method, "GET", "a field-less update just re-reads and re-arms");
+  assert.equal((await toolset.call(entry, "github_update_pr", { number: 0, repo: "o/r" })).isError, true);
+  assert.equal((await toolset.call(entry, "github_update_pr", { number: 7, title: "  ", repo: "o/r" })).isError, true);
+});
+
 test("github_pr_status reports state, mergeability, and a check rollup", async () => {
   const { toolset } = fakeToolset({
     responses: {
@@ -129,8 +198,12 @@ test("github_monitor_pr starts, dedupes, stops, and requires the registry", asyn
     monitors,
   });
   const begin = await withMonitors.call(entry, "github_monitor_pr", { number: 3 });
-  assert.match(begin.text, /Monitoring o\/r#3 — Work \(checks: 2 passed, 0 failed, 1 pending\)/);
-  assert.deepEqual(started[0], { logId: "s1", owner: "o", repo: "r", number: 3 });
+  assert.match(begin.text, /Monitoring o\/r#3 — Work \(until CI finishes; checks: 2 passed, 0 failed, 1 pending\)/);
+  assert.match(begin.text, /until CI finishes/);
+  assert.deepEqual(started[0], { logId: "s1", owner: "o", repo: "r", number: 3, scope: "ci" });
+  const full = await withMonitors.call(entry, "github_monitor_pr", { number: 3, until: "merge" });
+  assert.match(full.text, /until merge\/close/);
+  assert.deepEqual(started.at(-1), { logId: "s1", owner: "o", repo: "r", number: 3, scope: "full" });
   const halt = await withMonitors.call(entry, "github_monitor_pr", { number: 3, stop: true });
   assert.match(halt.text, /Stopped monitoring o\/r#3\./);
   assert.equal((await withMonitors.call(entry, "github_monitor_pr", { number: -1 })).isError, true);

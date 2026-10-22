@@ -680,7 +680,7 @@ interactive (TUI) sessions, so serve-hosted agents never get its
     **`list_agents()`** (`pilot/mcp.mjs`). There is no bash fallback.
   - When GitHub integration is set up (a broker credential is
     provisioned), the same server also offers **`github_create_pr`**,
-    **`github_pr_status`**, and **`github_list_prs`** (`pilot/githubTools.mjs`).
+    **`github_update_pr`**, **`github_pr_status`**, and **`github_list_prs`** (`pilot/githubTools.mjs`).
     Calls run from the pilot through the local GitHub broker with the
     session sentinel — agents never hold a credential — and repo/head
     default to the session workspace's origin remote and current branch.
@@ -688,11 +688,17 @@ interactive (TUI) sessions, so serve-hosted agents never get its
     the tools up without restarting sessions.
   - **`github_monitor_pr(number)`** starts background monitoring: the
     pilot (`pilot/prMonitor.mjs`) polls the PR through the broker about
-    once a minute for reviews/approvals, new comments, CI transitions,
-    and merge/close, persisting monitors in `pr-monitors.json` so they
-    survive restarts. Material changes upsert a live `pr_monitor`
-    transcript row and deliver a turn to the owning session. Monitoring
-    stops when the PR merges or closes (or via `stop: true`).
+    once a minute, persisting monitors in `pr-monitors.json` so they
+    survive restarts. The default scope watches CI only and stops
+    automatically when the checks finish (pass or fail; after a 15-minute
+    grace if no checks are reported); `until: "merge"` also watches
+    reviews/approvals and comments until merge/close. Material changes
+    upsert a live `pr_monitor` transcript row and deliver a turn to the
+    owning session. `github_create_pr` and `github_update_pr` start the
+    CI-scoped monitor by default (`monitor: "full" | "none"` to change
+    that), and re-calling a monitor for a PR whose CI finished re-arms it
+    for the new head. Monitoring also stops when the PR merges or closes
+    (or via `stop: true`).
   - During pilot startup the HTTP listener starts before sessions resume,
     so required MCP servers can connect; `/health` reports unhealthy and
     normal API routes return 503 until reconciliation finishes.

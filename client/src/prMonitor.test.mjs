@@ -24,8 +24,13 @@ test("parsePrMonitor validates the row and fills defaults", () => {
 
 test("status and summary lines read plainly", () => {
   const parsed = parsePrMonitor(row());
-  assert.equal(prMonitorStatusLine(parsed), "Monitoring");
+  assert.equal(parsed.scope, "ci", "rows default to the CI scope");
+  assert.equal(prMonitorStatusLine(parsed), "Monitoring CI");
+  assert.equal(prMonitorStatusLine(parsePrMonitor(row({ status: "monitoring", scope: "full" }))), "Monitoring");
   assert.equal(prMonitorStatusLine(parsePrMonitor(row({ status: "merged" }))), "Merged");
+  assert.equal(prMonitorStatusLine(parsePrMonitor(row({ status: "ci-passed" }))), "CI passed — monitoring ended");
+  assert.equal(prMonitorStatusLine(parsePrMonitor(row({ status: "ci-failed" }))), "CI failed — monitoring ended");
+  assert.equal(prMonitorStatusLine(parsePrMonitor(row({ status: "ci-none" }))), "No CI checks — monitoring ended");
   assert.equal(prMonitorSummary(parsed), "CI: 3 passed, 1 failed (typecheck), 2 running · 2 approvals · 4 comments");
   assert.equal(prMonitorSummary(parsePrMonitor(row({ checks: { passed: 0, failed: 0, pending: 0, failing: [] }, approvals: 0, comments: 0 }))), "");
 });

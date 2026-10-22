@@ -9,7 +9,8 @@ export type PrMonitorRow = {
   number: number;
   title: string;
   url: string;
-  status: string; // monitoring | merged | closed | stopped | error
+  status: string; // monitoring | merged | closed | stopped | error | ci-passed | ci-failed | ci-none
+  scope: string; // ci | full
   checks: { passed: number; failed: number; pending: number; failing: string[] };
   approvals: number;
   comments: number;
@@ -34,6 +35,7 @@ export function parsePrMonitor(content: string): PrMonitorRow | null {
       title: typeof row.title === "string" ? row.title : "",
       url: typeof row.url === "string" ? row.url : `https://github.com/${row.owner}/${row.repo}/pull/${row.number}`,
       status: row.status,
+      scope: typeof row.scope === "string" ? row.scope : "ci",
       checks: {
         passed: typeof checks.passed === "number" ? checks.passed : 0,
         failed: typeof checks.failed === "number" ? checks.failed : 0,
@@ -60,7 +62,10 @@ export function prMonitorStatusLine(row: PrMonitorRow): string {
   if (row.status === "closed") return "Closed without merging";
   if (row.status === "stopped") return "Monitoring stopped";
   if (row.status === "error") return "Monitoring stopped (error)";
-  return "Monitoring";
+  if (row.status === "ci-passed") return "CI passed — monitoring ended";
+  if (row.status === "ci-failed") return "CI failed — monitoring ended";
+  if (row.status === "ci-none") return "No CI checks — monitoring ended";
+  return row.scope === "full" ? "Monitoring" : "Monitoring CI";
 }
 
 /** One-line CI/engagement summary, e.g. "3 checks passed · 1 failed (typecheck) · 2 approvals · 4 comments". */
