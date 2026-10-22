@@ -69,8 +69,8 @@ test("Markdown code blocks have a copy button, hover-only on fine pointers", () 
   assert.ok(block.includes("copyTextToClipboard(code)"), "the button copies the exact block source via the shared helper");
   assert.ok(block.includes('className="markdown-code-copy"'), "the button is part of the code block");
   assert.ok(block.includes('aria-label={copied ? "Copied" : "Copy code"}'), "copy state is announced");
-  assert.ok(block.includes('title={copied ? "Copied" : "Copy"}'), "the tooltip just says Copy");
-  assert.ok(css.includes(".markdown-code-copy { position: absolute; right: 6px; bottom: 6px;"), "button sits in the bottom right corner");
+  assert.ok(block.includes('title={copied ? "Copied" : "Copy code"}'), "the tooltip says Copy code");
+  assert.ok(css.includes(".markdown-code-copy { position: absolute; right: 6px; top: 6px;"), "button sits in the top right corner");
   assert.ok(css.includes("@media (hover: hover) and (pointer: fine)"), "hover reveal is limited to non-touch devices");
   assert.ok(css.includes(".markdown-code-block:hover .markdown-code-copy"), "hovering the block reveals the button");
 });
