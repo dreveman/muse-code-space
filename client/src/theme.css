@@ -558,6 +558,15 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .markdown-body th { background: var(--terminal-surface); font-weight: 600; }
 .markdown-inline-image { display: block; max-width: min(100%, 480px); height: auto; margin: 6px 0; border-radius: 8px; border: 1px solid var(--terminal-faint); background: var(--terminal-surface); }
 .tool-image-thumbnail { max-width: min(100%, 320px); }
+.tool-todos-list { display: flex; flex-direction: column; gap: 3px; }
+.tool-todos-item { display: flex; gap: 8px; align-items: baseline; font: 13px/1.5 var(--sans); }
+.tool-todos-glyph { flex: 0 0 1em; text-align: center; color: var(--terminal-dim); }
+.tool-todos-item.is-completed { color: var(--terminal-dim); }
+.tool-todos-item.is-completed .tool-todos-text { text-decoration: line-through; }
+.tool-todos-item.is-completed .tool-todos-glyph { color: var(--terminal-accent); }
+.tool-todos-item.is-active { font-weight: 600; }
+.tool-todos-item.is-active .tool-todos-glyph { color: var(--terminal-accent); }
+.tool-todos-item.is-cancelled { color: var(--terminal-dim); }
 .markdown-image-button { display: inline-block; max-width: min(100%, 480px); margin: 6px 0; padding: 0; border: 0; background: transparent; cursor: zoom-in; text-align: left; }
 .markdown-image-button .markdown-inline-image { margin: 0; transition: border-color 140ms ease, transform 140ms ease; }
 @media (hover: hover) and (pointer: fine) {
