@@ -2116,6 +2116,14 @@ export async function capturePreviewScreenshot({
   const targetUrl = `http://127.0.0.1:${numPort}${subpath}`;
   const outDir = join(workspaceRoot, ".code-space");
   mkdirSync(outDir, { recursive: true });
+  // Screenshots are generated captures, not project files: the directory
+  // ignores itself so no workspace's git status is polluted, without the
+  // project having to know about .code-space. (The image must stay inside
+  // the workspace — readSessionImage refuses outside paths — so ignoring
+  // it in place is the fix, not relocating it.) An existing .gitignore is
+  // the user's and is never overwritten; files can still be force-added.
+  const ignorePath = join(outDir, ".gitignore");
+  if (!existsSync(ignorePath)) writeFileSync(ignorePath, "*\n");
   const pngName = `preview-${numPort}.png`;
   const svgName = `preview-${numPort}.svg`;
   const pngPath = join(outDir, pngName);

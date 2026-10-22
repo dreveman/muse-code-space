@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -228,6 +228,17 @@ test("capturePreviewScreenshot saves a preview image in the workspace and return
     assert.equal(res.port, port);
     assert.match(res.imagePath, /^\.code-space\/preview-\d+\.(?:png|svg)$/);
     assert.equal(res.markdown, `[![Demo App (:${port})](${res.imagePath})](http://127.0.0.1:${port}/)`);
+    // Screenshots are generated captures: their directory ignores itself so
+    // no workspace's git status is polluted, without projects having to
+    // know about .code-space.
+    const ignorePath = join(wsDir, ".code-space", ".gitignore");
+    assert.ok(existsSync(ignorePath), "capture creates a self-ignoring .code-space directory");
+    assert.equal(readFileSync(ignorePath, "utf8"), "*\n");
+    // A .gitignore the user already placed there is never overwritten.
+    writeFileSync(ignorePath, "# mine\n");
+    const again = await capturePreviewScreenshot({ workspaceRoot: wsDir, port, path: "/", title: "Demo App" });
+    assert.equal(again.ok, true);
+    assert.equal(readFileSync(ignorePath, "utf8"), "# mine\n");
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(wsDir, { recursive: true, force: true });
