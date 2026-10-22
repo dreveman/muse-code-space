@@ -560,6 +560,19 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .tool-detail { font-size: calc(1em - 2px); color: var(--terminal-dim); }
 .message-text { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: inherit; }
 .message-time { margin-top: 2px; color: var(--terminal-dim); font: 9px/1.4 var(--mono); }
+.message-time-row { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.message-time-row .message-time { margin-top: 0; }
+/* Same borderless treatment as the repo dialog copy button, sized down to
+   sit beside the 9px timestamp. */
+.message-copy-markdown { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--terminal-dim); cursor: pointer; display: inline-grid; place-items: center; }
+.message-copy-markdown svg { width: 11px; height: 11px; }
+.message-copy-markdown:hover { background: var(--terminal-faint); color: var(--terminal-text); }
+.message-copy-markdown:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch devices keep it visible; fine pointers reveal it on response hover. */
+@media (hover: hover) and (pointer: fine) {
+  .message-copy-markdown { opacity: 0; }
+  .output-event:hover .message-copy-markdown, .output-event:focus-within .message-copy-markdown { opacity: 1; }
+}
 .markdown-body { min-width: 0; overflow-wrap: anywhere; color: inherit; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }

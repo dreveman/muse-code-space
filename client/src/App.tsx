@@ -54,6 +54,7 @@ import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDoc
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
 import { MarkdownCodeBlock } from "./MarkdownCodeBlock";
+import { CopyMarkdownButton } from "./CopyMarkdownButton";
 import { fenceTagForLine } from "./codeLanguage";
 import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
@@ -1488,7 +1489,10 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
         <>
           <Markdown text={content} />
           {time !== "" && (
-            <div className="message-time">{time}</div>
+            <div className="message-time-row">
+              <div className="message-time">{time}</div>
+              <CopyMarkdownButton text={event.content} />
+            </div>
           )}
         </>
       ) : (
