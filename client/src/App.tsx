@@ -18,6 +18,7 @@ import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
 import { matchesSessionQuery, sessionTaskTitle, formatRelativeTime, groupSessionsByAge, groupSessionsByProject, resolveSelectedId, isSessionActive, sortSessions, type SortMode } from "./sessionList";
+import { questionAnswered, questionSelectionHint, userInputReadiness } from "./userInputCard";
 import { isLiveToTerminalTransition, isStartedListSession, isTurnLiveStatus, shouldEnableSessionDetail, shouldPollSessionDetail, shouldShowConversationLoading } from "./sessionDetailPoll";
 import { newSessionIdentity, randomUuid } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
@@ -48,7 +49,7 @@ import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 import { contextUsageLabel } from "./contextUsage";
 import { hasStoredOutputBeyondView, toolTranscriptLines, TOOL_PREVIEW_LINES } from "./toolTranscript";
-import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, todosPreviewForTool, toolPresentation } from "./toolPresentation";
+import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, todosPreviewForTool, toolPresentation, userInputPreviewForTool } from "./toolPresentation";
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
@@ -56,6 +57,7 @@ import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
 import { ToolImageView } from "./RenderedToolImage";
 import { ToolTodosView } from "./RenderedToolTodos";
+import { ToolUserInputView } from "./RenderedToolUserInput";
 import { ToolSearchView } from "./ToolSearchView";
 import { searchPreviewForTool } from "./searchOutput";
 import { parseAgentListOutput, type AgentListOutput } from "./agentListOutput";
@@ -709,6 +711,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
   const imagePreview = presentation.view === "file" && !showRawToolOutput && !filePreview ? imagePreviewForTool(displayDetails) : null;
   const skillPreview = presentation.view === "skill" && !showRawToolOutput ? skillPreviewForTool(displayDetails) : null;
   const todosPreview = presentation.view === "todos" && !showRawToolOutput ? todosPreviewForTool(displayDetails) : null;
+  const userInputPreview = presentation.view === "user-input" && !showRawToolOutput ? userInputPreviewForTool(displayDetails) : null;
   const skillBody = skillPreview ? (showAll ? skillPreview.body : skillPreview.body.split("\n").slice(0, TOOL_PREVIEW_LINES).join("\n")) : null;
   const searchPreview = presentation.view === "search" && !showRawToolOutput ? searchPreviewForTool(displayDetails) : null;
   const agentList = presentation.view === "agent-list" && !showRawToolOutput ? parseAgentListOutput(fullOutput ?? details?.output ?? null) : null;
@@ -889,6 +892,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
           {filePreview && <ToolFileView preview={filePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
           {imagePreview && <ToolImageView sessionId={sessionId} preview={imagePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
           {todosPreview && <ToolTodosView preview={todosPreview} />}
+          {userInputPreview && <ToolUserInputView preview={userInputPreview} />}
           {skillPreview && skillBody !== null && (
             <div className="tool-skill">
               <div className="tool-diff-caption">
@@ -921,7 +925,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
               {patchError && <p className="tool-output-error" role="alert">{patchError} <button type="button" className="tool-more" onClick={() => setPatchError(null)}>Retry diff</button></p>}
             </>
           )}
-          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !skillPreview && !todosPreview && !searchPreview && !agentList)) && (
+          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !skillPreview && !todosPreview && !userInputPreview && !searchPreview && !agentList)) && (
             presentation.view === "command" && !showRawToolOutput && presentation.command !== null ? (
               <pre className="tool-command">{presentation.command}</pre>
             ) : isFormattedOutputOnlyTool && !showRawToolOutput ? (
@@ -1325,7 +1329,10 @@ function UserInputCard({
     });
   };
 
+  const readiness = userInputReadiness(input.questions, picked, free);
+
   const submit = () => {
+    if (!readiness.ready) return;
     onAnswer(
       input.userInputId,
       input.questions.map((question) => ({
@@ -1339,56 +1346,81 @@ function UserInputCard({
   return (
     <div className="user-input-card" role="group" aria-label="Companion question">
       <p className="eyebrow">Input needed</p>
-      {input.questions.map((question) => {
+      {/* The questions scroll inside the card: a tall card (several
+          questions on a phone) must never push Send off-screen. */}
+      <div className="user-input-questions" role="region" aria-label="Questions">
+      {input.questions.map((question, index) => {
         const multiple = question.selection.mode === "multiple";
+        const answered = questionAnswered(question, picked[question.id] ?? [], free[question.id] ?? "");
+        const hintId = `user-input-hint-${input.userInputId}-${question.id}`;
         return (
-          <div key={question.id} className="user-input-question-block">
-            {question.header && <p className="user-input-header">{question.header}</p>}
-            {question.question && <p className="user-input-question">{question.question}</p>}
+          <fieldset key={question.id} className={`user-input-question-block${answered ? " is-answered" : ""}`} aria-describedby={hintId}>
+            <legend className="user-input-question">
+              {input.questions.length > 1 && <span className="user-input-count">{index + 1} of {input.questions.length} · </span>}
+              {question.header && question.question && <span className="user-input-header">{question.header} · </span>}
+              {question.question || question.header || "Question"}
+            </legend>
+            <p id={hintId} className="user-input-hint">
+              {questionSelectionHint(question)}
+              {(question.options ?? []).length > 0 ? " · or write your own below" : ""}
+              {answered ? " · Answered" : ""}
+            </p>
             {(question.options ?? []).length > 0 && (
               <div className="user-input-options" role={multiple ? "group" : "radiogroup"} aria-label={question.header || question.question || question.id}>
-                {(question.options ?? []).map((option) => (
-                  <label key={option.label} className="user-input-option">
-                    <input
-                      type={multiple ? "checkbox" : "radio"}
-                      name={`user-input-${input.userInputId}-${question.id}`}
-                      checked={(picked[question.id] ?? []).includes(option.label)}
-                      onChange={() => toggleOption(question.id, option.label, multiple)}
-                      disabled={busy}
-                    />
-                    <span>
-                      <span className="user-input-option-label">{option.label}</span>
-                      {option.description && <span className="user-input-option-desc">{option.description}</span>}
-                    </span>
-                  </label>
-                ))}
+                {(question.options ?? []).map((option) => {
+                  const selected = (picked[question.id] ?? []).includes(option.label);
+                  const maxSelections = question.selection.maxSelections ?? (question.options ?? []).length;
+                  const atMax = multiple && !selected && (picked[question.id] ?? []).length >= maxSelections;
+                  return (
+                    <label key={option.label} className={`user-input-option${selected ? " is-selected" : ""}${atMax ? " is-disabled" : ""}`}>
+                      <input
+                        type={multiple ? "checkbox" : "radio"}
+                        name={`user-input-${input.userInputId}-${question.id}`}
+                        checked={selected}
+                        onChange={() => toggleOption(question.id, option.label, multiple)}
+                        disabled={busy || atMax}
+                      />
+                      <span>
+                        <span className="user-input-option-label">{option.label}</span>
+                        {option.description && <span className="user-input-option-desc">{option.description}</span>}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             )}
-            <input
-              className="user-input-free"
-              aria-label={question.header ? `${question.header} — write your own answer` : "Write your own answer"}
-              placeholder="Or write your own answer…"
-              value={free[question.id] ?? ""}
-              onChange={(event) => {
-                const value = event.target.value;
-                setFree((current) => ({ ...current, [question.id]: value }));
-                if (value.trim()) setPicked((current) => ({ ...current, [question.id]: [] }));
-              }}
-              maxLength={500}
-              disabled={busy}
-            />
-          </div>
+            <label className={`user-input-other${(free[question.id] ?? "").trim() ? " is-selected" : ""}`}>
+              <span className="user-input-other-label">Other answer</span>
+              <input
+                className="user-input-free"
+                aria-label={question.header ? `${question.header} — write your own answer` : "Write your own answer"}
+                placeholder="Write your own answer…"
+                value={free[question.id] ?? ""}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setFree((current) => ({ ...current, [question.id]: value }));
+                  if (value.trim()) setPicked((current) => ({ ...current, [question.id]: [] }));
+                }}
+                maxLength={500}
+                disabled={busy}
+              />
+            </label>
+          </fieldset>
         );
       })}
+      </div>
       {error && (
         <p className="form-error" role="alert">{error}</p>
       )}
       <div className="user-input-actions">
+        <span className="user-input-status" role="status">
+          {readiness.ready ? "Ready to send" : `${readiness.answered} of ${readiness.total} answered`}
+        </span>
         <button
           type="button"
           className="user-input-submit"
           onClick={submit}
-          disabled={busy}
+          disabled={busy || !readiness.ready}
         >
           {busy ? "Sending…" : "Send answer"}
         </button>
