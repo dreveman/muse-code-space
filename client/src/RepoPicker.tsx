@@ -93,6 +93,9 @@ export const RepoPicker = memo(function RepoPicker({
   globalGitIdentity = null,
   sessionGitAuthor = null,
   onSaveSessionGitAuthor,
+  githubSetup = null,
+  onPerformGithubSetupStep,
+  onSaveGlobalGitAuthor,
 }: {
   repos: readonly RepoOption[];
   githubEnabled: boolean;
@@ -111,6 +114,9 @@ export const RepoPicker = memo(function RepoPicker({
   globalGitIdentity?: { name: string; email: string } | null;
   sessionGitAuthor?: { name: string; email: string } | null;
   onSaveSessionGitAuthor?: (identity: { name: string; email: string } | null) => Promise<boolean>;
+  githubSetup?: { brokerDone: boolean; appDone: boolean } | null;
+  onPerformGithubSetupStep?: (step: "broker" | "app", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null }>;
+  onSaveGlobalGitAuthor?: (identity: { name: string; email: string }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
   const [openPrKey, setOpenPrKey] = useState<string | null>(null);
@@ -143,6 +149,50 @@ export const RepoPicker = memo(function RepoPicker({
       if (await onSaveSessionGitAuthor(override)) setEditingAuthor(false);
     } finally {
       setSavingAuthor(false);
+    }
+  };
+  // GitHub setup dialog (pick mode): while any step is incomplete the
+  // dropdown shows the steps instead of the repo list. The Commit author
+  // step derives from the global identity; broker/App progress comes from
+  // the pilot through App.
+  const [setupExpanded, setSetupExpanded] = useState<"app" | "author" | null>(null);
+  const [setupBusy, setSetupBusy] = useState<"broker" | "app" | "author" | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [setupAppId, setSetupAppId] = useState("");
+  const [setupInstallationId, setSetupInstallationId] = useState("");
+  const [setupPrivateKey, setSetupPrivateKey] = useState("");
+  const [setupAuthorText, setSetupAuthorText] = useState("");
+  const setupAuthorParsed = parseGitAuthorText(setupAuthorText);
+  const setupAuthorDone = Boolean(globalGitIdentity);
+  const setupCompleteCount = (githubSetup?.brokerDone ? 1 : 0) + (githubSetup?.appDone ? 1 : 0) + (setupAuthorDone ? 1 : 0);
+  const showGithubSetup = mode === "pick" && githubSetup !== null && Boolean(onPerformGithubSetupStep)
+    && !(githubSetup.brokerDone && githubSetup.appDone && setupAuthorDone);
+  const runSetupStep = async (step: "broker" | "app") => {
+    if (!onPerformGithubSetupStep || setupBusy) return;
+    setSetupBusy(step);
+    setSetupError(null);
+    try {
+      const result = await onPerformGithubSetupStep(step, step === "app"
+        ? { appId: setupAppId, installationId: setupInstallationId, privateKey: setupPrivateKey }
+        : undefined);
+      if (result.ok) {
+        if (step === "app") { setSetupPrivateKey(""); setSetupExpanded(null); }
+      } else {
+        setSetupError(result.error ?? "That step could not be completed.");
+      }
+    } finally {
+      setSetupBusy(null);
+    }
+  };
+  const saveSetupAuthor = async () => {
+    if (!onSaveGlobalGitAuthor || setupAuthorParsed === "invalid" || !setupAuthorParsed || setupBusy) return;
+    setSetupBusy("author");
+    setSetupError(null);
+    try {
+      if (await onSaveGlobalGitAuthor(setupAuthorParsed)) setSetupExpanded(null);
+      else setSetupError("That author could not be saved.");
+    } finally {
+      setSetupBusy(null);
     }
   };
   const [copiedField, setCopiedField] = useState<"url" | "path" | "pr-url" | null>(null);
@@ -395,7 +445,106 @@ export const RepoPicker = memo(function RepoPicker({
             </div>
           </div>
         )}
-        {open && mode === "pick" && (
+        {open && mode === "pick" && showGithubSetup && githubSetup && (
+          <div ref={menuRef} id={id} className="repo-menu repo-setup-menu" style={{ maxHeight: menuMaxHeight }} role="dialog" aria-label="GitHub setup">
+            <div className="repo-setup-header">
+              <strong>GitHub setup</strong>
+              <span>{setupCompleteCount} of 3 complete</span>
+            </div>
+            <ol className="repo-setup-steps">
+              <li className={`repo-setup-step${githubSetup.brokerDone ? " done" : ""}`}>
+                <span className="repo-setup-status" aria-hidden="true">{githubSetup.brokerDone ? "✓" : "1"}</span>
+                <div className="repo-setup-identity">
+                  <strong>GitHub broker</strong>
+                  <small>Lets companions use gh and list repositories</small>
+                </div>
+                {!githubSetup.brokerDone && (
+                  <button type="button" className="repo-setup-action"
+                    disabled={setupBusy !== null}
+                    onClick={() => { void runSetupStep("broker"); }}>
+                    {setupBusy === "broker" ? "Setting up…" : "Set up"}
+                  </button>
+                )}
+              </li>
+              <li className={`repo-setup-step${githubSetup.appDone ? " done" : ""}`}>
+                <span className="repo-setup-status" aria-hidden="true">{githubSetup.appDone ? "✓" : "2"}</span>
+                <div className="repo-setup-identity">
+                  <strong>GitHub App</strong>
+                  <small>Lets companions clone, pull, and push to repositories</small>
+                </div>
+                {!githubSetup.appDone && (
+                  <button type="button" className={`repo-setup-action${setupExpanded === "app" ? " pressed" : ""}`}
+                    aria-expanded={setupExpanded === "app"}
+                    disabled={setupBusy !== null}
+                    onClick={() => setSetupExpanded((value) => (value === "app" ? null : "app"))}>
+                    Connect
+                  </button>
+                )}
+              </li>
+              {setupExpanded === "app" && !githubSetup.appDone && (
+                <li className="repo-setup-form">
+                  <label className="repo-setup-field">
+                    <span>App ID</span>
+                    <input type="text" inputMode="numeric" aria-label="App ID" value={setupAppId} maxLength={32}
+                      onChange={(event) => setSetupAppId(event.target.value)} />
+                  </label>
+                  <label className="repo-setup-field">
+                    <span>Installation ID</span>
+                    <input type="text" inputMode="numeric" aria-label="Installation ID" value={setupInstallationId} maxLength={32}
+                      onChange={(event) => setSetupInstallationId(event.target.value)} />
+                  </label>
+                  <label className="repo-setup-field">
+                    <span>Private key</span>
+                    <textarea aria-label="Private key" value={setupPrivateKey} rows={4} maxLength={16000}
+                      placeholder="Paste the App private key (.pem)" autoComplete="off" spellCheck={false}
+                      onChange={(event) => setSetupPrivateKey(event.target.value)} />
+                  </label>
+                  <button type="button" className="repo-setup-action repo-setup-submit"
+                    disabled={setupBusy !== null || !setupAppId.trim() || !setupInstallationId.trim() || !setupPrivateKey.trim()}
+                    onClick={() => { void runSetupStep("app"); }}>
+                    {setupBusy === "app" ? "Connecting…" : "Connect GitHub App"}
+                  </button>
+                </li>
+              )}
+              <li className={`repo-setup-step${setupAuthorDone ? " done" : ""}`}>
+                <span className="repo-setup-status" aria-hidden="true">{setupAuthorDone ? "✓" : "3"}</span>
+                <div className="repo-setup-identity">
+                  <strong>Commit author</strong>
+                  <small>{globalGitIdentity ? formatGitAuthor(globalGitIdentity) : "Default name and email for commits"}</small>
+                </div>
+                <button type="button" className={`repo-setup-action${setupExpanded === "author" ? " pressed" : ""}`}
+                  aria-expanded={setupExpanded === "author"}
+                  disabled={setupBusy !== null}
+                  onClick={() => {
+                    if (setupExpanded === "author") { setSetupExpanded(null); return; }
+                    setSetupAuthorText(globalGitIdentity ? formatGitAuthor(globalGitIdentity) : "");
+                    setSetupExpanded("author");
+                  }}>
+                  {setupAuthorDone ? "Edit" : "Set author"}
+                </button>
+              </li>
+              {setupExpanded === "author" && (
+                <li className="repo-setup-form">
+                  <label className="repo-setup-field">
+                    <span>Author</span>
+                    <input type="text" aria-label="Author" value={setupAuthorText} maxLength={300}
+                      placeholder="Name <email>" autoComplete="name"
+                      aria-invalid={setupAuthorParsed === "invalid"}
+                      onChange={(event) => setSetupAuthorText(event.target.value)}
+                      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void saveSetupAuthor(); } }} />
+                  </label>
+                  <button type="button" className="repo-setup-action repo-setup-submit"
+                    disabled={setupBusy !== null || setupAuthorParsed === "invalid" || !setupAuthorParsed}
+                    onClick={() => { void saveSetupAuthor(); }}>
+                    {setupBusy === "author" ? "Saving…" : "Save"}
+                  </button>
+                </li>
+              )}
+            </ol>
+            {setupError && <p className="repo-setup-error" role="alert">{setupError}</p>}
+          </div>
+        )}
+        {open && mode === "pick" && !showGithubSetup && (
           <div ref={menuRef} id={id} className="repo-menu" style={{ maxHeight: menuMaxHeight }} role="dialog" aria-label="Pick a repository">
             <p className="repo-menu-heading">Top repositories</p>
             <input type="search" className="repo-menu-filter" aria-label="Search for repositories"

@@ -2168,6 +2168,25 @@ const server = createServer(async (req, res) => {
         return json(res, 200, { identity });
       }
     }
+    // GitHub setup progress for the repo picker's setup dialog. Status is
+    // derived from the broker config on disk: any config means the broker
+    // is provisioned (gh + repo listing), an "app"-mode config additionally
+    // means GitHub App authentication (git clone/push). Performing a step
+    // from the dialog is not wired up on the real pilot yet — the setup
+    // script (setup-github-broker) remains the supported path, and the
+    // dialog says so instead of pretending.
+    if (path === "/github-setup") {
+      if (req.method === "GET") {
+        let mode = null;
+        try {
+          if (existsSync(GITHUB_BROKER_CONFIG)) mode = JSON.parse(readFileSync(GITHUB_BROKER_CONFIG, "utf8"))?.mode ?? null;
+        } catch { mode = null; }
+        return json(res, 200, { brokerDone: mode !== null, appDone: mode === "app" });
+      }
+      if (req.method === "POST") {
+        return json(res, 501, { error: "GitHub setup from this dialog is not available on this pilot yet. Run setup-github-broker in a terminal.", code: "github_setup_unavailable" });
+      }
+    }
     // Full assistant identity is fetched separately; avatars never enter message events.
     if (path === "/assistant") {
       if (req.method === "GET") return json(res, 200, assistant);
