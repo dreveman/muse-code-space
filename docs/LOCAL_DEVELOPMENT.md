@@ -360,6 +360,15 @@ How it maps to the real host:
   switchable mid-turn or afterward — no start/turn setting. Reasoning alone
   does not change last prompt/reply time or unread status. The fake pilot's
   `thinking` prompt emits empty, partial and completed summary revisions.
+- **Markdown tables**: the hand-rolled Markdown renderer supports GFM pipe
+  tables via `parseMarkdownTable` (`client/src/markdownTable.ts`): a header
+  row followed by a delimiter row of the same cell count (`---`, `:--`,
+  `:-:`, `--:` for alignment), with escaped pipes and pipes inside code
+  spans kept in their cells. Anything else containing pipes stays plain
+  text. Tables render in a horizontally scrollable wrapper; cells keep
+  inline formatting. Test it with the fake pilot's `markdown-table`
+  prompt, which replies with aligned, formatted table rows plus a
+  pipe-containing paragraph that must stay plain text.
 - **Transcript and appearance preferences**: the agent menu has browser-local
   **Show reasoning** and **Expand tools by default** switches. The latter
   opens each tool's bounded 12-line preview without fetching stored full

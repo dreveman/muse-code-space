@@ -57,6 +57,7 @@ import { ToolImageView } from "./RenderedToolImage";
 import { ToolSearchView } from "./ToolSearchView";
 import { searchPreviewForTool } from "./searchOutput";
 import { parseAgentListOutput, type AgentListOutput } from "./agentListOutput";
+import { parseMarkdownTable } from "./markdownTable";
 import { decideSubmit, isConnectionLost, isNetworkFailure } from "./connectionState";
 import { applyColorMode, COLOR_MODE_KEY, loadColorMode, type ColorMode } from "./colorMode";
 
@@ -515,6 +516,42 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
   while (i < lines.length) {
     const line = lines[i] ?? "";
     const trimmed = line.trim();
+
+    const table = parseMarkdownTable(lines, i);
+    if (table) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      const current = key++;
+      nodes.push(
+        <div key={current} className="markdown-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {table.header.map((cell, cellIndex) => (
+                  <th key={cellIndex} style={table.alignments[cellIndex] ? { textAlign: table.alignments[cellIndex]! } : undefined}>
+                    {renderInlineText(cell, `t${current}-h${cellIndex}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex} style={table.alignments[cellIndex] ? { textAlign: table.alignments[cellIndex]! } : undefined}>
+                      {renderInlineText(cell, `t${current}-r${rowIndex}-${cellIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      i = table.endIndex;
+      continue;
+    }
 
     const fenceMatch = /^```(\w*)\s*$/.exec(trimmed);
     if (fenceMatch) {
