@@ -134,13 +134,115 @@ export function todosPreviewForTool(details: ToolDetails | null): TodosPreview |
     active: items.find((item) => item.status === "in_progress") ?? null,
   };
 }
+export type UserInputAnswerPreview = { labels: string[]; freeText: string | null; note: string | null };
+export type UserInputOptionPreview = { label: string; description: string | null; preview: string | null };
+export type UserInputQuestionPreview = {
+  id: string;
+  header: string | null;
+  question: string;
+  mode: "single" | "multiple";
+  options: UserInputOptionPreview[];
+  answer: UserInputAnswerPreview | null;
+};
+export type UserInputPreview = { questions: UserInputQuestionPreview[]; total: number; answered: number };
+
+function cleanPreviewText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.replace(/\s+/g, " ").trim();
+  return text && text.length <= max && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text) ? text : null;
+}
+function optionPreviewText(value: unknown): string | null {
+  if (typeof value === "string") return cleanPreviewText(value, 4000);
+  if (!value || typeof value !== "object") return null;
+  return cleanPreviewText((value as { content?: unknown }).content, 4000);
+}
+// A request_user_input call is a structured question, not a blob of JSON:
+// render its questions from the args (meaningful while the agent is still
+// waiting) and mark the answers once the completed output carries them.
+// Anything malformed fails the whole preview closed to the generic view.
+export function userInputPreviewForTool(details: ToolDetails | null): UserInputPreview | null {
+  if (!details || details.failureReason) return null;
+  if (details.tool?.toLowerCase() !== "request_user_input") return null;
+  const status = (details.status ?? "").toLowerCase();
+  if (status !== "completed" && status !== "inprogress") return null;
+  if (!details.args || details.args.length > 200_000) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(details.args); } catch { return null; }
+  const rawQuestions = (parsed as { questions?: unknown })?.questions;
+  if (!Array.isArray(rawQuestions) || rawQuestions.length === 0 || rawQuestions.length > 10) return null;
+
+  const questions: UserInputQuestionPreview[] = [];
+  for (const raw of rawQuestions) {
+    if (!raw || typeof raw !== "object") return null;
+    const record = raw as Record<string, unknown>;
+    const id = cleanPreviewText(record.id, 200);
+    const questionText = cleanPreviewText(record.question, 2000);
+    const header = record.header === undefined ? null : cleanPreviewText(record.header, 120);
+    if (record.header !== undefined && header === null) return null;
+    if (!id || (!questionText && !header)) return null;
+    const selection = (record.selection ?? { mode: "single" }) as Record<string, unknown>;
+    const mode = selection.mode === undefined ? "single" : selection.mode;
+    if (mode !== "single" && mode !== "multiple") return null;
+    const rawOptions = record.options === undefined ? [] : record.options;
+    if (!Array.isArray(rawOptions) || rawOptions.length > 10) return null;
+    const options: UserInputOptionPreview[] = [];
+    for (const rawOption of rawOptions) {
+      if (!rawOption || typeof rawOption !== "object") return null;
+      const option = rawOption as Record<string, unknown>;
+      const label = cleanPreviewText(option.label, 500);
+      if (!label) return null;
+      const description = option.description === undefined ? null : cleanPreviewText(option.description, 1000);
+      if (option.description !== undefined && description === null) return null;
+      options.push({ label, description, preview: optionPreviewText(option.preview) });
+    }
+    questions.push({ id, header, question: questionText ?? header!, mode, options, answer: null });
+  }
+
+  // Answers, when the completed output carries them in any of the shapes
+  // the host returns. Unparseable output just leaves questions unmarked.
+  if (details.output && details.output.length <= 200_000) {
+    try {
+      const out: unknown = JSON.parse(details.output);
+      const list = Array.isArray(out) ? out
+        : Array.isArray((out as { answers?: unknown })?.answers) ? (out as { answers: unknown[] }).answers
+        : Array.isArray((out as { selections?: unknown })?.selections) ? (out as { selections: unknown[] }).selections
+        : [];
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const entry of list) {
+        if (!entry || typeof entry !== "object") continue;
+        const record = entry as Record<string, unknown>;
+        const qid = cleanPreviewText(record.questionId ?? record.id, 200);
+        if (qid) byId.set(qid, record);
+      }
+      for (const question of questions) {
+        const entry = byId.get(question.id);
+        if (!entry) continue;
+        const labels: string[] = [];
+        if (typeof entry.selectedLabel === "string" && entry.selectedLabel.trim()) labels.push(entry.selectedLabel.trim());
+        if (Array.isArray(entry.selectedLabels)) {
+          for (const label of entry.selectedLabels) {
+            if (typeof label === "string" && label.trim() && !labels.includes(label.trim())) labels.push(label.trim());
+          }
+        }
+        const known = new Set(question.options.map((option) => option.label));
+        const validLabels = question.options.length > 0 ? labels.filter((label) => known.has(label)) : labels;
+        const freeText = cleanPreviewText(entry.freeText ?? entry.text ?? entry.value, 500);
+        const note = cleanPreviewText(entry.note, 500);
+        if (validLabels.length > 0) question.answer = { labels: validLabels, freeText: null, note };
+        else if (freeText) question.answer = { labels: [], freeText, note };
+      }
+    } catch { /* keep the questions; the raw view still has the output */ }
+  }
+  return { questions, total: questions.length, answered: questions.filter((q) => q.answer !== null).length };
+}
+
 export function fileMetric(preview: FilePreview): string {
   const more = preview.partial ? "+" : "";
   if (preview.bytes >= 10 * 1024) return `${Math.round(preview.bytes / 1024)}${more} KB`;
   return `${preview.lines.length}${more} ${preview.lines.length === 1 && !preview.partial ? "line" : "lines"}`;
 }
 
-export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search" | "skill" | "todos";
+export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search" | "skill" | "todos" | "user-input";
 export type ToolPresentation = { adapterId: string; name: string; detail: string | null; view: ToolViewKind; showDuration: boolean; metric: string | null; command: string | null; emphasizeName: boolean };
 export type ToolContext = { label: string; details: ToolDetails | null; running: boolean; workspaceRoot: string };
 
@@ -215,6 +317,17 @@ const todosStat = (ctx: ToolContext) => {
   const preview = todosPreviewForTool(ctx.details);
   return preview ? `${preview.done}/${preview.total} done` : null;
 };
+function userInputDetail(args: Record<string, unknown> | null): string | null {
+  if (!Array.isArray(args?.questions)) return null;
+  const first = args.questions[0] as Record<string, unknown> | null;
+  return shortDetail(first?.header) ?? shortDetail(first?.question);
+}
+const userInputStat = (ctx: ToolContext) => {
+  const preview = userInputPreviewForTool(ctx.details);
+  if (!preview) return null;
+  if (preview.answered > 0) return `${preview.answered}/${preview.total} answered`;
+  return `${preview.total} ${preview.total === 1 ? "question" : "questions"}`;
+};
 const skillStat = (ctx: ToolContext) => {
   const preview = skillPreviewForTool(ctx.details);
   if (!preview) return null;
@@ -282,6 +395,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
   { id: "skill", tools: new Set(["read_skill"]), label: (ctx, args) => ({ name: ctx.running ? "Reading skill" : ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ? "Read skill failed" : "Read skill", detail: skillDetail(args) }), view: "skill", showDuration: false, metric: skillStat },
   { id: "todos", tools: new Set(["write_todos"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Updating plan" : failed ? "Plan update failed" : "Updated plan", detail: todosDetail(args) }), view: "todos", showDuration: false, metric: todosStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
+  { id: "user-input", tools: new Set(["request_user_input"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Asking you" : failed ? "Question failed" : "Asked you", detail: userInputDetail(args) }), view: "user-input", metric: userInputStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating pull request", "Created pull request", shortDetail(args?.title), ctx, failed), view: "plain" },

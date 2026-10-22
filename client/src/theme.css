@@ -172,22 +172,44 @@ button { color: inherit; }
 .status-dot.draft { background: var(--accent); }
 .session-rename-form { flex: 1 1 auto; min-width: 0; display: flex; }
 .session-rename-input { flex: 1 1 auto; min-width: 0; background: transparent; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text); font: 600 12px var(--sans); padding: 4px 7px; }
-.user-input-card { border: 1px solid var(--border); background: var(--surface); margin: 10px 13px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.user-input-question-block { display: flex; flex-direction: column; gap: 7px; }
-.user-input-header { margin: 0; font: 650 11px var(--mono); }
-.user-input-question { margin: 0; font-size: 14px; line-height: 1.5; }
+.user-input-card { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); margin: 10px 13px; padding: 14px; display: flex; flex-direction: column; gap: 12px; flex: 0 1 auto; min-height: 0; max-height: 100%; }
+.user-input-card > .eyebrow, .user-input-card > .form-error, .user-input-card > .user-input-actions { flex: 0 0 auto; }
+/* A card with several questions can be taller than the phone: the question
+   list scrolls inside the card while the header and Send/Skip stay put.
+   min-height: 0 is what lets the region actually shrink in the transcript's
+   flex column; overscroll containment keeps the gesture off the transcript. */
+.user-input-questions { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 12px; padding: 4px; }
+.user-input-question-block { border: 0; border-top: 1px solid var(--border); margin: 0; padding: 12px 0 0; min-width: 0; }
+.user-input-question-block:first-of-type { border-top: 0; padding-top: 0; }
+.user-input-question-block > * + * { margin-top: 7px; }
+.user-input-question { margin: 0; padding: 0; font-size: 14px; font-weight: 650; line-height: 1.5; }
+.user-input-count { color: var(--dim); font: 600 11px var(--mono); }
+.user-input-header { margin: 0; color: var(--dim); font: 650 11px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.user-input-hint { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.45; }
+.user-input-question-block.is-answered .user-input-hint { color: var(--text); }
 .user-input-options { display: flex; flex-direction: column; gap: 6px; }
-.user-input-option { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-size: 13px; line-height: 1.45; }
-.user-input-option input { margin-top: 2px; accent-color: var(--accent); }
+.user-input-option { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; font-size: 13px; line-height: 1.45; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 10px 12px; }
+.user-input-option:hover { border-color: var(--dim); }
+.user-input-option:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.user-input-option.is-selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.user-input-option.is-disabled { cursor: not-allowed; opacity: .55; }
+.user-input-option input { margin-top: 2px; accent-color: var(--accent); flex: 0 0 auto; }
 .user-input-option-label { font-weight: 650; }
 .user-input-option-desc { display: block; color: var(--dim); font-size: 12px; font-weight: 400; }
-.user-input-free { border: 1px solid var(--border); background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); border-radius: 0; width: 100%; padding: 8px 10px; }
+.user-input-other { display: block; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 10px 12px; }
+.user-input-other.is-selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.user-input-other-label { display: block; margin-bottom: 5px; color: var(--dim); font: 650 11px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.user-input-free { border: 0; background: transparent; color: var(--text); font: 13px/1.5 var(--sans); border-radius: 0; width: 100%; padding: 0; }
+.user-input-free:focus { outline: none; }
+.user-input-other:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 .user-input-free::placeholder { color: var(--dim); }
-.user-input-actions { display: flex; gap: 8px; align-items: center; }
-.user-input-submit { min-height: 36px; padding: 0 14px; border: 0; background: var(--text); color: var(--bg); cursor: pointer; font-weight: 650; }
-.user-input-submit:disabled { cursor: wait; opacity: .55; }
-.user-input-skip { min-height: 36px; padding: 0 12px; border: 0; background: transparent; color: var(--dim); cursor: pointer; font: 600 12px var(--sans); }
-.user-input-skip:hover { color: var(--text); }
+.user-input-actions { display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); padding-top: 12px; }
+.user-input-status { margin-right: auto; color: var(--dim); font: 600 11px var(--mono); }
+.user-input-submit { min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--text); color: var(--bg); cursor: pointer; font: 600 12px var(--sans); }
+.user-input-submit:hover:not(:disabled) { opacity: .85; }
+.user-input-submit:disabled { cursor: not-allowed; opacity: .45; }
+.user-input-skip { min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--dim); cursor: pointer; font: 600 12px var(--sans); }
+.user-input-skip:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
 /* Same size/weight as the project ("No Project") headers. */
 .session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 12px var(--sans); }
 .session-row.unread .session-title { font-weight: 700; }
@@ -558,6 +580,26 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .markdown-body th { background: var(--terminal-surface); font-weight: 600; }
 .markdown-inline-image { display: block; max-width: min(100%, 480px); height: auto; margin: 6px 0; border-radius: 8px; border: 1px solid var(--terminal-faint); background: var(--terminal-surface); }
 .tool-image-thumbnail { max-width: min(100%, 320px); }
+.tool-user-input { display: flex; flex-direction: column; gap: 10px; }
+.tool-user-input-question { border-top: 1px solid var(--border); padding-top: 9px; }
+.tool-user-input-question:first-of-type { border-top: 0; padding-top: 0; }
+.tool-user-input-heading { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.tool-user-input-header { font: 650 11px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.tool-user-input-mode { color: var(--terminal-dim); font: 600 10px var(--mono); white-space: nowrap; }
+.tool-user-input-text { margin: 4px 0 0; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.tool-user-input-options { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.tool-user-input-option { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.45; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; }
+.tool-user-input-option.is-selected { border-color: var(--border); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tool-user-input-marker { flex: 0 0 1em; color: var(--terminal-dim); text-align: center; }
+.tool-user-input-option.is-selected .tool-user-input-marker { color: var(--terminal-accent); }
+.tool-user-input-option-body { min-width: 0; }
+.tool-user-input-option-label { font-weight: 600; }
+.tool-user-input-answer-tag { margin-left: 7px; color: var(--terminal-accent); font: 650 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.tool-user-input-option-desc { display: block; color: var(--terminal-dim); font-size: 12px; }
+.tool-user-input-preview { display: block; margin-top: 5px; border-top: 1px solid var(--border); padding-top: 5px; color: var(--terminal-dim); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-user-input-answer { margin-top: 7px; border-top: 1px solid var(--border); padding-top: 6px; font-size: 12.5px; }
+.tool-user-input-answer p { margin: 3px 0 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-user-input-note { margin: 5px 0 0; color: var(--terminal-dim); font-size: 12px; }
 .tool-todos-list { display: flex; flex-direction: column; gap: 3px; }
 .tool-todos-item { display: flex; gap: 8px; align-items: baseline; font: 13px/1.5 var(--sans); }
 .tool-todos-glyph { flex: 0 0 1em; text-align: center; color: var(--terminal-dim); }
