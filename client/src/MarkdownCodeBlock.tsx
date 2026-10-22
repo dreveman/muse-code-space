@@ -61,7 +61,7 @@ export const MarkdownCodeBlock = memo(function MarkdownCodeBlock({ code, languag
   };
   const copyButton = (
     <button type="button" className="markdown-code-copy"
-      title={copied ? "Copied" : "Copy"}
+      title={copied ? "Copied" : "Copy code"}
       aria-label={copied ? "Copied" : "Copy code"}
       onClick={() => { void copyCode(); }}>
       {copied ? <CopiedCodeIcon /> : <CopyCodeIcon />}
