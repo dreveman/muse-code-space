@@ -891,6 +891,7 @@ const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> =
   { section: "Turn behaviour", trigger: "ask", does: "Ask a user-input question the UI must answer before the turn ends, then reply with your pick." },
   { section: "Turn behaviour", trigger: "workflow", does: "Launch a fake workflow: the turn ends, two child agents progress in the background, then a host-started turn delivers the combined answer." },
   { section: "Turn behaviour", trigger: "markdown-table", does: "Reply with a GFM pipe table (left/centre/right alignment, inline formatting, escaped pipe, pipe in a code span) followed by a pipe-containing paragraph that must stay plain text." },
+  { section: "Turn behaviour", trigger: "code-fence / markdown-code", does: "Reply with fenced code blocks: `bash`, `ts`, and `python` (syntax-highlighted), an unsupported tag and an untagged fence (both stay plain)." },
   { section: "Formatted tool output", trigger: "read-tool", does: "`read_file` of test.rs — plain numbered output (ALPHA/BETA/GAMMA)." },
   { section: "Formatted tool output", trigger: "read-ts-tool", does: "`read_file` of alpha.ts — numbered output with TypeScript syntax highlighting." },
   { section: "Formatted tool output", trigger: "read-md-tool", does: "`read_file` of notes.md — Markdown has no highlighting grammar, so the numbered file view stays plain." },
@@ -1098,6 +1099,7 @@ async function runTurn(session: Session, text: string) {
     const stopPreviewTool = /\bstop-preview\b/i.test(text);
     const showImageTool = /\b(?:show-image|image-reply|test-image)\b/i.test(text);
     const markdownTable = /\bmarkdown-table\b/i.test(text);
+    const markdownCode = /\b(?:code-fence|markdown-code)\b/i.test(text);
     if (showImageTool && session.workspaceRoot) {
       mkdirSync(session.workspaceRoot, { recursive: true });
       const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" width="560" height="220">
@@ -1349,6 +1351,50 @@ async function runTurn(session: Session, text: string) {
               "| mystery | None (generic) | [docs](https://example.com) |\n\n" +
               "A paragraph with a | pipe in it stays plain text, because the next line is not a delimiter row.\n" +
               "This line is still the same paragraph.",
+          },
+        }),
+      );
+      steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
+    } else if (markdownCode) {
+      steps.push(() =>
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text: [
+              "Fenced code blocks with a supported language tag are syntax-highlighted. A `bash` block:",
+              "",
+              "```bash",
+              'echo "hello"',
+              "pwd",
+              "```",
+              "",
+              "A `ts` block:",
+              "",
+              "```ts",
+              "const answer: number = 42;",
+              "console.log(answer);",
+              "```",
+              "",
+              "A `python` block:",
+              "",
+              "```python",
+              "def greet(name):",
+              '    return f"hello {name}"',
+              "```",
+              "",
+              "An unsupported tag stays a plain block:",
+              "",
+              "```made-up-lang",
+              "this is not highlighted",
+              "```",
+              "",
+              "And an untagged fence stays plain too:",
+              "",
+              "```",
+              "plain code, no language",
+              "```",
+            ].join("\n"),
           },
         }),
       );

@@ -83,7 +83,7 @@ function subscribeTheme(listener: (theme: CodeTheme) => void): () => void {
   };
 }
 
-function useResolvedTheme(): CodeTheme {
+export function useResolvedTheme(): CodeTheme {
   const [theme, setTheme] = useState(readDocumentTheme);
   useEffect(() => subscribeTheme(setTheme), []);
   return theme;
