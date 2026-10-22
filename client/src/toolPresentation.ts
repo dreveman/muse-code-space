@@ -67,13 +67,48 @@ export function imagePreviewForTool(details: ToolDetails | null): ImagePreview |
   const ext = path.split(/[\\/]/).at(-1)?.split(".").at(-1)?.toLowerCase() ?? "";
   return IMAGE_EXTENSIONS.has(ext) ? { path } : null;
 }
+export type SkillPreview = { name: string; scope: string | null; description: string | null; body: string; lines: number; bytes: number };
+// A loaded skill is a Markdown document the agent is about to follow, so a
+// completed read_skill gets a rendered-Markdown view (see ToolEvent), never
+// a numbered file view. Parsing fails closed: no usable name in the args,
+// or no body in the output, keeps the generic raw view.
+export function skillPreviewForTool(details: ToolDetails | null): SkillPreview | null {
+  if (!details || details.status !== "completed" || details.failureReason) return null;
+  if (details.tool?.toLowerCase() !== "read_skill") return null;
+  const output = details.output;
+  if (!output || output.length > MAX_FILE_PREVIEW_BYTES) return null;
+  if (!details.args || details.args.length > 200_000) return null;
+  let rawName: unknown;
+  try { rawName = (JSON.parse(details.args) as { name?: unknown }).name; } catch { return null; }
+  if (typeof rawName !== "string" || !rawName.trim() || rawName.length > 200 || /[\x00-\x1f\x7f]/.test(rawName)) return null;
+  const argName = rawName.trim();
+  let body = output.replace(/\r\n/g, "\n");
+  let name = argName.split(/[:\\/]/).at(-1) ?? argName;
+  let description: string | null = null;
+  const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(body);
+  if (frontmatter) {
+    for (const row of frontmatter[1]!.split("\n")) {
+      const field = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(row);
+      if (!field) continue;
+      const value = field[2]!.trim().replace(/^["']|["']$/g, "");
+      if (field[1] === "name" && value) name = value;
+      if (field[1] === "description" && value) description = value.slice(0, 300);
+    }
+    body = body.slice(frontmatter[0].length).replace(/^\n+/, "");
+  }
+  if (!body.trim()) return null;
+  const scope = argName.includes(":") ? argName.split(":")[0]! : null;
+  const lines = body.split("\n").length;
+  if (lines > MAX_FILE_PREVIEW_LINES) return null;
+  return { name, scope, description, body, lines, bytes: new TextEncoder().encode(body).length };
+}
 export function fileMetric(preview: FilePreview): string {
   const more = preview.partial ? "+" : "";
   if (preview.bytes >= 10 * 1024) return `${Math.round(preview.bytes / 1024)}${more} KB`;
   return `${preview.lines.length}${more} ${preview.lines.length === 1 && !preview.partial ? "line" : "lines"}`;
 }
 
-export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search";
+export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search" | "skill";
 export type ToolPresentation = { adapterId: string; name: string; detail: string | null; view: ToolViewKind; showDuration: boolean; metric: string | null; command: string | null; emphasizeName: boolean };
 export type ToolContext = { label: string; details: ToolDetails | null; running: boolean; workspaceRoot: string };
 
@@ -129,6 +164,18 @@ function searchPattern(value: unknown): string | null {
   if (typeof value !== "string" || !value || /[\x00-\x1f\x7f]/.test(value)) return null;
   return `“${value.length > 90 ? `${value.slice(0, 87)}…` : value}”`;
 }
+function skillDetail(args: Record<string, unknown> | null): string | null {
+  const name = args?.name;
+  if (typeof name !== "string") return null;
+  const text = name.trim();
+  return text && text.length <= 120 && !/[\x00-\x1f\x7f]/.test(text) ? text : null;
+}
+const skillStat = (ctx: ToolContext) => {
+  const preview = skillPreviewForTool(ctx.details);
+  if (!preview) return null;
+  if (preview.bytes >= 10 * 1024) return `${Math.round(preview.bytes / 1024)} KB`;
+  return `${preview.lines} ${preview.lines === 1 ? "line" : "lines"}`;
+};
 function messageFailed(ctx: ToolContext): boolean {
   return !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ||
     /^Not delivered:/i.test(ctx.details?.output?.trim() ?? ""));
@@ -188,6 +235,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "write", tools: new Set(["write_file"]), label: (ctx, args) => actionLabel("Writing", "Wrote", "Write failed", ctx, args), view: "file", showDuration: false, metric: fileStat },
   { id: "edit", tools: new Set(["edit_file", "edit"]), label: (ctx, args) => actionLabel("Editing", "Edited", "Edit failed", ctx, args), view: "diff", showDuration: false },
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
+  { id: "skill", tools: new Set(["read_skill"]), label: (ctx, args) => ({ name: ctx.running ? "Reading skill" : ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ? "Read skill failed" : "Read skill", detail: skillDetail(args) }), view: "skill", showDuration: false, metric: skillStat },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating pull request", "Created pull request", shortDetail(args?.title), ctx, failed), view: "plain" },
