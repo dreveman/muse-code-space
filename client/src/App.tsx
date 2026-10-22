@@ -47,7 +47,7 @@ import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 import { contextUsageLabel } from "./contextUsage";
 import { hasStoredOutputBeyondView, toolTranscriptLines, TOOL_PREVIEW_LINES } from "./toolTranscript";
-import { filePreviewForTool, imagePreviewForTool, toolPresentation } from "./toolPresentation";
+import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, toolPresentation } from "./toolPresentation";
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
@@ -705,6 +705,8 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
   const presentation = toolPresentation({ label: text, details: displayDetails, running, workspaceRoot });
   const filePreview = presentation.view === "file" && !showRawToolOutput ? filePreviewForTool(displayDetails) : null;
   const imagePreview = presentation.view === "file" && !showRawToolOutput && !filePreview ? imagePreviewForTool(displayDetails) : null;
+  const skillPreview = presentation.view === "skill" && !showRawToolOutput ? skillPreviewForTool(displayDetails) : null;
+  const skillBody = skillPreview ? (showAll ? skillPreview.body : skillPreview.body.split("\n").slice(0, TOOL_PREVIEW_LINES).join("\n")) : null;
   const searchPreview = presentation.view === "search" && !showRawToolOutput ? searchPreviewForTool(displayDetails) : null;
   const agentList = presentation.view === "agent-list" && !showRawToolOutput ? parseAgentListOutput(fullOutput ?? details?.output ?? null) : null;
   const lines = toolTranscriptLines(details, running, fullOutput, showRawToolOutput);
@@ -728,6 +730,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
     (isFormattedOutputOnlyTool ||
       (running &&
         (presentation.adapterId === "read" ||
+          presentation.adapterId === "skill" ||
           presentation.adapterId === "search" ||
           presentation.adapterId === "agents")));
   const showExpandedPanel = expanded && !waitingForFormattedOutput;
@@ -882,6 +885,22 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
         <div ref={patchPanelRef} id={panelId} className={`tool-transcript${!showRawToolOutput && (diffDoc || filePreview || imagePreview || searchPreview) ? " has-code-view" : ""}`}>
           {filePreview && <ToolFileView preview={filePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
           {imagePreview && <ToolImageView sessionId={sessionId} preview={imagePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
+          {skillPreview && skillBody !== null && (
+            <div className="tool-skill">
+              <div className="tool-diff-caption">
+                {skillPreview.name}
+                {skillPreview.scope ? ` · ${skillPreview.scope}` : ""}
+                {skillPreview.description ? ` — ${skillPreview.description}` : ""}
+              </div>
+              <Markdown text={skillBody} />
+              {skillPreview.lines > TOOL_PREVIEW_LINES && (
+                <button type="button" className="tool-more" disabled={loadingFull} onClick={() => showAll ? setShowAll(false) : void showEverything()}>
+                  {loadingFull ? "Loading full output…" : showAll ? "Show fewer" : `Show all ${skillPreview.lines} lines`}
+                </button>
+              )}
+              {fullError && <p className="tool-output-error" role="alert">{fullError}</p>}
+            </div>
+          )}
           {searchPreview && <ToolSearchView preview={searchPreview} />}
           {agentList && <AgentListToolView list={agentList} />}
           {presentation.adapterId === "edit" && !showRawToolOutput && diffDoc && (
@@ -898,7 +917,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
               {patchError && <p className="tool-output-error" role="alert">{patchError} <button type="button" className="tool-more" onClick={() => setPatchError(null)}>Retry diff</button></p>}
             </>
           )}
-          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !searchPreview && !agentList)) && (
+          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !skillPreview && !searchPreview && !agentList)) && (
             presentation.view === "command" && !showRawToolOutput && presentation.command !== null ? (
               <pre className="tool-command">{presentation.command}</pre>
             ) : isFormattedOutputOnlyTool && !showRawToolOutput ? (

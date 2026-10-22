@@ -288,6 +288,11 @@ How it maps to the real host:
   shows a thumbnail loaded from the workspace via `readSessionImage` (the
   same loader and cache as Markdown images), and clicking it opens the image
   viewer tab. SVG reads return source text and keep the numbered view.
+  A completed `read_skill` gets a skill view instead: the expanded row
+  shows the parsed name, scope and frontmatter description, then renders
+  the skill body as Markdown (12-line preview, **Show all** for the rest)
+  with a line/KB metric instead of a duration. The fake pilot's
+  `read-skill-tool` prompt exercises it with a bundled demo skill.
   Native Muse `search` has its own Searching→Searched row: a bounded parser
   groups verified `path:line:match` and `path-line-context` rows by file,
   counts only matches (not context), and handles empty results, files-only,
