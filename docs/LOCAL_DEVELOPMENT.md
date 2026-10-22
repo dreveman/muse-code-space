@@ -293,6 +293,12 @@ How it maps to the real host:
   the skill body as Markdown (12-line preview, **Show all** for the rest)
   with a line/KB metric instead of a duration. The fake pilot's
   `read-skill-tool` prompt exercises it with a bundled demo skill.
+  A `write_todos` call renders its args as a checklist: completed items
+  struck through, the in-progress item highlighted as the row detail and
+  active step, a `done/total` metric instead of a duration. It renders
+  from args even while running, and any malformed item fails closed to
+  the raw view. The fake pilot's `write-todos-tool` prompt covers every
+  status.
   Native Muse `search` has its own Searching→Searched row: a bounded parser
   groups verified `path:line:match` and `path-line-context` rows by file,
   counts only matches (not context), and handles empty results, files-only,

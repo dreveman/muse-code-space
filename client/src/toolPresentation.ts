@@ -102,13 +102,45 @@ export function skillPreviewForTool(details: ToolDetails | null): SkillPreview |
   if (lines > MAX_FILE_PREVIEW_LINES) return null;
   return { name, scope, description, body, lines, bytes: new TextEncoder().encode(body).length };
 }
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TodoItem = { text: string; status: TodoStatus };
+export type TodosPreview = { items: TodoItem[]; total: number; done: number; active: TodoItem | null };
+const TODO_STATUSES = new Set<string>(["pending", "in_progress", "completed", "cancelled"]);
+// write_todos replaces the whole plan on every call, and its args are the
+// state (like write_file's content) — so the checklist renders from the
+// parsed args, including while the call is still running. Any malformed
+// item fails the whole preview closed to the generic raw view.
+export function todosPreviewForTool(details: ToolDetails | null): TodosPreview | null {
+  if (!details || details.failureReason) return null;
+  if (details.tool?.toLowerCase() !== "write_todos") return null;
+  const status = (details.status ?? "").toLowerCase();
+  if (status !== "completed" && status !== "inprogress") return null;
+  if (!details.args || details.args.length > 200_000) return null;
+  let todos: unknown;
+  try { todos = (JSON.parse(details.args) as { todos?: unknown }).todos; } catch { return null; }
+  if (!Array.isArray(todos) || todos.length === 0 || todos.length > 200) return null;
+  const items: TodoItem[] = [];
+  for (const raw of todos) {
+    if (!raw || typeof raw !== "object") return null;
+    const { text, status: itemStatus } = raw as { text?: unknown; status?: unknown };
+    if (typeof text !== "string" || !text.trim() || text.length > 500 || /[\x00-\x1f\x7f]/.test(text)) return null;
+    if (typeof itemStatus !== "string" || !TODO_STATUSES.has(itemStatus)) return null;
+    items.push({ text: text.trim(), status: itemStatus as TodoStatus });
+  }
+  return {
+    items,
+    total: items.length,
+    done: items.filter((item) => item.status === "completed").length,
+    active: items.find((item) => item.status === "in_progress") ?? null,
+  };
+}
 export function fileMetric(preview: FilePreview): string {
   const more = preview.partial ? "+" : "";
   if (preview.bytes >= 10 * 1024) return `${Math.round(preview.bytes / 1024)}${more} KB`;
   return `${preview.lines.length}${more} ${preview.lines.length === 1 && !preview.partial ? "line" : "lines"}`;
 }
 
-export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search" | "skill";
+export type ToolViewKind = "plain" | "json" | "diff" | "file" | "command" | "agent-list" | "search" | "skill" | "todos";
 export type ToolPresentation = { adapterId: string; name: string; detail: string | null; view: ToolViewKind; showDuration: boolean; metric: string | null; command: string | null; emphasizeName: boolean };
 export type ToolContext = { label: string; details: ToolDetails | null; running: boolean; workspaceRoot: string };
 
@@ -170,6 +202,19 @@ function skillDetail(args: Record<string, unknown> | null): string | null {
   const text = name.trim();
   return text && text.length <= 120 && !/[\x00-\x1f\x7f]/.test(text) ? text : null;
 }
+function todosDetail(args: Record<string, unknown> | null): string | null {
+  if (!Array.isArray(args?.todos)) return null;
+  for (const raw of args.todos) {
+    if (raw && typeof raw === "object" && (raw as { status?: unknown }).status === "in_progress") {
+      return shortDetail((raw as { text?: unknown }).text);
+    }
+  }
+  return null;
+}
+const todosStat = (ctx: ToolContext) => {
+  const preview = todosPreviewForTool(ctx.details);
+  return preview ? `${preview.done}/${preview.total} done` : null;
+};
 const skillStat = (ctx: ToolContext) => {
   const preview = skillPreviewForTool(ctx.details);
   if (!preview) return null;
@@ -236,6 +281,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "edit", tools: new Set(["edit_file", "edit"]), label: (ctx, args) => actionLabel("Editing", "Edited", "Edit failed", ctx, args), view: "diff", showDuration: false },
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
   { id: "skill", tools: new Set(["read_skill"]), label: (ctx, args) => ({ name: ctx.running ? "Reading skill" : ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ? "Read skill failed" : "Read skill", detail: skillDetail(args) }), view: "skill", showDuration: false, metric: skillStat },
+  { id: "todos", tools: new Set(["write_todos"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Updating plan" : failed ? "Plan update failed" : "Updated plan", detail: todosDetail(args) }), view: "todos", showDuration: false, metric: todosStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating pull request", "Created pull request", shortDetail(args?.title), ctx, failed), view: "plain" },

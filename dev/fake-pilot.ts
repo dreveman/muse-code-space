@@ -888,6 +888,7 @@ const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> =
   { section: "Formatted tool output", trigger: "long-tool / long tool", does: "Tool with 18 visible and 35 stored output lines — truncated preview; **Show all** pages the full stored output." },
   { section: "Formatted tool output", trigger: "list-agents-tool", does: "`mcp__code_space__list_agents` call listing you, other agents, and the Muse assistant." },
   { section: "Formatted tool output", trigger: "read-skill-tool", does: "`read_skill` of the bundled demo-review skill — the expanded row renders the skill body as Markdown with a name/scope/description summary and a line-count metric." },
+  { section: "Formatted tool output", trigger: "write-todos-tool", does: "`write_todos` with a five-item plan covering every status — the expanded row renders a checklist (done struck through, active highlighted) with a 2/5 done metric and the active item as the row detail." },
   { section: "Messages, PRs & preview", trigger: "receive-message", does: "Incoming message **From Pip** (From Juno when you are Pip). Scripted transcript event; no sender task needed." },
   { section: "Messages, PRs & preview", trigger: "send-message-tool", does: "Outgoing **To Pip** message — the matching successful send_message tool row is hidden in normal view (visible with Show raw tool output)." },
   { section: "Messages, PRs & preview", trigger: "send-message-fail", does: "Failed send_message (\"Not delivered: offline\") — the tool row stays visible." },
@@ -907,7 +908,7 @@ function fakeTriggerHelpText(): string {
     `### ${section}\n\n` +
     FAKE_TRIGGERS.filter((t) => t.section === section).map((t) => `- \`${t.trigger}\` — ${t.does}`).join("\n"),
   ).join("\n\n");
-  return `## Fake pilot triggers\n\nSend any of these as (or in) a prompt. Keywords match as whole words anywhere in the prompt, so triggers combine — e.g. \`thinking long-tool\`, or \`slow search-tool\`. If several tool triggers match, only the first tool in this order is shown: edit-diff → read → write → monitor-pr → create-pr → start-preview → list-agents → send-message → search → read-skill → json-tool → bash (default).\n\n${body}\n\nNot a prompt trigger: picking a repo slug containing \`fail\` in the composer (e.g. \`dreveman/fail-clone\`) simulates a clone failure when a session starts.`;
+  return `## Fake pilot triggers\n\nSend any of these as (or in) a prompt. Keywords match as whole words anywhere in the prompt, so triggers combine — e.g. \`thinking long-tool\`, or \`slow search-tool\`. If several tool triggers match, only the first tool in this order is shown: edit-diff → read → write → monitor-pr → create-pr → start-preview → list-agents → send-message → search → read-skill → write-todos → json-tool → bash (default).\n\n${body}\n\nNot a prompt trigger: picking a repo slug containing \`fail\` in the composer (e.g. \`dreveman/fail-clone\`) simulates a clone failure when a session starts.`;
 }
 
 async function runTurn(session: Session, text: string) {
@@ -1039,6 +1040,16 @@ async function runTurn(session: Session, text: string) {
     const writeTool = /\bwrite-(?:ts-)?tool\b/i.test(text);
     const writeTsTool = /\bwrite-ts-tool\b/i.test(text);
     const tsWriteContent = "const x: number = 3;\n";
+    const writeTodosTool = /\bwrite-todos-tool\b/i.test(text);
+    const todosArgs = {
+      todos: [
+        { text: "Inspect the current implementation", status: "completed" },
+        { text: "Add the checklist formatter", status: "completed" },
+        { text: "Verify in the preview tab", status: "in_progress" },
+        { text: "Commit the change", status: "pending" },
+        { text: "Write release notes", status: "cancelled" },
+      ],
+    };
     const readSkillTool = /\bread-skill-tool\b/i.test(text);
     const skillOutput = [
       "---",
@@ -1167,6 +1178,7 @@ async function runTurn(session: Session, text: string) {
       )
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
       : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
+      : writeTodosTool ? "Plan updated: 5 items, 2 completed, 1 in progress."
       : readSkillTool ? skillOutput
       : searchTool ? (searchBad ? "future search format" : searchEmpty ? "" : "alpha.txt-1-ALPHA before\nalpha.txt:2:MCS_SEARCH_PROBE first\nalpha.txt-3-ALPHA after\nbeta.txt-1-BETA before\nbeta.txt:2:MCS_SEARCH_PROBE second\nbeta.txt-3-BETA after")
       : jsonTool ? JSON.stringify({ ok: true, files: ["test.rs"], count: 2, nested: { ready: false } })
@@ -1176,8 +1188,8 @@ async function runTurn(session: Session, text: string) {
     if (editDiff) toolOutputs.set(patchRefId, patchJson);
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
-      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : startPreviewMatch ? "mcp__code_space__preview_screenshot" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : readSkillTool ? "read_skill" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readPath } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : readSkillTool ? { name: "bundled:demo-review" } : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : startPreviewMatch ? "mcp__code_space__preview_screenshot" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : readSkillTool ? "read_skill" : writeTodosTool ? "write_todos" : jsonTool ? "mystery" : "bash", status,
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readPath } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : readSkillTool ? { name: "bundled:demo-review" } : writeTodosTool ? todosArgs : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },

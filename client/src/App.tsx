@@ -47,13 +47,14 @@ import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
 import { contextUsageLabel } from "./contextUsage";
 import { hasStoredOutputBeyondView, toolTranscriptLines, TOOL_PREVIEW_LINES } from "./toolTranscript";
-import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, toolPresentation } from "./toolPresentation";
+import { filePreviewForTool, imagePreviewForTool, skillPreviewForTool, todosPreviewForTool, toolPresentation } from "./toolPresentation";
 import { parseStructuredPatch, parseUnifiedDiff, PATCH_LIMIT_BYTES, type DiffDocument } from "./toolDiff";
 import { formatJsonTranscript, tokenizeJson } from "./jsonHighlight";
 import { ToolDiff } from "./RenderedToolDiff";
 import { observeElementIntersection } from "./CodeFileLines";
 import { ToolFileView } from "./RenderedToolFile";
 import { ToolImageView } from "./RenderedToolImage";
+import { ToolTodosView } from "./RenderedToolTodos";
 import { ToolSearchView } from "./ToolSearchView";
 import { searchPreviewForTool } from "./searchOutput";
 import { parseAgentListOutput, type AgentListOutput } from "./agentListOutput";
@@ -706,6 +707,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
   const filePreview = presentation.view === "file" && !showRawToolOutput ? filePreviewForTool(displayDetails) : null;
   const imagePreview = presentation.view === "file" && !showRawToolOutput && !filePreview ? imagePreviewForTool(displayDetails) : null;
   const skillPreview = presentation.view === "skill" && !showRawToolOutput ? skillPreviewForTool(displayDetails) : null;
+  const todosPreview = presentation.view === "todos" && !showRawToolOutput ? todosPreviewForTool(displayDetails) : null;
   const skillBody = skillPreview ? (showAll ? skillPreview.body : skillPreview.body.split("\n").slice(0, TOOL_PREVIEW_LINES).join("\n")) : null;
   const searchPreview = presentation.view === "search" && !showRawToolOutput ? searchPreviewForTool(displayDetails) : null;
   const agentList = presentation.view === "agent-list" && !showRawToolOutput ? parseAgentListOutput(fullOutput ?? details?.output ?? null) : null;
@@ -885,6 +887,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
         <div ref={patchPanelRef} id={panelId} className={`tool-transcript${!showRawToolOutput && (diffDoc || filePreview || imagePreview || searchPreview) ? " has-code-view" : ""}`}>
           {filePreview && <ToolFileView preview={filePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
           {imagePreview && <ToolImageView sessionId={sessionId} preview={imagePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
+          {todosPreview && <ToolTodosView preview={todosPreview} />}
           {skillPreview && skillBody !== null && (
             <div className="tool-skill">
               <div className="tool-diff-caption">
@@ -917,7 +920,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
               {patchError && <p className="tool-output-error" role="alert">{patchError} <button type="button" className="tool-more" onClick={() => setPatchError(null)}>Retry diff</button></p>}
             </>
           )}
-          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !skillPreview && !searchPreview && !agentList)) && (
+          {(presentation.adapterId !== "edit" || showRawToolOutput || (!diffDoc && !patchAvailable)) && (showRawToolOutput || (!filePreview && !imagePreview && !skillPreview && !todosPreview && !searchPreview && !agentList)) && (
             presentation.view === "command" && !showRawToolOutput && presentation.command !== null ? (
               <pre className="tool-command">{presentation.command}</pre>
             ) : isFormattedOutputOnlyTool && !showRawToolOutput ? (
