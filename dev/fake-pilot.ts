@@ -133,6 +133,14 @@ let fakeGitIdentity: { name: string; email: string } | null =
   process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME !== undefined || process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL !== undefined
     ? validGitAuthor({ name: process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME ?? "", email: process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL ?? "" })
     : { name: "Fake Dev", email: "fake-dev@example.com" };
+// Simulated GitHub setup progress for the repo picker's setup dialog.
+// Connected mode (the default) starts complete; disconnected mode starts
+// with nothing done — including no global author, unless one was explicitly
+// provided with the FAKE_GIT_* env vars — so every step can be exercised.
+const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED };
+if (!GITHUB_ENABLED && process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME === undefined && process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL === undefined) {
+  fakeGitIdentity = null;
+}
 function validGitAuthor(value: unknown): { name: string; email: string } | null {
   if (!value || typeof value !== "object") return null;
   const name = typeof (value as { name?: unknown }).name === "string" ? (value as { name: string }).name.trim() : "";
@@ -1677,7 +1685,7 @@ Bun.serve({
         : { active: false, repo: null, phase: null, percent: null, transferred: null });
     }
     if (path === "/repos" && req.method === "GET") {
-      if (!GITHUB_ENABLED) {
+      if (!githubSetup.brokerDone) {
         return json(200, { enabled: false, repos: [] });
       }
       const fakeAvatar = (label: string, bg: string) =>
@@ -1792,6 +1800,32 @@ Bun.serve({
       return json(200, { sessionId: session.id, turnId, modelId: session.modelId, name: session.name ?? null });
     }
 
+    if (path === "/github-setup") {
+      if (req.method === "GET") return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+      if (req.method === "POST") {
+        if (body.step === "broker") {
+          githubSetup.brokerDone = true;
+          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+        }
+        if (body.step === "app") {
+          const appId = typeof body.appId === "string" ? body.appId.trim() : "";
+          const installationId = typeof body.installationId === "string" ? body.installationId.trim() : "";
+          const privateKey = typeof body.privateKey === "string" ? body.privateKey : "";
+          if (!/^\d+$/.test(appId) || !/^\d+$/.test(installationId)) {
+            return json(400, { error: "App ID and installation ID must be numeric.", code: "invalid_github_app" });
+          }
+          if (!privateKey.includes("-----BEGIN") || !privateKey.includes("PRIVATE KEY-----") || !privateKey.includes("-----END")) {
+            return json(400, { error: "That did not look like a PEM private key.", code: "invalid_github_app" });
+          }
+          // Simulated validation succeeds; a real App credential also
+          // provisions the broker, so both steps complete.
+          githubSetup.appDone = true;
+          githubSetup.brokerDone = true;
+          return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone });
+        }
+        return json(400, { error: "Unknown setup step.", code: "invalid_github_setup_step" });
+      }
+    }
     // Agent-to-agent messages, like the real pilot (deliverAgentMessage).
     if (path === "/git-identity") {
       if (req.method === "GET") return json(200, { identity: fakeGitIdentity });

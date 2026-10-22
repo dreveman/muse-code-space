@@ -41,8 +41,8 @@ test("actions support the global identity and a create-time author override", ()
 
 test("the repo select dialog has no author fields; the manage dialog has a single Author row", () => {
   const picker = readFileSync(new URL("./RepoPicker.tsx", import.meta.url), "utf8");
-  const pickMenu = picker.slice(picker.indexOf('{open && mode === "pick"'));
-  assert.ok(!pickMenu.includes("repo-author") && !pickMenu.includes("Commit author"), "pick dialog is author-free");
+  const pickMenu = picker.slice(picker.indexOf('{open && mode === "pick" && !showGithubSetup'));
+  assert.ok(!pickMenu.includes("repo-author") && !pickMenu.includes("Commit author"), "the repo list itself has no author fields (the setup dialog's Commit author step is separate)");
   assert.ok(picker.includes('<span className="repo-manage-field-label">Author</span>'), "manage dialog shows one Author row with Workspace/Remote");
   assert.ok(!picker.includes("<strong>No repo</strong>"), "repo select has no way back to a blank workspace");
   assert.ok(!picker.includes("(global)"), "Author row shows just the current user and email");

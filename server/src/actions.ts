@@ -1117,6 +1117,69 @@ export const Actions = {
     },
   }),
 
+  // GitHub setup progress (broker + GitHub App steps) for the repo
+  // picker's setup dialog. The Commit author step rides get/setGitIdentity.
+  getGithubSetup: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      broker_done: z.boolean(),
+      app_done: z.boolean(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/github-setup", { method: "GET" },
+          z.object({ brokerDone: z.boolean(), appDone: z.boolean() }));
+        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, error: null };
+      } catch (error) {
+        return { ok: false, broker_done: false, app_done: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  performGithubSetupStep: defineAction({
+    request: z.object({
+      step: z.enum(["broker", "app"]),
+      app_id: z.string().trim().max(32).optional(),
+      installation_id: z.string().trim().max(32).optional(),
+      private_key: z.string().max(16_000).optional(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      broker_done: z.boolean(),
+      app_done: z.boolean(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, broker_done: false, app_done: false, error: denied };
+      if (args.step === "app") {
+        if (!/^\d+$/.test(args.app_id ?? "") || !/^\d+$/.test(args.installation_id ?? "")) {
+          return { ok: false, broker_done: false, app_done: false, error: "App ID and installation ID must be numeric." };
+        }
+        const key = args.private_key ?? "";
+        if (!key.includes("-----BEGIN") || !key.includes("PRIVATE KEY-----") || !key.includes("-----END")) {
+          return { ok: false, broker_done: false, app_done: false, error: "Paste the App private key (.pem)." };
+        }
+      }
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/github-setup",
+          { method: "POST", body: JSON.stringify({ step: args.step, appId: args.app_id, installationId: args.installation_id, privateKey: args.private_key }) },
+          z.object({ brokerDone: z.boolean(), appDone: z.boolean() }));
+        ctx.invalidateQueries({ queryKey: ["github-setup"] });
+        ctx.invalidateQueries({ queryKey: ["github-repos"] });
+        return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, error: null };
+      } catch (error) {
+        return { ok: false, broker_done: false, app_done: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
   // Per-checkout commit author for an already-started session (the repo
   // dropdown in the conversation). Pilot applies it as repo-local git
   // config in the session workspace; clearing falls back to the global

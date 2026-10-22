@@ -2017,6 +2017,43 @@ export function App() {
   const globalGitIdentity = gitIdentityQuery.data?.name && gitIdentityQuery.data?.email
     ? { name: gitIdentityQuery.data.name, email: gitIdentityQuery.data.email }
     : null;
+  // GitHub setup progress for the repo picker's setup dialog (the Commit
+  // author step derives from the identity above).
+  const githubSetupQuery = useQuery({
+    queryKey: ["github-setup"],
+    queryFn: () => api.getGithubSetup({}),
+    enabled: draft !== null || selectedCompanionId !== null,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const githubSetup = githubSetupQuery.data?.ok
+    ? { brokerDone: githubSetupQuery.data.broker_done, appDone: githubSetupQuery.data.app_done }
+    : null;
+  const performGithubSetupStep = useCallback(async (
+    step: "broker" | "app",
+    payload?: { appId: string; installationId: string; privateKey: string },
+  ): Promise<{ ok: boolean; error: string | null }> => {
+    const result = await api.performGithubSetupStep({
+      step,
+      app_id: payload?.appId,
+      installation_id: payload?.installationId,
+      private_key: payload?.privateKey,
+    });
+    if (result.ok) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["github-setup"] }, { cancelRefetch: false }),
+        queryClient.invalidateQueries({ queryKey: ["github-repos"] }, { cancelRefetch: false }),
+      ]);
+    }
+    return { ok: result.ok, error: result.error };
+  }, [queryClient]);
+  const saveGlobalGitAuthor = useCallback(async (identity: { name: string; email: string }) => {
+    const result = await api.setGitIdentity({ name: identity.name, email: identity.email });
+    if (result.ok) {
+      await queryClient.invalidateQueries({ queryKey: ["git-identity"] }, { cancelRefetch: false });
+    }
+    return result.ok;
+  }, [queryClient]);
   const cloningSessionId = startingDraft?.draft.repoSlug
     ? startingDraft.draft.id
     : null;
@@ -3983,6 +4020,9 @@ export function App() {
         phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
         onChoose={chooseDraftRepo}
         globalGitIdentity={globalGitIdentity}
+        githubSetup={githubSetup}
+        onPerformGithubSetupStep={performGithubSetupStep}
+        onSaveGlobalGitAuthor={saveGlobalGitAuthor}
       />
       <div className={`terminal-composer${activeMention ? " menu-open" : ""}`}>
         <ComposerAttachmentStrip
