@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { CodeFileLines } from "./CodeFileLines";
+import { copyTextToClipboard } from "./clipboard";
 import { ImageTab, isWorkspaceImagePath } from "./ImageTab";
 
 function RefreshIcon() {
@@ -57,12 +58,13 @@ export function FileTab({ sessionId, path }: { sessionId: string; path: string }
   const copyContents = async () => {
     if (content === null) return;
     setActionError(null);
-    try {
-      await navigator.clipboard.writeText(content); // the original text, never its numbered view
-      setCopied(true);
-      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopied(false), 1600);
-    } catch { setActionError("Could not copy the file. Check clipboard permission."); }
+    // The original text, never its numbered view. The shared helper falls
+    // back to execCommand where the Clipboard API is unavailable (preview
+    // iframe), and only reports success when the copy actually landed.
+    if (!await copyTextToClipboard(content)) { setActionError("Could not copy the file. Check clipboard permission."); return; }
+    setCopied(true);
+    if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(false), 1600);
   };
   const download = () => {
     if (content === null) return;
