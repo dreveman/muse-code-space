@@ -1871,56 +1871,24 @@ export function App() {
     if (!isNarrow || mobileListOpen || !element) return;
     const viewport = window.visualViewport;
     const spaceRoot = document.querySelector<HTMLElement>("[data-generated-space-root]");
-    const hatchRoot = document.querySelector<HTMLElement>(".hatch-space-root[data-hatch-space-root]");
-    let maxViewportHeight = viewport?.height ?? window.innerHeight;
-    let restingHeight = element.offsetHeight;
     const measure = () => {
       if (!viewport || viewport.scale !== 1) return;
-      if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height;
       if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
-      const activeTag = document.activeElement?.tagName;
-      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
-      const viewportShrunk = viewport.height < maxViewportHeight - 4;
-      const keyboardOpen = inputFocused || viewportShrunk;
-      if (keyboardOpen) {
-        element.dataset.keyboardOpen = "true";
-        hatchRoot?.setAttribute("data-keyboard-open", "true");
-        // Lock height to min(restingHeight, rawHeight) from the very first
-        // focusin frame (before 100dvh starts shrinking), so CSS
-        // `calc(100dvh - --header-height - --hatch-space-bottom-padding)`
-        // never shrinks the layout below restingHeight while the keyboard
-        // is still rising through the bottom-padding zone.
-        const top = element.getBoundingClientRect().top;
-        const rawHeight = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - top));
-        const height = restingHeight > 0 ? Math.min(restingHeight, rawHeight) : rawHeight;
-        element.style.height = `${height}px`;
-        element.style.maxHeight = `${height}px`;
-      } else {
-        delete element.dataset.keyboardOpen;
-        hatchRoot?.removeAttribute("data-keyboard-open");
-        element.style.removeProperty("height");
-        element.style.removeProperty("max-height");
-        restingHeight = element.offsetHeight;
-      }
-      if (followTranscriptRef.current && terminalBodyRef.current) {
-        terminalBodyRef.current.scrollTop = terminalBodyRef.current.scrollHeight;
-      }
+      const top = element.getBoundingClientRect().top;
+      const rawHeight = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - top));
+      const sizeExpr = `calc(${rawHeight}px - var(--hatch-space-bottom-padding, 0px))`;
+      element.style.height = sizeExpr;
+      element.style.maxHeight = sizeExpr;
     };
     measure();
     viewport?.addEventListener("resize", measure);
     viewport?.addEventListener("scroll", measure);
     window.addEventListener("resize", measure);
-    document.addEventListener("focusin", measure);
-    document.addEventListener("focusout", measure);
     return () => {
       viewport?.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
-      document.removeEventListener("focusin", measure);
-      document.removeEventListener("focusout", measure);
-      delete element.dataset.keyboardOpen;
-      hatchRoot?.removeAttribute("data-keyboard-open");
       element.style.removeProperty("height");
       element.style.removeProperty("max-height");
     };
