@@ -30,7 +30,7 @@
   "packages": {
     "@babel/runtime": ["@babel/runtime@7.29.7", "", {}, "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="],
 
-    "@hatch/space-sdk": ["@hatch/space-sdk@/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz", { "dependencies": { "bun-plugin-tailwind": "0.0.15", "zod": "4.4.3" }, "peerDependencies": { "@libsql/client": "^0.14", "@tanstack/react-query": "^5", "drizzle-orm": "^0.45", "react": "^18 || ^19", "typescript": "^5" } }, "sha512-fAMrLA32Oa3jq/K9Tjyn0R+x/aZrfslSXRXFc2pQHLq7B4q9feXs6eT+7hoAL1Bmg8lWe5IZdWRbP7r0xHFeUg=="],
+    "@hatch/space-sdk": ["@hatch/space-sdk@/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz", { "dependencies": { "bun-plugin-tailwind": "0.0.15", "zod": "4.4.3" }, "peerDependencies": { "@libsql/client": "^0.14", "@tanstack/react-query": "^5", "drizzle-orm": "^0.45", "react": "^18 || ^19", "typescript": "^5" } }, "sha512-H09B/uGJ446+iq06v8d5+G62QrvzzBwrO6NlpHGaX9cD8v7cuXYvPMFc9AeETxsKWciOiI+f/WTQoA5Ms3kESA=="],
 
     "@libsql/client": ["@libsql/client@0.14.0", "", { "dependencies": { "@libsql/core": "^0.14.0", "@libsql/hrana-client": "^0.7.0", "js-base64": "^3.7.5", "libsql": "^0.4.4", "promise-limit": "^2.7.0" } }, "sha512-/9HEKfn6fwXB5aTEEoMeFh4CtG0ZzbncBb1e++OCdVpgKZ/xyMsIVYXm0w7Pv4RUel803vE6LwniB3PqD72R0Q=="],
 
