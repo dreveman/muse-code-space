@@ -5,15 +5,15 @@ import { api, type ApiResponse } from "./api";
 import { getWorkingLabel } from "./workingLabel";
 import { shouldSnapToBottom, shouldFollowTranscript } from "./scrollSnap";
 import { agentVisualStatus, transcriptAtBottom, type AgentVisualStatus } from "./agentStatus";
-import { CompanionContact, CompanionWelcome, companions } from "./Companions";
+import { artworkForCompanionName, CompanionContact, CompanionWelcome, companions, customCompanionToCompanion, registerCustomCompanionArtwork, type Companion } from "./Companions";
+import { CreateCompanionCard, type CreateCompanionInput } from "./CreateCompanionCard";
+import { CUSTOM_COMPANION_LIMIT } from "./companionCustom";
 import { CompanionMenu } from "./CompanionMenu";
 import { CompanionAccessNotice } from "./CompanionAccess";
 import { companionModelAccess, orderCompanionsByAccess, PAID_COMPANION_MODELS } from "../../server/src/companionModels";
 import { displayModelLabel } from "./modelLabel";
-import { MoreCompanionsButton } from "./MoreCompanionsButton";
 import { TranscriptCompanion } from "./TranscriptCompanion";
-import { availableCompanionDefinitions, companionAssignedElsewhere, companionForName, isDefaultCompanion, matchesCompanionQuery } from "./companionRoster";
-import { companionArtwork } from "./companionArtwork";
+import { availableCompanionDefinitions, companionAssignedElsewhere, isDefaultCompanion, matchesCompanionQuery } from "./companionRoster";
 import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
 import { pendingHasArrived } from "./pendingEcho";
@@ -111,6 +111,8 @@ const SHOW_REASONING_KEY = "muse-code-space:show-reasoning";
 const EXPAND_TOOLS_KEY = "muse-code-space:expand-tools";
 const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
 const WORKING_DETAILS_KEY = "muse-code-space:working-details";
+const SHOW_ADD_COMPANION_KEY = "muse-code-space:show-add-companion";
+const HIDE_ADD_COMPANION_KEY = "muse-code-space:hide-add-companion";
 const SORT_MODE_KEY = "muse-code-space:sort-mode";
 // Home folder on the pilot's machine, from the server's getHostConfig
 // (the VM is /home/hatch; a pilot on a Mac is /Users/<you>). Module-level so
@@ -988,7 +990,7 @@ const MessageEvent = memo(function MessageEvent({ content, agents, assistantAvat
   if (!message) return <article className="output-event message"><div className="message-text">{content}</div></article>;
   const peer = message.direction === "in" ? message.from : message.to;
   const isMuse = peer.kind === "muse";
-  const peerArtwork = companionArtwork[companionForName(peer.name)?.id ?? ""];
+  const peerArtwork = artworkForCompanionName(peer.name);
   const showPeerIcon = message.direction === "in" && (isMuse || !!peerArtwork);
   const style = isMuse
     ? assistantColorStyle(peer.color)
@@ -1554,7 +1556,7 @@ const SessionRow = memo(function SessionRow({
   const actionable = session.archived || !isTurnLive(session.status);
   const displayTitle = displayAgentName(session.title);
   const summary = sessionTaskTitle(session);
-  const rosterArtwork = companionArtwork[companionForName(session.title)?.id ?? ""];
+  const rosterArtwork = artworkForCompanionName(session.title);
   const taskState = session.needs_you ? "Needs you" : session.status === "failed" ? "Needs attention"
     : session.status === "queued" ? "Waiting to start" : session.status === "running" ? "Working" : session.status === "succeeded" ? "Finished"
     : session.status === "stopped" ? "Stopped" : "Ready";
@@ -1685,6 +1687,8 @@ const SessionRow = memo(function SessionRow({
 
 export function App() {
   const [selectedCompanionId, setSelectedCompanionId] = useState<string | null>(null);
+  const [createCompanionOpen, setCreateCompanionOpen] = useState(false);
+  const [creatingCompanion, setCreatingCompanion] = useState(false);
   const [filter, setFilter] = useState<Filter>("active");
   const [sortMode, setSortMode] = useState<SortMode>(() => {
     try {
@@ -1694,7 +1698,6 @@ export function App() {
   });
   const [sessionFilterInput, setSessionQuery] = useState("");
   const [availableExpanded, setAvailableExpanded] = useState(false);
-  const [moreAvailableExpanded, setMoreAvailableExpanded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Latest selection for async work (queued sends) that outlives a render.
   const selectedIdRef = useRef(selectedId);
@@ -1799,6 +1802,14 @@ export function App() {
   });
   const [showWorkingDetails, setShowWorkingDetails] = useState(() => {
     try { return window.localStorage.getItem(WORKING_DETAILS_KEY) === "true"; } catch { return false; }
+  });
+  const [hideAddCompanion, setHideAddCompanion] = useState(() => {
+    try {
+      const hidden = window.localStorage.getItem(HIDE_ADD_COMPANION_KEY);
+      if (hidden !== null) return hidden === "true";
+      // Carry over the earlier show-toggle's choice, inverted.
+      return window.localStorage.getItem(SHOW_ADD_COMPANION_KEY) === "false";
+    } catch { return false; }
   });
   const [colorMode, setColorMode] = useState<ColorMode>(loadColorMode);
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -1937,6 +1948,9 @@ export function App() {
     try { window.localStorage.setItem(WORKING_DETAILS_KEY, String(showWorkingDetails)); } catch { /* webview storage can be disabled */ }
   }, [showWorkingDetails]);
   useEffect(() => {
+    try { window.localStorage.setItem(HIDE_ADD_COMPANION_KEY, String(hideAddCompanion)); } catch { /* webview storage can be disabled */ }
+  }, [hideAddCompanion]);
+  useEffect(() => {
     try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch { /* webview storage can be disabled */ }
   }, [sortMode]);
   useEffect(() => {
@@ -1977,7 +1991,7 @@ export function App() {
         const activeSessions = data.sessions.filter((item) => !item.archived);
         const urls = new Set<string>();
         for (const item of activeSessions) {
-          const url = companionArtwork[companionForName(item.title)?.id ?? ""]?.still;
+          const url = artworkForCompanionName(item.title)?.still;
           if (url) urls.add(url);
         }
         if (activeSessions.length === 0) {
@@ -2028,6 +2042,18 @@ export function App() {
     retry: false,
   });
   const accessibleModels = modelsQuery.data?.access_checked ? modelsQuery.data.models : undefined;
+  const customCompanionsQuery = useQuery({
+    queryKey: ["custom-companions"],
+    queryFn: () => api.listCustomCompanions({}),
+    staleTime: 5000,
+    retry: false,
+  });
+  const customCompanions = useMemo<Companion[]>(
+    () => (customCompanionsQuery.data?.companions ?? []).map(customCompanionToCompanion),
+    [customCompanionsQuery.data],
+  );
+  registerCustomCompanionArtwork(customCompanions);
+  const allCompanions = useMemo<Companion[]>(() => [...companions, ...customCompanions], [customCompanions]);
   const projectsQuery = useQuery({
     queryKey: ["code-projects"],
     queryFn: () => api.listProjects({}),
@@ -2112,7 +2138,7 @@ export function App() {
   });
   const sessions = sessionsQuery.data?.sessions ?? [];
   const sessionQuery = sessions.length > 1 ? sessionFilterInput : "";
-  const selectedCompanion = companions.find((companion) => companion.id === selectedCompanionId) ?? null;
+  const selectedCompanion = allCompanions.find((companion) => companion.id === selectedCompanionId) ?? null;
   const selectedModelAccess = selectedCompanion ? companionModelAccess(selectedCompanion, accessibleModels) : null;
   const selectedModelBlocked = selectedModelAccess !== null && selectedModelAccess.status !== "ready";
   const assignedCompanionsKey = useMemo(
@@ -2120,18 +2146,14 @@ export function App() {
     [sessions],
   );
   const availableCompanions = useMemo(
-    () => orderCompanionsByAccess(availableCompanionDefinitions(sessions), accessibleModels),
-    [assignedCompanionsKey, accessibleModels],
+    () => orderCompanionsByAccess(availableCompanionDefinitions(sessions, allCompanions), accessibleModels),
+    [assignedCompanionsKey, accessibleModels, allCompanions],
   );
   const matchingAvailableCompanions = useMemo(
     () => availableCompanions.filter((companion) => matchesCompanionQuery(companion, sessionQuery)),
     [availableCompanions, sessionQuery],
   );
-  const visibleAvailableCompanions = useMemo(
-    () => moreAvailableExpanded || sessionQuery.trim()
-      ? matchingAvailableCompanions : matchingAvailableCompanions.filter(isDefaultCompanion),
-    [moreAvailableExpanded, sessionQuery, matchingAvailableCompanions],
-  );
+  const visibleAvailableCompanions = matchingAvailableCompanions;
   const hasActiveTasks = sessions.some((session) => !session.archived);
   const availableOpen = !hasActiveTasks || availableExpanded;
   useEffect(() => { setAvailableExpanded(false); }, [hasActiveTasks]);
@@ -2357,7 +2379,7 @@ export function App() {
         }
       }
       const stillUrl = afterId === undefined
-        ? companionArtwork[companionForName(selectedSession?.title ?? "")?.id ?? ""]?.still
+        ? artworkForCompanionName(selectedSession?.title ?? "")?.still
         : undefined;
       const [rawData] = await Promise.all([
         api.getSession({
@@ -2570,15 +2592,42 @@ export function App() {
 
   const selectCompanion = (id: string, reveal = true) => {
     if ((creating || queuedPrompt?.kind === "draft") && draft?.companionId !== id) return;
-    const companion = companions.find((item) => item.id === id);
+    const companion = allCompanions.find((item) => item.id === id);
     if (!companion || !availableCompanions.some((item) => item.id === id)) return;
     const next = draft?.companionId === id ? draft : draft && selectedId === draft.id
       ? { ...draft, companionId: id, companionName: companion.name } : makeNewSessionDraft(companion);
     setDraft(next);
     setSelectedId(next.id);
     setSelectedCompanionId(id);
+    setCreateCompanionOpen(false);
     setCreateError(null);
     if (reveal) setMobileListOpen(false);
+  };
+
+  const openCreateCompanion = () => {
+    if (creating || queuedPrompt?.kind === "draft") return;
+    setCreateCompanionOpen(true);
+    setMobileListOpen(false);
+  };
+
+  const createCompanion = async (input: CreateCompanionInput): Promise<string | null> => {
+    setCreatingCompanion(true);
+    try {
+      const result = await api.createCompanion({ companion_id: randomUuid(), ...input });
+      if (!result.ok || !result.companion) return result.error ?? "Companion was not created.";
+      await queryClient.invalidateQueries({ queryKey: ["custom-companions"] });
+      const newCompanion = customCompanionToCompanion(result.companion);
+      const next = makeNewSessionDraft(newCompanion);
+      setDraft(next);
+      setSelectedId(next.id);
+      setSelectedCompanionId(newCompanion.id);
+      setCreateCompanionOpen(false);
+      return null;
+    } catch {
+      return "Something went wrong. Try again.";
+    } finally {
+      setCreatingCompanion(false);
+    }
   };
 
   // Filter switches and refetches keep the selection (see resolveSelectedId).
@@ -2595,7 +2644,7 @@ export function App() {
     initialPickDoneRef.current = true;
     if (selectedCompanionId !== null) return;
     if (sessions.length === 0 && draft === null) {
-      selectCompanion("pip", false);
+      selectCompanion("poppy", false);
       return;
     }
     setSelectedId((current) =>
@@ -3260,7 +3309,7 @@ export function App() {
 
   const handOffCompanion = async (companionId: string) => {
     if (!detailSession || handoffBusy || liveWork || sendingDirection || pendingDirection !== null || queuedPrompt !== null || connectionLost) return;
-    const replacement = companions.find((item) => item.id === companionId);
+    const replacement = allCompanions.find((item) => item.id === companionId);
     if (!replacement || companionModelAccess(replacement, accessibleModels).status !== "ready") return;
     const id = detailSession.id;
     setHandoffBusy(true);
@@ -3342,7 +3391,7 @@ export function App() {
       }
       const createdId = response.id;
       const nowIso = new Date().toISOString();
-      const companion = companions.find((item) => item.id === queued.draft.companionId);
+      const companion = allCompanions.find((item) => item.id === queued.draft.companionId);
       const initialStatus = response.start_status === "waking" ? ("running" as const) : ("queued" as const);
       const seeded: Session = {
         id: createdId,
@@ -3670,7 +3719,6 @@ export function App() {
         setFilter("active");
         setSessionQuery("");
         if (refreshed.data.sessions.length === 0) {
-          setMoreAvailableExpanded(false);
           setMobileListOpen(true);
         }
       }
@@ -3698,6 +3746,13 @@ export function App() {
       description: "Show tool previews automatically",
       checked: expandTools,
       onActivate: () => setExpandTools((value) => !value),
+    },
+    {
+      key: "add-companion",
+      label: "Hide add companion button",
+      description: "Hide the button below the companions list",
+      checked: hideAddCompanion,
+      onActivate: () => setHideAddCompanion((hidden) => !hidden),
     },
     {
       key: "working-details",
@@ -4181,8 +4236,9 @@ export function App() {
         <div className="composer-toolbar">
           <div className="composer-tools" aria-label="Message tools">
             <CompanionMenu name={selectedCompanion?.name ?? "Companion"} effort={effort} icon={<MuseIcon />}
+              currentCompanion={selectedCompanion ?? undefined}
               picking browsing models={accessibleModels}
-              options={companions.filter((item) => item.id !== selectedCompanionId && availableCompanions.some((available) => available.id === item.id))}
+              options={allCompanions.filter((item) => item.id !== selectedCompanionId && availableCompanions.some((available) => available.id === item.id))}
               disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
               onChoose={(id) => selectCompanion(id)} />
           </div>
@@ -4394,18 +4450,20 @@ export function App() {
                   </svg>
                 </button>}
                 <nav id="available-companion-list" className="companion-contact-list" hidden={!availableOpen} aria-label="Choose an available companion">
-                  {visibleAvailableCompanions.map((definition) => {
-                    const companion = companions.find((item) => item.id === definition.id)!;
-                    return <CompanionContact key={companion.id} companion={companion} selected={selectedCompanionId === companion.id} models={accessibleModels}
+                  {visibleAvailableCompanions.map((companion) => (
+                    <CompanionContact key={companion.id} companion={companion} selected={!createCompanionOpen && selectedCompanionId === companion.id} models={accessibleModels}
                       disabled={(creating || queuedPrompt?.kind === "draft") && draft?.companionId !== companion.id}
                       onSelect={() => {
                         selectCompanion(companion.id);
                         requestAnimationFrame(() => document.getElementById("companion-welcome-heading")?.focus());
-                      }} />;
-                  })}
-                  {!sessionQuery.trim() && matchingAvailableCompanions.some((companion) => !isDefaultCompanion(companion)) && (
-                    <MoreCompanionsButton expanded={moreAvailableExpanded} controls="available-companion-list"
-                      onToggle={() => setMoreAvailableExpanded((value) => !value)} />
+                      }} />
+                  ))}
+                  {!sessionQuery.trim() && !hideAddCompanion && customCompanions.length < CUSTOM_COMPANION_LIMIT && (
+                    <button type="button" className="create-companion-row" title="Add companion" aria-current={createCompanionOpen ? "true" : undefined}
+                      disabled={creating || queuedPrompt?.kind === "draft"} onClick={openCreateCompanion}>
+                      <span className="create-companion-plus" aria-hidden="true">+</span>
+                      <span><strong>Add companion</strong><small>Design your own</small></span>
+                    </button>
                   )}
                   {matchingAvailableCompanions.length === 0 && <p className="filter-empty">
                     {sessionQuery.trim() ? "No matching available companions." : "Everyone is on a task."}
@@ -4442,7 +4500,9 @@ export function App() {
     accessibleModels,
     draftBusy,
     draftCompanionId,
-    moreAvailableExpanded,
+    createCompanionOpen,
+    hideAddCompanion,
+    customCompanions,
     sidebarCollapsed,
     toggleSidebarCollapsed,
     sidebarHintDismissed,
@@ -4517,8 +4577,9 @@ export function App() {
     ? "Send or cancel the queued message before handing over this task." : connectionLost ? "Connect before handing over this task." : undefined;
   const takeoverCompanionMenu = useMemo(() => (
                               <CompanionMenu name={detailAgentName} effort={effort} icon={<MuseIcon />}
+                                currentCompanion={allCompanions.find((item) => item.name === detailAgentName)}
                                 picking={sessionPast} models={accessibleModels}
-                                options={companions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
+                                options={allCompanions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
                                 busy={handoffBusy}
                                 disabledReason={takeoverDisabledReason}
                                 onChoose={(id) => { void handOffCompanion(id); }} />
@@ -4528,6 +4589,7 @@ export function App() {
     sessionPast,
     accessibleModels,
     availableCompanions,
+    allCompanions,
     handoffBusy,
     takeoverDisabledReason,
     detailSession?.id,
@@ -4645,6 +4707,32 @@ export function App() {
                     {firstMessageComposer}
                   </div>
                 </div>
+              ) : createCompanionOpen ? (
+                <section className="companion-welcome" aria-labelledby="create-companion-heading">
+                  <header className="chat-floating-toolbar companion-welcome-header">
+                    <button className="mobile-back-button" type="button" onClick={() => {
+                      setMobileListOpen(true);
+                      requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".create-companion-row")?.focus());
+                    }} aria-label="Back to companions">
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 12H6M11 7l-5 5 5 5" />
+                      </svg>
+                    </button>
+                  </header>
+                  <div className="companion-welcome-stage">
+                    <div className="companion-welcome-content">
+                      <div className="companion-card-browser">
+                        <CreateCompanionCard models={accessibleModels} busy={creatingCompanion}
+                          usedIconIds={allCompanions.map((companion) => companion.iconId)}
+                          existingNames={[...allCompanions.map((companion) => companion.name), ...sessions.map((session) => session.title)]}
+                          onCreate={createCompanion} />
+                      </div>
+                    </div>
+                  </div>
+                  {/* Reserve the composer's space (hidden) so the create card
+                      sits exactly where a selected companion's card sits. */}
+                  <div aria-hidden="true" style={{ visibility: "hidden" }}>{firstMessageComposer}</div>
+                </section>
               ) : selectedCompanion ? <CompanionWelcome companion={selectedCompanion} visible={!isNarrow || !mobileListOpen} models={accessibleModels}
                 availableIds={availableCompanions.map((companion) => companion.id)} onBrowse={selectCompanion}
                 browsingDisabled={creating || queuedPrompt?.kind === "draft"}

@@ -26,6 +26,7 @@ import { validateAssistantAvatar } from "./assistantAvatar.mjs";
 import { pilotRequest, isPilotUnavailable, readPilotModels } from "./pilotRequest";
 import { parseRepoSlug } from "./repoSlug";
 import { companionModelAccess, modelUpgradeMessage, PAID_COMPANION_MODELS } from "./companionModels";
+import { isReservedAgentName } from "./agentNames";
 import { transcriptToRows, type TranscriptImport } from "./transcriptRestore";
 import * as schema from "./schema";
 import companionCatalog from "../../companions/catalog.json" with { type: "json" };
@@ -324,6 +325,23 @@ const projectReferenceSchema = z.object({
   target: z.string(),
 });
 
+const customCompanionResponseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  icon_id: z.string(),
+  icon_data_url: z.string().nullable(),
+  character: z.string(),
+  role: z.string(),
+  description: z.string(),
+  skills: z.array(z.string()),
+  trade_off: z.string(),
+  soul: z.string(),
+  model_id: z.string(),
+  effort: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 const projectResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -599,7 +617,71 @@ async function requirePaidModelAccess(baseUrl: string, modelId: string) {
   if (!models.some((model) => model.id === modelId)) throw new Error(modelUpgradeMessage(modelId));
 }
 
-async function resolveCompanionModel(ctx: Ctx, companion: (typeof companionCatalog.companions)[number],
+type AssignableCompanion = {
+  id: string;
+  name: string;
+  effort: string;
+  model: { preferredId: string; ifUnavailable: string };
+};
+
+const BUILTIN_COMPANION_IDS = ["poppy", "remy", "tilly", "nova", "sage"] as const;
+const CUSTOM_COMPANION_LIMIT = 20;
+type CompanionDb = ReturnType<Parameters<typeof Actions.getSession.handler>[0]["db"]>;
+const companionNameKey = (name: string) => name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
+
+function builtinAssignableCompanions(): AssignableCompanion[] {
+  return BUILTIN_COMPANION_IDS.flatMap((id) => {
+    const entry = companionCatalog.companions.find((item) => item.id === id);
+    return entry ? [{ id: entry.id, name: entry.name, effort: entry.effort, model: entry.model }] : [];
+  });
+}
+
+type CustomCompanionRow = typeof schema.customCompanions.$inferSelect;
+
+function customToAssignable(row: CustomCompanionRow): AssignableCompanion {
+  return {
+    id: row.id,
+    name: row.name,
+    effort: row.effort,
+    model: {
+      preferredId: row.modelId,
+      ifUnavailable: Object.hasOwn(PAID_COMPANION_MODELS, row.modelId) ? "upgrade-required" : "use-catalog-default",
+    },
+  };
+}
+
+function customToResponse(row: CustomCompanionRow): z.infer<typeof customCompanionResponseSchema> {
+  let skills: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(row.skills);
+    if (Array.isArray(parsed)) skills = parsed.filter((item): item is string => typeof item === "string");
+  } catch { skills = []; }
+  return {
+    id: row.id, name: row.name, icon_id: row.iconId, icon_data_url: row.iconDataUrl, character: row.character, role: row.role,
+    description: row.description, skills, trade_off: row.tradeOff, soul: row.soul,
+    model_id: row.modelId, effort: row.effort,
+    created_at: row.createdAt.toISOString(), updated_at: row.updatedAt.toISOString(),
+  };
+}
+
+async function listCustomCompanionRows(db: CompanionDb): Promise<CustomCompanionRow[]> {
+  return db.select().from(schema.customCompanions).orderBy(asc(schema.customCompanions.createdAt));
+}
+
+async function assignableCompanions(db: CompanionDb): Promise<AssignableCompanion[]> {
+  return [...builtinAssignableCompanions(), ...(await listCustomCompanionRows(db)).map(customToAssignable)];
+}
+
+async function assignableCompanionById(db: CompanionDb, id: string): Promise<AssignableCompanion | undefined> {
+  return (await assignableCompanions(db)).find((companion) => companion.id === id);
+}
+
+async function assignableCompanionByName(db: CompanionDb, name: string): Promise<AssignableCompanion | undefined> {
+  const key = companionNameKey(name);
+  return (await assignableCompanions(db)).find((companion) => companionNameKey(companion.name) === key);
+}
+
+async function resolveCompanionModel(ctx: Ctx, companion: AssignableCompanion,
   storedModels: readonly { id: string }[]) {
   let models = storedModels;
   if (companion.model.ifUnavailable === "upgrade-required") {
@@ -2628,6 +2710,80 @@ export const Actions = {
     },
   }),
 
+  listCustomCompanions: defineAction({
+    request: z.object({}),
+    response: z.object({ companions: z.array(customCompanionResponseSchema) }),
+    async handler(ctx) {
+      const db = ctx.db<typeof schema>();
+      const rows = await listCustomCompanionRows(db);
+      return { companions: rows.map(customToResponse) };
+    },
+  }),
+
+  createCompanion: defineAction({
+    request: z.object({
+      companion_id: z.string().trim().min(1).max(200),
+      name: z.string().trim().min(1).max(40),
+      icon_id: z.string().trim().min(1).max(100),
+      role: z.string().trim().max(80).default(""),
+      description: z.string().trim().max(240).default(""),
+      skills: z.array(z.string().trim().min(1).max(40)).max(3).default([]),
+      icon_data_url: z.string().startsWith("data:image/").max(2_800_000).optional(),
+      trade_off: z.string().trim().max(240).default(""),
+      soul: z.string().max(8000).default(""),
+      model_id: z.string().trim().min(1).max(200),
+      effort: z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]),
+    }).strict(),
+    response: z.object({ ok: z.boolean(), companion: customCompanionResponseSchema.nullable(), error: z.string().nullable() }),
+    async handler(ctx, args) {
+      if (isReservedAgentName(args.name)) {
+        return { ok: false, companion: null, error: "That name is reserved for your Muse assistant." };
+      }
+      const customImage = args.icon_data_url ?? null;
+      const donor = customImage ? null : companionCatalog.companions.find((item) => item.id === args.icon_id);
+      if (!customImage && !donor) return { ok: false, companion: null, error: "Pick an icon from the list." };
+      const db = ctx.db<typeof schema>();
+      const nameKey = companionNameKey(args.name);
+      const catalogTaken = companionCatalog.companions.some((item) => companionNameKey(item.name) === nameKey);
+      const customs = await listCustomCompanionRows(db);
+      if (!customImage && donor && ((BUILTIN_COMPANION_IDS as readonly string[]).includes(donor.id)
+        || customs.some((row) => row.iconId === donor.id))) {
+        return { ok: false, companion: null, error: "That icon is already used by another companion." };
+      }
+      if (customs.length >= CUSTOM_COMPANION_LIMIT) {
+        return { ok: false, companion: null, error: `You can create up to ${CUSTOM_COMPANION_LIMIT} companions.` };
+      }
+      if (catalogTaken || customs.some((row) => companionNameKey(row.name) === nameKey)) {
+        return { ok: false, companion: null, error: "A companion with that name already exists." };
+      }
+      const sessionTitles = await db.select({ title: schema.sessions.title }).from(schema.sessions);
+      if (sessionTitles.some((row) => companionNameKey(row.title) === nameKey)) {
+        return { ok: false, companion: null, error: "That name is already used by a task." };
+      }
+      const now = new Date();
+      const inserted = await db.insert(schema.customCompanions).values({
+        id: args.companion_id,
+        name: args.name,
+        iconId: customImage ? "custom" : donor!.id,
+        iconDataUrl: customImage,
+        character: customImage ? "Custom image" : donor!.character,
+        role: args.role,
+        description: args.description,
+        skills: JSON.stringify(args.skills),
+        tradeOff: args.trade_off,
+        soul: args.soul,
+        modelId: args.model_id,
+        effort: args.effort,
+        createdAt: now,
+        updatedAt: now,
+      }).returning();
+      const row = inserted[0];
+      if (!row) return { ok: false, companion: null, error: "Companion was not created" };
+      ctx.invalidateQueries({ queryKey: ["custom-companions"] });
+      return { ok: true, companion: customToResponse(row), error: null };
+    },
+  }),
+
   createSession: defineAction({
     request: z.object({
       session_id: z.string().trim().min(1).max(200),
@@ -2687,9 +2843,10 @@ export const Actions = {
       const now = new Date();
       const id = args.session_id;
       const existing = await db.select({ title: schema.sessions.title, archived: schema.sessions.archived }).from(schema.sessions);
+      const assignable = await assignableCompanions(db);
       const agent = args.title
-        ? companionCatalog.companions.find((item) => item.name.toLowerCase() === args.title!.normalize("NFKC").trim().toLowerCase())
-        : companionCatalog.companions.find((item) => !existing.some((row) => !row.archived && row.title.trim().toLowerCase() === item.name.toLowerCase()));
+        ? assignable.find((item) => companionNameKey(item.name) === companionNameKey(args.title!))
+        : assignable.find((item) => !existing.some((row) => !row.archived && companionNameKey(row.title) === companionNameKey(item.name)));
       if (!agent) return { ok: false, id: null, start_status: null, error: args.title ? "Agent not found in the roster." : "No agents are available." };
       const agentName = agent.name;
       const models = await db.select().from(schema.codingModels).orderBy(asc(schema.codingModels.sortOrder));
@@ -2979,7 +3136,7 @@ export const Actions = {
     response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
     privileged: [privileged.resolvePilotUrl],
     async handler(ctx, args) {
-      const companion = companionCatalog.companions.find((item) => item.id === args.agent_id);
+      const companion = await assignableCompanionById(ctx.db<typeof schema>(), args.agent_id);
       if (!companion) return { ok: false, error: "Agent not found." };
       const release = lockCompanionAssignment(args.id, companion.name);
       if (!release) {
@@ -3052,7 +3209,7 @@ export const Actions = {
     response: z.object({ ok: z.literal(true), id: z.string() }),
     privileged: [privileged.resolvePilotUrl],
     async handler(ctx, args): Promise<{ ok: true; id: string }> {
-      const agent = companionCatalog.companions.find((item) => item.name.toLowerCase() === args.title.normalize("NFKC").trim().toLowerCase());
+      const agent = await assignableCompanionByName(ctx.db<typeof schema>(), args.title);
       if (!agent) throw new Error("Agent not found in the roster.");
       const release = lockCompanionAssignment(args.id, agent.name);
       if (!release) throw new Error("This session or agent is being assigned. Try again in a moment.");

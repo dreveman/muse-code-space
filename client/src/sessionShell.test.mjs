@@ -15,7 +15,7 @@ const css = readFileSync(path.join(root, "theme.css"), "utf8");
 
 test("zero tasks show a companion card with a first-message composer", () => {
   assert.ok(app.includes('if (sessions.length === 0 && draft === null)'));
-  assert.ok(app.includes('selectCompanion("pip", false)'));
+  assert.ok(app.includes('selectCompanion("poppy", false)'));
   assert.ok(app.includes('<CompanionWelcome companion={selectedCompanion}'));
   assert.ok(!app.includes('autoDraftedRef'), "opening the app does not silently prepare a new task");
 });

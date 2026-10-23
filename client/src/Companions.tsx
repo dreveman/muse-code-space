@@ -1,21 +1,112 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { companionDefinitions, companionRoleTitle } from "./companionRoster";
-import { companionArtwork } from "./companionArtwork";
+import { builtinCompanionDefinitions, companionDefinitions, companionForName, companionRoleTitle } from "./companionRoster";
+import { companionArtwork, type CompanionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
-import { companionModelAccess } from "../../server/src/companionModels";
+import { companionModelAccess, computeCompanionStats, PAID_COMPANION_MODELS, type CompanionStats } from "../../server/src/companionModels";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
 import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
 import "./companions.css";
 
-// Read-only seed definitions in this checkpoint. No session or pilot actions.
-export const companions = companionDefinitions.map((companion) => {
-  const artwork = companionArtwork[companion.id];
-  if (!artwork) throw new Error(`Missing artwork for ${companion.id}`);
-  return { ...companion, artwork };
-});
-export type Companion = (typeof companions)[number];
+export type Companion = {
+  id: string;
+  iconId: string;
+  name: string;
+  character: string;
+  role: string;
+  description: string;
+  skills: string[];
+  tradeOff: string;
+  stats: CompanionStats;
+  model: { preferredId: string; ifUnavailable: string };
+  effort: string;
+  artwork: CompanionArtwork;
+  custom?: boolean;
+};
+
+function toCompanion(definition: (typeof companionDefinitions)[number]): Companion {
+  const artwork = companionArtwork[definition.id];
+  if (!artwork) throw new Error(`Missing artwork for ${definition.id}`);
+  return {
+    id: definition.id,
+    iconId: definition.id,
+    name: definition.name,
+    character: definition.character,
+    role: definition.role,
+    description: definition.description,
+    skills: [...definition.skills],
+    tradeOff: definition.tradeOff,
+    stats: computeCompanionStats(definition.model.preferredId, definition.effort),
+    model: definition.model,
+    effort: definition.effort,
+    artwork,
+  };
+}
+
+// Built-in companions available on a fresh install, in sidebar order.
+export const companions: Companion[] = builtinCompanionDefinitions.map(toCompanion);
+
+// Every catalog entry, including artwork donors for the icon picker.
+export const iconDonorCompanions: Companion[] = companionDefinitions.map(toCompanion);
+
+export type CustomCompanionRecord = {
+  id: string;
+  name: string;
+  icon_id: string;
+  icon_data_url: string | null;
+  character: string;
+  role: string;
+  description: string;
+  skills: string[];
+  trade_off: string;
+  soul: string;
+  model_id: string;
+  effort: string;
+};
+
+// Session rows and transcripts resolve artwork by companion name (the session
+// title bridge). Custom companions register here once loaded so their borrowed
+// artwork shows up in those name-only contexts too.
+const customArtworkByName = new Map<string, CompanionArtwork>();
+export function registerCustomCompanionArtwork(customs: readonly Companion[]): void {
+  customArtworkByName.clear();
+  for (const companion of customs) {
+    customArtworkByName.set(companion.name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase(), companion.artwork);
+  }
+}
+export function artworkForCompanionName(name: string): CompanionArtwork | undefined {
+  const custom = customArtworkByName.get(name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase());
+  if (custom) return custom;
+  const definition = companionForName(name);
+  return definition ? companionArtwork[definition.id] : undefined;
+}
+
+export function customCompanionToCompanion(record: CustomCompanionRecord): Companion {
+  const donorArtwork = companionArtwork[record.icon_id] ?? companionArtwork[builtinCompanionDefinitions[0]!.id]!;
+  // An uploaded icon is a single image used for every artwork slot.
+  const uploaded = record.icon_data_url
+    ? { cardIdle: record.icon_data_url, portraitIdle: record.icon_data_url, cardStill: record.icon_data_url, working: record.icon_data_url, waking: record.icon_data_url, still: record.icon_data_url }
+    : null;
+  return {
+    id: record.id,
+    iconId: record.icon_id,
+    name: record.name,
+    character: record.character,
+    role: record.role,
+    description: record.description,
+    skills: [...record.skills],
+    tradeOff: record.trade_off,
+    stats: computeCompanionStats(record.model_id, record.effort),
+    model: {
+      preferredId: record.model_id,
+      ifUnavailable: Object.hasOwn(PAID_COMPANION_MODELS, record.model_id) ? "upgrade-required" : "use-catalog-default",
+    },
+    effort: record.effort,
+    artwork: { ...donorArtwork, ...(uploaded ?? {}), soul: record.soul },
+    custom: true,
+  };
+}
 const stats = [
   ["speed", "Speed"],
   ["thoughtfulness", "Thoughtfulness"],

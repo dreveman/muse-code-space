@@ -1,4 +1,4 @@
-import type { CompanionDefinition } from "./companionRoster";
+import type { CompanionStats } from "../../server/src/companionModels";
 
 const stats = [
   ["speed", "Speed"],
@@ -8,7 +8,7 @@ const stats = [
 ] as const;
 
 export function CompanionMiniStats({ ratings }: {
-  ratings?: CompanionDefinition["stats"];
+  ratings?: CompanionStats;
 }) {
   const description = ratings
     ? stats.map(([key, label]) => `${label}: ${ratings[key]} out of 5`).join(", ")

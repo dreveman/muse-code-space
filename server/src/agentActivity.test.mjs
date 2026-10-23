@@ -24,7 +24,7 @@ test("polling updates last activity only for real replies or agent messages", ()
 
 test("metadata edits and status changes don't bump last activity", () => {
   for (const [start, end] of [
-    ["setSessionProject: defineAction({", "createSession: defineAction({"],
+    ["setSessionProject: defineAction({", "listCustomCompanions: defineAction({"],
     ["setSessionSummary: defineAction({", "assignAgent: defineAction({"],
     ["setSessionArchived: defineAction({", "assignAgent: defineAction({"],
     ["assignAgent: defineAction({", "upsertSession: defineAction({"],

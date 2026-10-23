@@ -49,3 +49,24 @@ test("unknown fallback policies do not silently grant a model", () => {
   assert.deepEqual(companionModelAccess({ model: { preferredId: "missing", ifUnavailable: "unknown" } }, []),
     { status: "unavailable" });
 });
+
+test("computed stats for the built-in roster", async () => {
+  const { computeCompanionStats } = await import("./companionModels.ts");
+  assert.deepEqual(computeCompanionStats("muse-spark-1.3", "medium"), { speed: 3, thoughtfulness: 2, creativity: 2, initiative: 4 });
+  assert.deepEqual(computeCompanionStats("muse-spark-1.3", "low"), { speed: 4, thoughtfulness: 1, creativity: 2, initiative: 4 });
+  assert.deepEqual(computeCompanionStats("muse-spark-1.3", "xhigh"), { speed: 2, thoughtfulness: 3, creativity: 2, initiative: 3 });
+  assert.deepEqual(computeCompanionStats("muse-wonder-1.0", "medium"), { speed: 2, thoughtfulness: 4, creativity: 4, initiative: 5 });
+  assert.deepEqual(computeCompanionStats("muse-wonder-full-1.0", "max"), { speed: 1, thoughtfulness: 5, creativity: 5, initiative: 2 });
+});
+
+test("unknown models fall back to family or neutral parameters", async () => {
+  const { computeCompanionStats } = await import("./companionModels.ts");
+  assert.deepEqual(computeCompanionStats("muse-wonder-9.9", "high"), computeCompanionStats("muse-wonder-1.0", "high"));
+  assert.deepEqual(computeCompanionStats("muse-wonder-full-2.0", "low"), computeCompanionStats("muse-wonder-full-1.0", "low"));
+  const neutral = computeCompanionStats("some-future-model", "medium");
+  assert.deepEqual(neutral, { speed: 1, thoughtfulness: 3, creativity: 3, initiative: 4 });
+  assert.deepEqual(computeCompanionStats("muse-spark-1.3", "bogus-effort"), computeCompanionStats("muse-spark-1.3", "medium"));
+  for (const stats of [neutral, computeCompanionStats("x", "max"), computeCompanionStats("x", "minimal")]) {
+    for (const value of Object.values(stats)) assert.ok(value >= 1 && value <= 5);
+  }
+});

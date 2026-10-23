@@ -61,6 +61,31 @@ export const sessions = sqliteTable("sessions", {
     .default("high"),
 });
 
+export const customCompanions = sqliteTable("custom_companions", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  // Artwork donor: a catalog companion id whose image/animation set is borrowed,
+  // or "custom" when iconDataUrl holds a user-uploaded single image.
+  iconId: text("icon_id").notNull(),
+  iconDataUrl: text("icon_data_url"),
+  character: text("character").notNull().default(""),
+  role: text("role").notNull().default(""),
+  description: text("description").notNull().default(""),
+  // JSON array of up to 3 skill labels. Descriptive card copy only.
+  skills: text("skills").notNull().default("[]"),
+  tradeOff: text("trade_off").notNull().default(""),
+  // Personality text shown on the card. Not yet injected into the pilot.
+  soul: text("soul").notNull().default(""),
+  modelId: text("model_id").notNull().default("muse-spark-1.3"),
+  effort: text("effort").notNull().default("medium"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
