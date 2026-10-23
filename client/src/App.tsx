@@ -1809,6 +1809,11 @@ export function App() {
   const snappedSessionRef = useRef<string | null>(null);
   const followTranscriptRef = useRef(true);
   const showScrollToBottomRef = useRef(false);
+  const lastScrollMetricsRef = useRef<{
+    sessionId: string | null;
+    scrollHeight: number;
+    scrollTop: number;
+  } | null>(null);
   const setShowScrollToBottom = useCallback((show: boolean) => {
     showScrollToBottomRef.current = show;
     scrollControlsRef.current?.classList.toggle("visible", show);
@@ -2949,6 +2954,11 @@ export function App() {
     if (terminalBody) {
       followTranscriptRef.current = true;
       terminalBody.scrollTop = terminalBody.scrollHeight;
+      lastScrollMetricsRef.current = {
+        sessionId: detailSessionId,
+        scrollHeight: terminalBody.scrollHeight,
+        scrollTop: terminalBody.scrollTop,
+      };
       markVisibleRead();
     }
   }, [detailSessionId, transcriptEvents.length, selectedCompanionId]);
@@ -2957,10 +2967,31 @@ export function App() {
     // Follow before paint, including the final response after a turn becomes
     // idle and updates to existing reasoning/tool rows. Only scrolling away
     // from the bottom pauses following; submitting a new prompt resumes it.
-    if (!shouldFollowTranscript(followTranscriptRef.current, transcriptEvents.length, pendingEcho !== null)) return;
     const terminalBody = terminalBodyRef.current;
+    if (!shouldFollowTranscript(followTranscriptRef.current, transcriptEvents.length, pendingEcho !== null)) {
+      if (terminalBody) {
+        const prev = lastScrollMetricsRef.current;
+        if (prev !== null && prev.sessionId === detailSessionId && terminalBody.scrollTop <= 0) {
+          const delta = terminalBody.scrollHeight - prev.scrollHeight;
+          if (delta !== 0) {
+            terminalBody.scrollTop = prev.scrollTop - delta;
+          }
+        }
+        lastScrollMetricsRef.current = {
+          sessionId: detailSessionId,
+          scrollHeight: terminalBody.scrollHeight,
+          scrollTop: terminalBody.scrollTop,
+        };
+      }
+      return;
+    }
     if (terminalBody) {
       terminalBody.scrollTop = terminalBody.scrollHeight;
+      lastScrollMetricsRef.current = {
+        sessionId: detailSessionId,
+        scrollHeight: terminalBody.scrollHeight,
+        scrollTop: terminalBody.scrollTop,
+      };
       markVisibleRead();
     }
   }, [detailSessionId, transcriptEvents, pendingEcho, showReasoning, showRawToolOutput]);
@@ -2978,8 +3009,20 @@ export function App() {
         body.scrollTop = body.scrollHeight;
         setShowScrollToBottom(false);
       } else {
+        const prev = lastScrollMetricsRef.current;
+        if (prev !== null && prev.sessionId === detailSessionId && body.scrollTop <= 0) {
+          const delta = body.scrollHeight - prev.scrollHeight;
+          if (delta !== 0) {
+            body.scrollTop = prev.scrollTop - delta;
+          }
+        }
         setShowScrollToBottom(!transcriptAtBottom(body));
       }
+      lastScrollMetricsRef.current = {
+        sessionId: detailSessionId,
+        scrollHeight: body.scrollHeight,
+        scrollTop: body.scrollTop,
+      };
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -4705,6 +4748,11 @@ export function App() {
                       onScroll={(event) => {
                         followTranscriptRef.current = transcriptAtBottom(event.currentTarget);
                         setShowScrollToBottom(!followTranscriptRef.current);
+                        lastScrollMetricsRef.current = {
+                          sessionId: detailSessionId,
+                          scrollHeight: event.currentTarget.scrollHeight,
+                          scrollTop: event.currentTarget.scrollTop,
+                        };
                         if (followTranscriptRef.current) markVisibleRead();
                       }}
                     >
