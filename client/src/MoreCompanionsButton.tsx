@@ -19,13 +19,3 @@ export function ExpandButton({ expanded, controls, onToggle, children, className
   </button>;
 }
 
-export function MoreCompanionsButton({ expanded, controls, onToggle }: {
-  expanded: boolean;
-  controls: string;
-  onToggle: () => void;
-}) {
-  const label = expanded ? "Fewer companions" : "More companions";
-  return <ExpandButton expanded={expanded} controls={controls} onToggle={onToggle} title={label}>
-    {label}
-  </ExpandButton>;
-}

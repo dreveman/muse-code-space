@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { companionArtwork } from "./companionArtwork";
+import { artworkForCompanionName } from "./Companions";
 import {
   isAnimationPreloaded,
   isIdleMotionAllowed,
@@ -8,7 +8,6 @@ import {
   subscribeIdleMotion,
   subscribeSlowConnection,
 } from "./CompanionAvatar";
-import { companionForName } from "./companionRoster";
 
 function CompanionPortrait({ source, stillSource, crossFade, onError }: {
   source: string;
@@ -85,7 +84,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   archived?: boolean;
   connecting?: boolean;
 }) {
-  const artwork = companionArtwork[companionForName(name)?.id ?? ""];
+  const artwork = artworkForCompanionName(name);
   // Choose the first frame before mounting the image. Starting with a still
   // would briefly show the idle pose before the wake-up animation.
   const [motionAllowed, setMotionAllowed] = useState(() =>

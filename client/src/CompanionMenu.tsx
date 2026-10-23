@@ -1,18 +1,18 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Companion } from "./Companions";
 import { CompanionMiniStats } from "./CompanionMiniStats";
-import { companionForName, companionRoleTitle, isDefaultCompanion } from "./companionRoster";
-import { MoreCompanionsButton } from "./MoreCompanionsButton";
+import { companionForName, companionRoleTitle } from "./companionRoster";
 import { companionArtwork } from "./companionArtwork";
 import { companionWorkingStyle } from "./companionWorkingStyle";
-import { companionModelAccess, orderCompanionsByAccess, MUSE_MODEL_BILLING_URL } from "../../server/src/companionModels";
+import { companionModelAccess, computeCompanionStats, orderCompanionsByAccess, MUSE_MODEL_BILLING_URL } from "../../server/src/companionModels";
 import { CompanionLock } from "./CompanionAccess";
 
-export function CompanionMenu({ name, effort, icon, options, models, picking = false, browsing = false, disabled, disabledReason, busy, onChoose }: {
+export function CompanionMenu({ name, effort, icon, options, models, picking = false, browsing = false, disabled, disabledReason, busy, onChoose, currentCompanion }: {
   name: string;
   effort: string;
   icon: ReactNode;
   options: Companion[];
+  currentCompanion?: Companion;
   models?: readonly { id: string }[];
   picking?: boolean;
   browsing?: boolean;
@@ -22,13 +22,12 @@ export function CompanionMenu({ name, effort, icon, options, models, picking = f
   onChoose: (id: string) => void;
 }) {
   const current = companionForName(name);
-  const artwork = current && companionArtwork[current.id];
+  const artwork = currentCompanion?.artwork ?? (current && companionArtwork[current.id]);
+  const currentStats = currentCompanion?.stats ?? (current ? computeCompanionStats(current.model.preferredId, current.effort) : undefined);
+  const currentRole = currentCompanion?.role ?? current?.role;
   const [open, setOpen] = useState(false);
-  const [moreExpanded, setMoreExpanded] = useState(false);
-  const otherOptions = options.filter((companion) => companion.id !== current?.id);
-  const defaultOptions = otherOptions.filter(isDefaultCompanion).slice(0, 4);
-  const visibleOptions = orderCompanionsByAccess(moreExpanded ? otherOptions : defaultOptions, models);
-  const hasMoreOptions = otherOptions.length > defaultOptions.length;
+  const otherOptions = options.filter((companion) => companion.id !== currentCompanion?.id && companion.name !== name);
+  const visibleOptions = orderCompanionsByAccess(otherOptions, models);
   const [menuMaxHeight, setMenuMaxHeight] = useState<number>();
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -68,7 +67,6 @@ export function CompanionMenu({ name, effort, icon, options, models, picking = f
     };
   }, [open]);
   useEffect(() => { setOpen(false); }, [name, disabled, busy]);
-  useEffect(() => { if (!open) setMoreExpanded(false); }, [open]);
   return <div className="companion-menu-wrap" ref={wrapRef}>
     <button ref={triggerRef} type="button" className="composer-companion-trigger"
       aria-label={`Companion options for ${name}, ${companionWorkingStyle(effort)}`} title="Skills and working style"
@@ -83,9 +81,9 @@ export function CompanionMenu({ name, effort, icon, options, models, picking = f
       <div className="companion-menu-current">
         {artwork && <img src={artwork.still} width={44} height={44} alt="" />}
         <span className="companion-menu-identity"><strong>{name}</strong>
-          {current && <small>{companionRoleTitle(current.role)}</small>}
+          {currentRole && <small>{companionRoleTitle(currentRole)}</small>}
         </span>
-        <CompanionMiniStats ratings={current?.stats} />
+        <CompanionMiniStats ratings={currentStats} />
       </div>
       <hr className="companion-menu-divider" />
       <p className="companion-menu-heading">{picking ? "Pick another companion" : "Let another companion take over"}</p>
@@ -114,8 +112,6 @@ export function CompanionMenu({ name, effort, icon, options, models, picking = f
             </button>;
           })}
         </div>
-        {hasMoreOptions && <MoreCompanionsButton expanded={moreExpanded} controls={`${id}-companions`}
-          onToggle={() => setMoreExpanded((value) => !value)} />}
         </>}
     </div>}
   </div>;
