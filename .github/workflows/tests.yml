@@ -62,7 +62,7 @@ jobs:
     # bump SDK_TARBALL_SHA256 below to its sha256sum.
     runs-on: ubuntu-latest
     env:
-      SDK_TARBALL_SHA256: "031b34f98766aedde11e799911dbe53865265bcd66dd94f9be67731e60a9e67b"
+      SDK_TARBALL_SHA256: "47eae8650eabd9766564ff2db18329a71c7605cdaedeb81ca8190b19e2b88a1e"
     steps:
       - uses: actions/checkout@v4
       - name: Check R2 configuration
