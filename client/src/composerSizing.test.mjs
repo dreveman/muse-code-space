@@ -27,6 +27,12 @@ test("textarea grows with newlines, caps at a readable height, and shrinks again
   resizeComposerTextarea(input);
   assert.equal(input.style.height, "70px");
   assert.equal(input.style.overflowY, "hidden");
+  // When constrained by a short mobile viewport (e.g. 386px above the virtual keyboard),
+  // the textarea caps below 240px so `.terminal-composer` never overflows under the keyboard.
+  contentHeight = 240;
+  resizeComposerTextarea(input, 386);
+  assert.equal(input.style.height, "191px");
+  assert.equal(input.style.overflowY, "auto");
 });
 
 test("both draft and existing-agent composers autosize on text and pane changes", () => {

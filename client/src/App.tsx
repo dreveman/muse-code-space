@@ -1903,6 +1903,8 @@ export function App() {
         element.style.removeProperty("max-height");
         restingHeight = element.offsetHeight;
       }
+      const activeComposerInput = draftInputRef.current ?? takeoverInputRef.current;
+      if (activeComposerInput) resizeComposerTextarea(activeComposerInput);
     };
     measure();
     viewport?.addEventListener("resize", measure);
