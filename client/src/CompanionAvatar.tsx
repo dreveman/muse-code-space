@@ -18,6 +18,35 @@ let lastNotifiedSlow: boolean | null = null;
 let reducedMotionMedia: MediaQueryList | null = null;
 let resourceObserver: PerformanceObserver | null = null;
 const preloadedAnimations = new Set<string>();
+// Bounded LRU of decoded Image objects so mobile Safari/WKWebView does not
+// evict the active companion's animations when outgoing <img> layers retire
+// between idle / working / waking transitions.
+const MAX_RETAINED_IMAGES = 10;
+const retainedImages = new Map<string, HTMLImageElement>();
+
+function retainLoadedImage(url: string, existingImg?: HTMLImageElement | null): void {
+  if (typeof Image === "undefined") return;
+  if (retainedImages.has(url)) {
+    const prev = retainedImages.get(url)!;
+    retainedImages.delete(url);
+    retainedImages.set(url, prev);
+    return;
+  }
+  const holder = existingImg ? (() => {
+    const img = new Image();
+    img.src = url;
+    return img;
+  })() : (() => {
+    const img = new Image();
+    img.src = url;
+    return img;
+  })();
+  retainedImages.set(url, holder);
+  if (retainedImages.size > MAX_RETAINED_IMAGES) {
+    const oldest = retainedImages.keys().next().value;
+    if (oldest !== undefined) retainedImages.delete(oldest);
+  }
+}
 
 export function isAnimationPreloaded(url: string | undefined): boolean {
   if (!url) return false;
@@ -36,8 +65,11 @@ export function isAnimationPreloaded(url: string | undefined): boolean {
   return false;
 }
 
-export function markAnimationPreloaded(url: string | undefined): void {
-  if (url) preloadedAnimations.add(url);
+export function markAnimationPreloaded(url: string | undefined, img?: HTMLImageElement | null): void {
+  if (url) {
+    preloadedAnimations.add(url);
+    retainLoadedImage(url, img);
+  }
 }
 
 export function preloadCompanionStill(url: string | undefined): Promise<void> {
@@ -51,7 +83,7 @@ export function preloadCompanionStill(url: string | undefined): Promise<void> {
       window.clearTimeout(timer);
       img.onload = null;
       img.onerror = null;
-      markAnimationPreloaded(url);
+      markAnimationPreloaded(url, img);
       resolve();
     };
     const timer = window.setTimeout(done, 10_000);

@@ -418,7 +418,12 @@ async function serveStatic(pathname: string): Promise<Response> {
     const html = (await file.text()).replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
-  return new Response(file, { headers: { "cache-control": "no-store" } });
+  const isHashedAsset = /-[a-z0-9]{8}\.(?:png|webp|js|css)$/i.test(rel);
+  return new Response(file, {
+    headers: {
+      "cache-control": isHashedAsset ? "public, max-age=31536000, immutable" : "no-store",
+    },
+  });
 }
 
 const server = Bun.serve({
