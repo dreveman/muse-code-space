@@ -51,6 +51,7 @@ import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from 
 import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
+import { runGithubAppSetup } from "./githubAppSetup.mjs";
 import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
 import { readGitVcsStatus } from "./vcsSmartlog.mjs";
 import {
@@ -1202,21 +1203,9 @@ function appendMuseInboxRequest(text) {
   return record;
 }
 
-// Runs the runtime setup script non-interactively: the PEM travels on
-// stdin only (never argv/logs), GitHub validation happens before any
-// write, and the broker is not restarted (activation is Muse's step).
-function runGithubAppSetup(appId, installationId, privateKey) {
-  return new Promise((resolve) => {
-    const script = join(dirname(STATE_DIR), "setup_github_broker.py");
-    execFile("python3", [script, "--non-interactive", "--app-id", String(appId), "--installation-id", String(installationId)],
-      { timeout: 90_000, maxBuffer: 1_000_000, input: String(privateKey ?? "") },
-      (error, _stdout, stderr) => {
-        if (!error) return resolve({ ok: true, error: null });
-        const detail = String(stderr ?? "").trim().split("\n").at(-1)?.slice(0, 240) ?? "";
-        resolve({ ok: false, error: detail || "GitHub App setup failed." });
-      });
-  });
-}
+// The dialog's GitHub App step validates + writes credentials in-process
+// (see githubAppSetup.mjs for why the old subprocess hand-off hung); the
+// broker is not restarted here — activation stays Muse's step below.
 
 // After App credentials are written, the step is only truly done once the
 // restarted broker can use them. Probe through the broker at most every
@@ -2276,7 +2265,11 @@ const server = createServer(async (req, res) => {
           if (!privateKey.includes("-----BEGIN") || !privateKey.includes("PRIVATE KEY-----") || !privateKey.includes("-----END")) {
             return json(res, 400, { error: "That did not look like a PEM private key.", code: "invalid_github_app" });
           }
-          const setup = await runGithubAppSetup(appId, installationId, privateKey);
+          const setup = await runGithubAppSetup(appId, installationId, privateKey, {
+            configFile: GITHUB_BROKER_CONFIG,
+            profileFile: join(HOME, ".profile"),
+            brokerCaFile: join(dirname(STATE_DIR), "github-broker-ca.pem"),
+          });
           if (!setup.ok) return json(res, 422, { error: setup.error ?? "GitHub App validation failed — nothing written.", code: "github_app_validation_failed" });
           // Credentials are written and validated; the broker still has to
           // be restarted to load them. Ask Muse to activate + verify, and

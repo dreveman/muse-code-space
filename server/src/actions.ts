@@ -1174,9 +1174,13 @@ export const Actions = {
       }
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        // App-step validation runs in the pilot under its own bounded
+        // retry budget (~35s worst case); the default 10s pilot timeout
+        // would abort first and mask the real outcome as "Could not
+        // connect", so this call gets a timeout that outlasts it.
         const res = await pilotRequest(baseUrl, "/github-setup",
           { method: "POST", body: JSON.stringify({ step: args.step, appId: args.app_id, installationId: args.installation_id, privateKey: args.private_key }) },
-          z.object({ brokerDone: z.boolean(), appDone: z.boolean(), brokerRequested: z.boolean().optional(), appRequested: z.boolean().optional(), appHelpRequested: z.boolean().optional() }));
+          z.object({ brokerDone: z.boolean(), appDone: z.boolean(), brokerRequested: z.boolean().optional(), appRequested: z.boolean().optional(), appHelpRequested: z.boolean().optional() }), 60_000);
         ctx.invalidateQueries({ queryKey: ["github-setup"] });
         ctx.invalidateQueries({ queryKey: ["github-repos"] });
         return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, broker_requested: res.brokerRequested ?? false, app_requested: res.appRequested ?? false, app_help_requested: res.appHelpRequested ?? false, error: null };
