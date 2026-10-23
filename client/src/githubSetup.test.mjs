@@ -66,8 +66,8 @@ test("the real pilot reports genuine status and asks Muse for the broker credent
   assert.ok(pilot.includes('mode === "app" && (appActivationPending ? await probeAppActivation() : true)'), "App step completes only once the restarted broker proves the credential");
   assert.ok(pilot.includes("initiate the Secure Vault addition of a custom API credential named custom.github-broker, then write the surrogate broker config and restart the broker"), "broker step asks the Muse assistant via its inbox");
   assert.ok(pilot.includes("MUSE_INBOX_PATH"), "the request lands where readMuseMessages reads");
-  assert.ok(pilot.includes("runGithubAppSetup(appId, installationId, privateKey)"), "App step validates and writes through the setup script");
-  assert.ok(pilot.includes("--non-interactive"), "the setup script is driven non-interactively with the key on stdin");
+  assert.ok(pilot.includes("runGithubAppSetup(appId, installationId, privateKey, {"), "App step validates and writes through the in-pilot setup helper");
+  assert.ok(pilot.includes('from "./githubAppSetup.mjs"'), "validation lives in the pilot's githubAppSetup module, not a stdin subprocess");
   assert.ok(pilot.includes("guide me through creating the GitHub App for Code Space"), "App help asks Muse for a walkthrough");
   assert.ok(pilot.includes("activate the Code Space GitHub App broker credential"), "App step asks Muse to activate the broker");
   const hook = readFileSync(new URL("../../hooks/code-space-assistant-job.md", import.meta.url), "utf8");
