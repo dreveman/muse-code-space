@@ -564,9 +564,9 @@ function buildRealisticTranscriptClosures(session: Session, turnId: string, targ
         path: editPath,
         hunks: [{
           oldStart: 1,
-          oldLines: 8,
+          oldLines: 9,
           newStart: 1,
-          newLines: 10,
+          newLines: 11,
           lines: [
             ' import { useEffect, useMemo, useRef, useState } from "react";',
             ' import type { Session, TranscriptEvent } from "./types";',
@@ -588,7 +588,7 @@ function buildRealisticTranscriptClosures(session: Session, turnId: string, targ
         path: editPath,
         hunks: [{
           oldStart: 15,
-          oldLines: 6,
+          oldLines: 5,
           newStart: 15,
           newLines: 7,
           lines: [
