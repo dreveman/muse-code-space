@@ -1092,6 +1092,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
     min-height: 100dvh;
     height: 100dvh;
   }
+  .hatch-space-root[data-hatch-space-root][data-keyboard-open="true"] {
+    padding-bottom: var(--bottom-padding, 0px) !important;
+  }
   .workspace { padding: 0; }
   .console-layout { gap: 0; }
   .console-layout.mobile-detail-view {

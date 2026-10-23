@@ -1871,24 +1871,53 @@ export function App() {
     if (!isNarrow || mobileListOpen || !element) return;
     const viewport = window.visualViewport;
     const spaceRoot = document.querySelector<HTMLElement>("[data-generated-space-root]");
+    const hatchRoot = document.querySelector<HTMLElement>(".hatch-space-root[data-hatch-space-root]");
+    let maxViewportHeight = viewport?.height ?? window.innerHeight;
+    let restingHeight = element.offsetHeight;
     const measure = () => {
       if (!viewport || viewport.scale !== 1) return;
+      if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height;
       if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
-      const top = element.getBoundingClientRect().top;
-      const rawHeight = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - top));
-      const sizeExpr = `calc(${rawHeight}px - var(--hatch-space-bottom-padding, 0px))`;
-      element.style.height = sizeExpr;
-      element.style.maxHeight = sizeExpr;
+      const activeTag = document.activeElement?.tagName;
+      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
+      const viewportShrunk = viewport.height < maxViewportHeight - 4;
+      const keyboardOpen = inputFocused || viewportShrunk;
+      if (keyboardOpen) {
+        element.dataset.keyboardOpen = "true";
+        hatchRoot?.setAttribute("data-keyboard-open", "true");
+        // While the virtual keyboard is open, iOS WKWebView still reports
+        // env(safe-area-inset-bottom) as ~34px even though the keyboard covers
+        // the home indicator. Subtract only var(--bottom-padding, 0px) (dropping
+        // env(safe-area-inset-bottom)) so no 34px safe-area gap sits above the keyboard.
+        const top = element.getBoundingClientRect().top;
+        const rawHeight = Math.max(0, Math.floor(viewport.height + viewport.offsetTop - top));
+        const clampedHeight = restingHeight > 0 ? Math.min(restingHeight, rawHeight) : rawHeight;
+        const sizeExpr = `calc(${clampedHeight}px - var(--bottom-padding, 0px))`;
+        element.style.height = sizeExpr;
+        element.style.maxHeight = sizeExpr;
+      } else {
+        delete element.dataset.keyboardOpen;
+        hatchRoot?.removeAttribute("data-keyboard-open");
+        element.style.removeProperty("height");
+        element.style.removeProperty("max-height");
+        restingHeight = element.offsetHeight;
+      }
     };
     measure();
     viewport?.addEventListener("resize", measure);
     viewport?.addEventListener("scroll", measure);
     window.addEventListener("resize", measure);
+    document.addEventListener("focusin", measure);
+    document.addEventListener("focusout", measure);
     return () => {
       viewport?.removeEventListener("resize", measure);
       viewport?.removeEventListener("scroll", measure);
       window.removeEventListener("resize", measure);
+      document.removeEventListener("focusin", measure);
+      document.removeEventListener("focusout", measure);
+      delete element.dataset.keyboardOpen;
+      hatchRoot?.removeAttribute("data-keyboard-open");
       element.style.removeProperty("height");
       element.style.removeProperty("max-height");
     };
