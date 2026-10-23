@@ -10,47 +10,69 @@ import {
 } from "./CompanionAvatar";
 import { companionForName } from "./companionRoster";
 
-function CompanionPortrait({ source, initialSource, crossFade, onError }: {
+function CompanionPortrait({ source, stillSource, crossFade, onError }: {
   source: string;
-  initialSource?: string;
+  stillSource?: string;
   crossFade: boolean;
   onError: () => void;
 }) {
-  const startSource = initialSource && crossFade && initialSource !== source ? initialSource : source;
-  const [layers, setLayers] = useState(() => startSource !== source ? [startSource, source] : [source]);
-  const [shown, setShown] = useState(startSource);
-  const loaded = useRef(new Set<string>());
+  const baseLayer = stillSource ?? source;
+  const startShown = isAnimationPreloaded(source) ? source : baseLayer;
+  const [layers, setLayers] = useState<string[]>(() => {
+    const initial = [baseLayer];
+    if (source !== baseLayer) initial.push(source);
+    return initial;
+  });
+  const [shown, setShown] = useState(startShown);
+  const loaded = useRef(new Set<string>([baseLayer, ...(isAnimationPreloaded(source) ? [source] : [])]));
+
   useLayoutEffect(() => {
-    if (!crossFade) {
-      if (layers.length !== 1 || layers[0] !== source) setLayers([source]);
-      setShown(source);
-    } else if (!layers.includes(source)) {
-      setLayers([...layers, source]);
-    } else if (loaded.current.has(source)) {
-      // A rapid state change can return to an image that's still fading out.
+    loaded.current.add(baseLayer);
+    const sourceReady = loaded.current.has(source) || isAnimationPreloaded(source);
+    if (sourceReady) {
+      loaded.current.add(source);
       setShown(source);
     }
-  }, [source, crossFade, layers]);
+    setLayers((current) => {
+      if (!crossFade && sourceReady) {
+        return source === baseLayer ? [baseLayer] : [baseLayer, source];
+      }
+      const next = current.includes(baseLayer) ? [...current] : [baseLayer, ...current];
+      if (!next.includes(source)) next.push(source);
+      return next;
+    });
+  }, [source, baseLayer, crossFade]);
+
   useEffect(() => {
-    // Retire outgoing images after the 640ms fade so their animations stop.
+    // Retire outgoing animated layers after the 640ms fade so their animations
+    // stop, while keeping `baseLayer` (still.png) permanently mounted underneath.
     const timer = window.setTimeout(() => {
-      setLayers((current) => current.filter((layer) => layer === shown || layer === source));
+      setLayers((current) => {
+        const filtered = current.filter((layer) => layer === baseLayer || layer === shown || layer === source);
+        return filtered.length === current.length ? current : filtered;
+      });
     }, 660);
     return () => window.clearTimeout(timer);
-  }, [shown, source]);
+  }, [shown, source, baseLayer]);
+
   return <span className="transcript-companion-portrait" aria-hidden="true">
     {layers.map((layer) => <img key={layer} className="transcript-companion-image"
       src={layer} width={64} height={64} alt="" decoding={isAnimationPreloaded(layer) ? "sync" : "async"}
-      style={{ opacity: layer === shown ? 1 : 0 }}
+      style={{ opacity: layer === baseLayer || layer === shown ? 1 : 0 }}
       onLoad={(event) => {
         loaded.current.add(layer);
-        markAnimationPreloaded(layer);
+        markAnimationPreloaded(layer, event.currentTarget);
         if (layer !== source) return;
         // Establish the starting opacity even when the image is cached.
         void getComputedStyle(event.currentTarget).opacity;
         setShown(layer);
       }}
-      onError={() => { if (layer === source) onError(); }} />)}
+      onError={() => {
+        if (layer === source) {
+          setShown(baseLayer);
+          onError();
+        }
+      }} />)}
   </span>;
 }
 
@@ -100,7 +122,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({ name, act
   return (
     <div className="transcript-companion" data-animation={archived ? "archived" : animation}>
       {imageSource && <CompanionPortrait source={imageSource}
-        initialSource={starting ? imageSource : (artwork?.still ?? imageSource)}
+        stillSource={artwork?.still ?? imageSource}
         crossFade={motionAllowed && visible && !archived}
         onError={() => setFailedSource(source ?? null)} />}
       <span className="transcript-companion-label" role="status" aria-live="polite" aria-atomic="true"
