@@ -74,7 +74,8 @@ export const customCompanions = sqliteTable("custom_companions", {
   // JSON array of up to 3 skill labels. Descriptive card copy only.
   skills: text("skills").notNull().default("[]"),
   tradeOff: text("trade_off").notNull().default(""),
-  // Personality text shown on the card. Not yet injected into the pilot.
+  // Personality text shown on the card and sent to the pilot at session
+  // start/handoff so it shapes the conversation.
   soul: text("soul").notNull().default(""),
   modelId: text("model_id").notNull().default("muse-spark-1.3"),
   effort: text("effort").notNull().default("medium"),

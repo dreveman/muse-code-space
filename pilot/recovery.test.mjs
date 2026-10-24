@@ -769,3 +769,15 @@ test("user_name persists, survives partial identity edits, and clears with null"
   assert.equal(t.getAssistant().user_name, null);
   assert.equal(JSON.parse(readFileSync(path.join(stateDir, "assistant.json"), "utf8")).user_name, null);
 });
+
+test("the first-turn preamble carries the companion SOUL before the separator", () => {
+  const soul = "You are Nova, an AI-powered code companion.\n\nWork in an inventive way.";
+  const withSoul = t.agentPreamble("nova", soul);
+  assert.ok(withSoul.includes(`[SOUL.md]\n${soul}`));
+  assert.ok(withSoul.startsWith('[Code Space] You are agent "nova"'));
+  const without = t.agentPreamble("nova");
+  assert.ok(!without.includes("[SOUL.md]"));
+  assert.equal(t.agentPreamble("nova", "   "), without);
+  assert.equal(t.cleanSoul(123), null);
+  assert.equal(t.soulBlock("x".repeat(9000))?.length, "[SOUL.md]\n".length + 8000);
+});
