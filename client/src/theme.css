@@ -264,27 +264,32 @@ button { color: inherit; }
 .detail-loading-progress-fill { width: 90%; animation: detail-loading-pulse 1.6s ease-in-out infinite; }
 @keyframes detail-loading-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 /* Home welcome card (when no conversation or companion is selected). */
-.welcome-home-stage { container-type: inline-size; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; align-items: center; padding: 56px 24px 32px; }
+.welcome-home-stage { container-type: inline-size; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; align-items: center; padding: 56px 24px 36px; }
 .welcome-home-card {
-  width: min(100%, 820px);
+  width: min(100%, 620px);
+  min-height: 488px;
   margin-block: auto;
-  padding: 24px 26px;
+  padding: 22px 24px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 22px;
   background: color-mix(in srgb, var(--surface) 65%, white);
   box-shadow: 0 12px 40px rgb(0 0 0 / .035);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 22px;
+  gap: 20px;
 }
 :root[data-color-mode="dark"] .welcome-home-card { background: var(--surface); box-shadow: none; }
-@container (min-width: 680px) {
-  .welcome-home-card { grid-template-columns: minmax(0, 1fr) 284px; gap: 28px; padding: 26px 28px; }
+@container (min-width: 560px) {
+  .welcome-home-card { grid-template-columns: minmax(0, 1fr) 224px; gap: 20px; padding: 24px 26px; }
+}
+@media (max-width: 779px) {
+  .welcome-home-stage { padding: 58px 18px 24px; }
+  .welcome-home-card { width: min(100%, 560px); min-height: 0; padding: 18px; border-radius: 18px; gap: 18px; }
 }
 .welcome-home-main { min-width: 0; display: flex; flex-direction: column; }
 .welcome-home-eyebrow { color: var(--dim); font: 650 11px/1.3 var(--sans); letter-spacing: .07em; text-transform: uppercase; }
-.welcome-home-headline { margin: 5px 0 16px; color: var(--text); font: 750 clamp(22px, 2.4vw, 26px)/1.18 var(--sans); letter-spacing: -.03em; }
-.welcome-session-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 18px; }
+.welcome-home-headline { margin: 4px 0 12px; color: var(--text); font: 750 clamp(20px, 2.2vw, 23px)/1.18 var(--sans); letter-spacing: -.03em; }
+.welcome-session-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
 .welcome-session-row { width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; display: flex; align-items: center; gap: 9px; text-align: left; font: 400 13px/1.35 var(--sans); transition: background-color 120ms ease; }
 .welcome-session-row:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
 .welcome-session-row.is-unread { font-weight: 650; }
@@ -335,9 +340,9 @@ button { color: inherit; }
 .welcome-btn-primary:hover { filter: brightness(0.95); }
 .welcome-btn-secondary { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
 .welcome-btn-secondary:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
-.welcome-home-feature { min-width: 0; display: flex; flex-direction: column; justify-content: center; border-top: 1px solid var(--border); padding-top: 20px; }
-@container (min-width: 680px) {
-  .welcome-home-feature { border-top: 0; border-left: 1px solid var(--border); padding-top: 0; padding-left: 26px; }
+.welcome-home-feature { min-width: 0; display: flex; flex-direction: column; justify-content: center; border-top: 1px solid var(--border); padding-top: 18px; }
+@container (min-width: 560px) {
+  .welcome-home-feature { border-top: 0; border-left: 1px solid var(--border); padding-top: 0; padding-left: 20px; }
 }
 .welcome-feature-art { flex: 0 0 152px; height: 152px; margin-bottom: 16px; }
 .welcome-illus-window { height: 152px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); overflow: hidden; box-shadow: 0 4px 16px rgb(0 0 0 / .04); font: 11px/1.4 var(--mono); }
