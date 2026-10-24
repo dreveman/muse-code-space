@@ -38,8 +38,8 @@ test("row rename/archive buttons are hover-only and hidden on touch", () => {
     "revealed only where hover is primary — a touch tap must navigate on first press, not reveal actions");
 });
 
-test("hamburger menu remains available on cards, during startup, with no agent, and in chats", () => {
-  assert.equal((app.match(/<SessionMenu\b/g) ?? []).length, 4);
+test("hamburger menu remains available on cards, during startup, with no agent, in chats, and in linked split chats", () => {
+  assert.equal((app.match(/<SessionMenu\b/g) ?? []).length, 5);
   assert.ok(app.includes('!draftSelected && (selectedId === null || shouldShowConversationLoading({ isPending: detailQuery.isPending,'), "empty/loading detail keeps the menu, but list data renders the conversation instead of spinning");
   assert.ok(app.includes('className="chat-floating-actions"'), "empty detail keeps floating menu controls");
   assert.ok(app.includes('actions={sessionMenuActions(selectedSession ?? detailSession)}'), "real agents retain session actions");

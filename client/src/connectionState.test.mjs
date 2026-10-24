@@ -38,7 +38,7 @@ test("a disconnected pilot is visible even while the app can list sessions", () 
   assert.ok(actions.includes("pilot_available: false"), "a failed pilot poll is not an empty successful poll");
   assert.ok(actions.includes("pilot_available: true"), "successful poll clears the outage");
   const companion = readFileSync(new URL("./TranscriptCompanion.tsx", import.meta.url), "utf8");
-  assert.equal((app.match(/connecting=\{connectionLost \|\| pilotUnavailable\}/g) ?? []).length, 2, "both conversation headers receive app and pilot outage signals");
+  assert.equal((app.match(/connecting=\{connectionLost \|\| pilotUnavailable\}/g) ?? []).length, 3, "starting, primary, and linked conversation headers receive app and pilot outage signals");
   assert.ok(companion.includes('connecting ? "is connecting"'), "connection state takes priority in the companion bubble");
   assert.ok(!companion.includes('className="working-spinner"'), "connection status has no spinner");
   assert.ok(!app.includes('className="connection-banner"'), "no separate floating connection indicator");

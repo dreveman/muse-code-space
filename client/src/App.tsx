@@ -39,7 +39,8 @@ import { COMPOSER_MIN_HEIGHT, resizeComposerTextarea } from "./composerSizing";
 import { formatMessageTime } from "./messageTime";
 import { reasoningDisplay } from "./reasoningDisplay";
 import { redundantSendToolIds } from "./messageToolVisibility";
-import { SessionMenu, type SessionMenuAction } from "./WireDebug";
+import { SessionMenu, type SessionMenuAction, type SplitViewOption } from "./WireDebug";
+import { findLinkedPair, linkSessionPair, loadLinkedSessionPairs, pruneLinkedSessionPairs, saveLinkedSessionPairs, type LinkedSessionPair } from "./splitView";
 import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Dialogs";
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { PrMonitorEvent, PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
@@ -1263,6 +1264,15 @@ function FilterIcon() {
   );
 }
 
+function SplitColumnsIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2.5" width="12" height="11" rx="2" />
+      <path d="M8 2.5v11" />
+    </svg>
+  );
+}
+
 function MuseIcon({ markOnly = false }: { markOnly?: boolean }) {
   return (
     <svg aria-hidden="true" viewBox={markOnly ? "5 4 19 16" : "0 0 24 24"} fill="none">
@@ -1517,6 +1527,7 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
 const SessionRow = memo(function SessionRow({
   session,
   selected,
+  pairedSelected = false,
   past,
   archiveBusy,
   deleteBusy,
@@ -1535,6 +1546,7 @@ const SessionRow = memo(function SessionRow({
 }: {
   session: Session;
   selected: boolean;
+  pairedSelected?: boolean;
   /** Shown in the Past list: no rename, and delete replaces archive/restore. */
   past: boolean;
   archiveBusy: boolean;
@@ -1565,7 +1577,7 @@ const SessionRow = memo(function SessionRow({
   const relativeTime = formatRelativeTime(session.updated_at, nowMs);
   const rowOwnedPrs = session.owned_prs ?? [];
   return (
-    <div className={`session-row${selected ? " selected" : ""}${summary ? " has-summary" : ""}${visual === "unread" ? " unread" : ""}`} style={agentColorStyle(session.title)}>
+    <div className={`session-row${selected ? " selected" : ""}${summary ? " has-summary" : ""}${visual === "unread" ? " unread" : ""}`} style={agentColorStyle(session.title)} data-paired-selected={pairedSelected ? "true" : undefined}>
       {renaming ? (
         <form
           className="session-rename-form"
@@ -1703,6 +1715,16 @@ export function App() {
   // Latest selection for async work (queued sends) that outlives a render.
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
+  const [linkedPairs, setLinkedPairs] = useState<readonly LinkedSessionPair[]>(() => loadLinkedSessionPairs());
+  useEffect(() => {
+    saveLinkedSessionPairs(linkedPairs);
+  }, [linkedPairs]);
+  const linkConversations = useCallback((sourceId: string, targetId: string | null) => {
+    setLinkedPairs((current) => linkSessionPair(current, sourceId, targetId));
+  }, []);
+  const sessionScrollStateRef = useRef(new Map<string, { scrollTop: number; follow: boolean }>());
+  const sessionDraftTextRef = useRef(new Map<string, string>());
+  const mobileSplitVisitedRef = useRef(false);
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 779px)").matches);
   const [mobileListOpen, setMobileListOpen] = useState(false);
   const mobileOpenedFromListRef = useRef(false);
@@ -2340,13 +2362,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    setDirection("");
+    if (!sessionsQuery.data) return;
+    const activeIds = new Set(sessionsQuery.data.sessions.filter((item) => !item.archived).map((item) => item.id));
+    setLinkedPairs((current) => pruneLinkedSessionPairs(current, activeIds));
+  }, [sessionsQuery.data]);
+  const activeLinkedPair = useMemo(
+    () => findLinkedPair(linkedPairs, selectedId),
+    [linkedPairs, selectedId],
+  );
+  const linkedPartnerId = activeLinkedPair?.partnerId ?? null;
+  const linkedPartnerIdRef = useRef<string | null>(linkedPartnerId);
+  linkedPartnerIdRef.current = linkedPartnerId;
+  const splitViewOptionsFor = useCallback(
+    (sourceId: string): SplitViewOption[] => {
+      const currentPartnerId = findLinkedPair(linkedPairs, sourceId)?.partnerId ?? null;
+      return sessions
+        .filter((item) => !item.archived && item.id !== sourceId)
+        .map((item) => ({
+          id: item.id,
+          label: displayAgentName(item.title),
+          description: sessionTaskTitle(item) || "Active conversation",
+          checked: item.id === currentPartnerId,
+        }));
+    },
+    [sessions, linkedPairs],
+  );
+
+  useEffect(() => {
+    const savedDraft = selectedId ? (sessionDraftTextRef.current.get(selectedId) ?? "") : "";
+    setDirection(savedDraft);
     setAttachments([]);
     setCaretPosition(null);
     promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     snappedSessionRef.current = null;
-    followTranscriptRef.current = true;
-    setShowScrollToBottom(false);
+    const savedScroll = selectedId ? sessionScrollStateRef.current.get(selectedId) : undefined;
+    followTranscriptRef.current = savedScroll ? savedScroll.follow : true;
+    setShowScrollToBottom(savedScroll ? !savedScroll.follow : false);
     setPendingDirection(null);
     setPendingEchoAnchor(0);
     setTakeoverError(null);
@@ -2360,6 +2411,12 @@ export function App() {
     setInterrupting(false);
     voiceRecognitionRef.current?.stop();
   }, [selectedId]);
+  useEffect(() => {
+    if (selectedId && !draftSelected) {
+      if (direction) sessionDraftTextRef.current.set(selectedId, direction);
+      else sessionDraftTextRef.current.delete(selectedId);
+    }
+  }, [selectedId, draftSelected, direction]);
 
   const selectedSession = sessions.find((item) => item.id === selectedId) ?? null;
   const detailQuery = useQuery({
@@ -2823,6 +2880,8 @@ export function App() {
     awaitingPilot || (workingLabel === "Starting" && transcriptEvents.filter((event) => event.kind === "user").length <= 1)
   );
 
+  const partnerSession = linkedPartnerId ? (sessions.find((item) => item.id === linkedPartnerId) ?? null) : null;
+
   useEffect(() => {
     const targets = [...new Set([selectedId, queuedSessionId].filter((id): id is string => id !== null && id !== draft?.id))];
     if (targets.length === 0) return;
@@ -2872,7 +2931,7 @@ export function App() {
     let running = false;
     const syncOthers = async () => {
       if (running) return;
-      const targets = backgroundTargetsRef.current.filter((item) => item.id !== selectedIdRef.current);
+      const targets = backgroundTargetsRef.current.filter((item) => item.id !== selectedIdRef.current && item.id !== linkedPartnerIdRef.current);
       if (targets.length === 0) return;
       running = true;
       const start = backgroundCursorRef.current % targets.length;
@@ -2919,9 +2978,18 @@ export function App() {
     setMobileSideOpen(false);
   }, [detailSessionId]);
   const hasSidePanel = !!detailSessionId && (sidePanels[detailSessionId]?.tabs.length ?? 0) > 0;
+  const hasLinkedSplitPane =
+    !isNarrow &&
+    !hasSidePanel &&
+    activeLinkedPair !== null &&
+    partnerSession !== null &&
+    selectedCompanionId === null &&
+    !draftSelected &&
+    !createCompanionOpen;
+  const hasTwoPaneSplit = hasSidePanel || hasLinkedSplitPane;
   useEffect(() => {
     const element = detailSplitRef.current;
-    if (!element || !hasSidePanel) { setDetailSplitWidth(0); return; }
+    if (!element || !hasTwoPaneSplit) { setDetailSplitWidth(0); return; }
     const measure = () => setDetailSplitWidth((old) => {
       const width = element.getBoundingClientRect().width;
       return width === old ? old : width;
@@ -2931,7 +2999,7 @@ export function App() {
     observer?.observe(element);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [detailSessionId, hasSidePanel, draftSelected, selectedCompanionId]);
+  }, [detailSessionId, hasTwoPaneSplit, draftSelected, selectedCompanionId]);
   const sidebarBounds = sidebarWidthBounds(viewportWidth);
   const splitWidth = detailSplitWidth || Math.max(1, viewportWidth - paneSizes.sidebarWidth - DIVIDER_WIDTH);
   const chatBounds = chatWidthBounds(splitWidth);
@@ -3008,8 +3076,16 @@ export function App() {
     snappedSessionRef.current = detailSessionId;
     const terminalBody = terminalBodyRef.current;
     if (terminalBody) {
-      followTranscriptRef.current = true;
-      terminalBody.scrollTop = terminalBody.scrollHeight;
+      const saved = sessionScrollStateRef.current.get(detailSessionId);
+      if (saved && !saved.follow) {
+        followTranscriptRef.current = false;
+        terminalBody.scrollTop = saved.scrollTop;
+        setShowScrollToBottom(!transcriptAtBottom(terminalBody));
+      } else {
+        followTranscriptRef.current = true;
+        terminalBody.scrollTop = terminalBody.scrollHeight;
+        setShowScrollToBottom(false);
+      }
       lastScrollMetricsRef.current = {
         sessionId: detailSessionId,
         scrollHeight: terminalBody.scrollHeight,
@@ -4441,50 +4517,93 @@ export function App() {
                       </div>
                       {(sidebarCollapsed || !collapsedGroups.has(group.key)) && (
                         <div className="session-group-list companion-task-list">
-                          {group.sessions.map((session) => (
-                            <SessionRow
-                              key={session.id}
-                              session={session}
-                              selected={selectedCompanionId === null && session.id === selectedId}
-                              past={filter === "inactive"}
-                              archiveBusy={archiveBusy}
-                              deleteBusy={deleteBusy}
-                              onDeleteClick={() => askToDelete(session)}
-                              nowMs={nowMs}
-                              onSelect={() => {
-                                mobileOpenedFromListRef.current = true;
-                                setSelectedCompanionId(null);
-                                setSelectedId(session.id);
-                                setMobileListOpen(false);
-                              }}
-                              onArchiveClick={() => {
-                                // No confirmation: archiving is undone with Restore.
-                                void changeArchiveState(session.id, true);
-                              }}
-                              onRestoreClick={() => {
-                                void changeArchiveState(session.id, false);
-                              }}
-                              renaming={renamingId === session.id}
-                              renameValue={renameValue}
-                              renameBusy={renameBusy}
-                              onRenameClick={() => {
-                                setRenamingId(session.id);
-                                setRenameValue(sessionTaskTitle(session).slice(0, 240));
-                                setRenameError(null);
-                              }}
-                              onRenameChange={(value) => {
-                                setRenameValue(value);
-                                setRenameError(null);
-                              }}
-                              onRenameSubmit={() => {
-                                void submitRename(session.id);
-                              }}
-                              onRenameCancel={() => {
-                                setRenamingId(null);
-                                setRenameError(null);
-                              }}
-                            />
-                          ))}
+                          {(() => {
+                            const renderedIds = new Set<string>();
+                            const visibleMap = new Map(visibleSessions.map((item) => [item.id, item]));
+                            const renderRow = (session: Session, pairedSelected = false) => (
+                              <SessionRow
+                                key={session.id}
+                                session={session}
+                                selected={selectedCompanionId === null && session.id === selectedId}
+                                pairedSelected={pairedSelected}
+                                past={filter === "inactive"}
+                                archiveBusy={archiveBusy}
+                                deleteBusy={deleteBusy}
+                                onDeleteClick={() => askToDelete(session)}
+                                nowMs={nowMs}
+                                onSelect={() => {
+                                  mobileOpenedFromListRef.current = true;
+                                  mobileSplitVisitedRef.current = false;
+                                  setSelectedCompanionId(null);
+                                  setSelectedId(session.id);
+                                  setMobileListOpen(false);
+                                }}
+                                onArchiveClick={() => {
+                                  // No confirmation: archiving is undone with Restore.
+                                  void changeArchiveState(session.id, true);
+                                }}
+                                onRestoreClick={() => {
+                                  void changeArchiveState(session.id, false);
+                                }}
+                                renaming={renamingId === session.id}
+                                renameValue={renameValue}
+                                renameBusy={renameBusy}
+                                onRenameClick={() => {
+                                  setRenamingId(session.id);
+                                  setRenameValue(sessionTaskTitle(session).slice(0, 240));
+                                  setRenameError(null);
+                                }}
+                                onRenameChange={(value) => {
+                                  setRenameValue(value);
+                                  setRenameError(null);
+                                }}
+                                onRenameSubmit={() => {
+                                  void submitRename(session.id);
+                                }}
+                                onRenameCancel={() => {
+                                  setRenamingId(null);
+                                  setRenameError(null);
+                                }}
+                              />
+                            );
+                            const nodes: ReactNode[] = [];
+                            for (const session of group.sessions) {
+                              if (renderedIds.has(session.id)) continue;
+                              const pair = filter === "active" ? findLinkedPair(linkedPairs, session.id) : null;
+                              const leftSession = pair ? visibleMap.get(pair.leftId) : undefined;
+                              const rightSession = pair ? visibleMap.get(pair.rightId) : undefined;
+                              if (pair && leftSession && rightSession) {
+                                renderedIds.add(leftSession.id);
+                                renderedIds.add(rightSession.id);
+                                const leftSelected = selectedCompanionId === null && selectedId === leftSession.id;
+                                const rightSelected = selectedCompanionId === null && selectedId === rightSession.id;
+                                const pairSelected = leftSelected || rightSelected;
+                                nodes.push(
+                                  <div
+                                    key={`linked-pair-${leftSession.id}-${rightSession.id}`}
+                                    className={`session-linked-pair${pairSelected ? " is-selected" : ""}`}
+                                    role="group"
+                                    aria-label={`Linked split view: ${displayAgentName(leftSession.title)} and ${displayAgentName(rightSession.title)}`}
+                                  >
+                                    {renderRow(leftSession, rightSelected)}
+                                    <div className="session-linked-divider" aria-hidden="true" title="Linked for split view">
+                                      <span className="session-linked-line" />
+                                      <span className="session-linked-badge">
+                                        <SplitColumnsIcon />
+                                        <span className="session-linked-badge-label">Split view</span>
+                                      </span>
+                                      <span className="session-linked-line" />
+                                    </div>
+                                    {renderRow(rightSession, leftSelected)}
+                                  </div>,
+                                );
+                              } else {
+                                renderedIds.add(session.id);
+                                nodes.push(renderRow(session, false));
+                              }
+                            }
+                            return nodes;
+                          })()}
                         </div>
                       )}
                     </section>
@@ -4568,6 +4687,7 @@ export function App() {
     dismissSidebarHint,
     openHomeWelcome,
     isNarrow,
+    linkedPairs,
   ]);
   const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
   const smartlogTabActive = Boolean(
@@ -4585,10 +4705,17 @@ export function App() {
   const detailCompanionVisible = !isNarrow || !mobileListOpen;
   const detailFloatingToolbar = useMemo(() => {
     if (!detailSession || !detailMenuSession) return null;
+    const canSplit = !detailMenuSession.archived;
     return (
                     <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
                       <button type="button" className="mobile-back-button" aria-label="Back to companions"
                         onClick={() => {
+                          if (activeLinkedPair && !mobileSplitVisitedRef.current) {
+                            mobileSplitVisitedRef.current = true;
+                            setSelectedId(activeLinkedPair.partnerId);
+                            return;
+                          }
+                          mobileSplitVisitedRef.current = false;
                           if (mobileOpenedFromListRef.current) {
                             setMobileListOpen(true);
                           }
@@ -4605,10 +4732,15 @@ export function App() {
                         <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
                         <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
-                        <SessionMenu actions={sessionMenuActions(selectedSession ?? detailSession)} colorMode={colorMode}
+                        <SessionMenu
+                          actions={sessionMenuActions(selectedSession ?? detailSession)}
+                          colorMode={colorMode}
                           onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
                           showRawToolOutput={showRawToolOutput}
-                          onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)} />
+                          onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)}
+                          splitViewOptions={canSplit ? splitViewOptionsFor(detailMenuSession.id) : undefined}
+                          onSelectSplitSession={canSplit ? (targetId) => linkConversations(detailMenuSession.id, targetId) : undefined}
+                        />
                       </div>
                     </div>
     );
@@ -4637,6 +4769,10 @@ export function App() {
     renameBusy,
     sessionsForMessages,
     isNarrow,
+    activeLinkedPair,
+    linkedPartnerId,
+    splitViewOptionsFor,
+    linkConversations,
   ]);
   const takeoverDisabledReason = liveWork || sendingDirection || pendingDirection !== null
     ? "Stop the current turn before handing over this task." : queuedPrompt !== null
@@ -4875,11 +5011,13 @@ export function App() {
                   <div
                     ref={detailSplitRef}
                     className={`detail-split${hasSidePanel ? " with-side-panel" : ""}`}
+                    data-split-conversations={hasLinkedSplitPane ? "true" : undefined}
                     style={{ "--chat-width": `${paneSizes.chatShare * 100}%` } as CSSProperties}
                   >
                   <div
                     id="agent-chat"
                     className="transcript"
+                    data-split-slot={hasLinkedSplitPane ? activeLinkedPair?.slot : undefined}
                     aria-live={isTurnLive(detailSession.status) ? "polite" : "off"}
                   >
                     {detailFloatingToolbar}
@@ -4889,6 +5027,12 @@ export function App() {
                       onScroll={(event) => {
                         followTranscriptRef.current = transcriptAtBottom(event.currentTarget);
                         setShowScrollToBottom(!followTranscriptRef.current);
+                        if (detailSessionId) {
+                          sessionScrollStateRef.current.set(detailSessionId, {
+                            scrollTop: event.currentTarget.scrollTop,
+                            follow: followTranscriptRef.current,
+                          });
+                        }
                         lastScrollMetricsRef.current = {
                           sessionId: detailSessionId,
                           scrollHeight: event.currentTarget.scrollHeight,
@@ -5128,7 +5272,7 @@ export function App() {
                       </form>
                     )}
                   </div>
-                  {hasSidePanel && (
+                  {hasTwoPaneSplit && (
                     <PaneDivider
                       label="Resize chat and terminals"
                       controls="agent-chat agent-side-panel"
@@ -5141,6 +5285,100 @@ export function App() {
                         return { ...current, chatShare: clampChatShare(width / Math.max(1, measured - DIVIDER_WIDTH), measured) };
                       })}
                       valueFromPointer={(clientX) => clientX - (detailSplitRef.current?.getBoundingClientRect().left ?? 0)}
+                    />
+                  )}
+                  {hasLinkedSplitPane && activeLinkedPair && (
+                    <LinkedConversationPane
+                      key={activeLinkedPair.partnerId}
+                      sessionId={activeLinkedPair.partnerId}
+                      splitSlot={activeLinkedPair.partnerSlot}
+                      sessions={sessions}
+                      sessionsForMessages={sessionsForMessages}
+                      accessibleModels={accessibleModels}
+                      allCompanions={allCompanions}
+                      availableCompanions={availableCompanions}
+                      assistantAvatarUrl={assistantAvatarUrl}
+                      globalGitIdentity={globalGitIdentity}
+                      repos={reposQuery.data?.repos ?? EMPTY_REPOS}
+                      githubEnabled={reposQuery.data?.github_enabled ?? true}
+                      reposLoading={reposQuery.isPending}
+                      connectionLost={connectionLost}
+                      pilotUnavailable={pilotSync[activeLinkedPair.partnerId] === false}
+                      nowMs={nowMs}
+                      minuteClockMs={minuteClockMs}
+                      showReasoning={showReasoning}
+                      expandTools={expandTools}
+                      showRawToolOutput={showRawToolOutput}
+                      showWorkingDetails={showWorkingDetails}
+                      colorMode={colorMode}
+                      onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
+                      onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)}
+                      sessionMenuActions={sessionMenuActions}
+                      splitViewOptions={splitViewOptionsFor(activeLinkedPair.partnerId)}
+                      onSelectSplitSession={(targetId) => linkConversations(activeLinkedPair.partnerId, targetId)}
+                      onFocusSession={(focusComposer = false) => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        if (focusComposer) {
+                          requestAnimationFrame(() => takeoverInputRef.current?.focus());
+                        }
+                      }}
+                      onOpenFile={(path) => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        openFileTab(partnerId, path);
+                      }}
+                      onTogglePreview={() => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        togglePreviewTab(partnerId);
+                      }}
+                      onOpenTerminal={() => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        openTerminalTab(partnerId);
+                      }}
+                      onToggleSmartlog={() => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        toggleSmartlogTab(partnerId);
+                      }}
+                      onOpenPreviewPort={(port) => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        setPreviewPortOverrides((prev) => ({ ...prev, [partnerId]: port }));
+                        void api.setPreviewPort({ session_id: partnerId, port });
+                        setSidePanels((current) => {
+                          const state = current[partnerId] ?? { tabs: [], activeKey: null, loaded: false };
+                          const existing = state.tabs.find((tab) => tab.kind === "preview");
+                          if (existing) return { ...current, [partnerId]: { ...state, activeKey: existing.key } };
+                          const tab: SideTab = { key: "preview", kind: "preview" };
+                          return { ...current, [partnerId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+                        });
+                      }}
+                      onOpenImage={(spec) => {
+                        const partnerId = activeLinkedPair.partnerId;
+                        setSelectedCompanionId(null);
+                        setSelectedId(partnerId);
+                        const tabKey = spec.path ? `file:${spec.path}` : `image:${spec.title}:${spec.src.slice(0, 48)}`;
+                        setSidePanels((current) => {
+                          const state = current[partnerId] ?? { tabs: [], activeKey: null, loaded: false };
+                          const existing = state.tabs.find((tab) => tab.key === tabKey);
+                          if (existing) return { ...current, [partnerId]: { ...state, activeKey: existing.key } };
+                          const tab: SideTab = { key: tabKey, kind: "image", title: spec.title, src: spec.src, path: spec.path ?? null };
+                          return { ...current, [partnerId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+                        });
+                      }}
+                      sessionScrollStateRef={sessionScrollStateRef}
+                      sessionDraftTextRef={sessionDraftTextRef}
+                      requestedSeenRef={requestedSeenRef}
+                      forceFullDetailRef={forceFullDetailRef}
                     />
                   )}
                   {detailSidePanel}
@@ -5165,5 +5403,738 @@ export function App() {
         />
       )}
     </div>
+  );
+}
+
+type TranscriptRowCache = {
+  contextKey: unknown[];
+  rows: Map<
+    number,
+    {
+      content: string;
+      finishedAt: string | null;
+      toolDetails: TranscriptEvent["tool_details"];
+      rowTime: string;
+      rowClockMs: number;
+      element: ReactNode;
+    }
+  >;
+};
+
+function renderCachedTranscriptNodes({
+  detailSessionIdForFiles,
+  detailWorkspaceRoot,
+  visibleTranscriptEvents,
+  nowMs,
+  sessions,
+  assistantAvatarUrl,
+  expandTools,
+  showRawToolOutput,
+  openFileTabForDetail,
+  cacheRef,
+}: {
+  detailSessionIdForFiles: string | null;
+  detailWorkspaceRoot: string;
+  visibleTranscriptEvents: TranscriptEvent[];
+  nowMs: number;
+  sessions: Session[];
+  assistantAvatarUrl: string | null;
+  expandTools: boolean;
+  showRawToolOutput: boolean;
+  openFileTabForDetail: (path: string) => void;
+  cacheRef: { current: TranscriptRowCache | null };
+}): ReactNode[] {
+  if (!detailSessionIdForFiles) return [];
+  const contextKey = [
+    detailSessionIdForFiles,
+    detailWorkspaceRoot,
+    sessions,
+    assistantAvatarUrl,
+    expandTools,
+    showRawToolOutput,
+    openFileTabForDetail,
+  ];
+  let cache = cacheRef.current;
+  if (
+    !cache ||
+    cache.contextKey.length !== contextKey.length ||
+    cache.contextKey.some((val, idx) => !Object.is(val, contextKey[idx]))
+  ) {
+    cache = { contextKey, rows: new Map() };
+    cacheRef.current = cache;
+  }
+  const { rows } = cache;
+  const outputNodes: ReactNode[] = [];
+  let toolGroup: ReactNode[] = [];
+  let toolGroupFirstId: number | null = null;
+  const flushToolGroup = () => {
+    if (toolGroup.length === 0 || toolGroupFirstId === null) return;
+    outputNodes.push(
+      <article key={`tool-group-${toolGroupFirstId}`} className="output-event tool">
+        {toolGroup}
+      </article>,
+    );
+    toolGroup = [];
+    toolGroupFirstId = null;
+  };
+
+  for (const event of visibleTranscriptEvents) {
+    if (event.kind === "thinking") {
+      const summary = reasoningDisplay(event.content)?.summary ?? event.content;
+      if (!displayOutput(summary).trim()) continue;
+    }
+    const rowTime = event.kind === "stdout" ? formatMessageTime(event.created_at, nowMs) : "";
+    const runningAgents = event.kind === "agents" && !event.finished_at;
+    const cached = rows.get(event.id);
+    let element: ReactNode;
+    if (
+      cached !== undefined &&
+      cached.content === event.content &&
+      cached.finishedAt === event.finished_at &&
+      cached.toolDetails?.status === event.tool_details?.status &&
+      cached.toolDetails?.output === event.tool_details?.output &&
+      cached.toolDetails?.failureReason === event.tool_details?.failureReason &&
+      cached.rowTime === rowTime &&
+      (!runningAgents || cached.rowClockMs === nowMs)
+    ) {
+      element = cached.element;
+    } else {
+      const rowClockMs = runningAgents || event.kind === "stdout" ? nowMs : 0;
+      element = event.kind === "message" ? (
+        <MessageEvent key={event.id} content={event.content} agents={sessions}
+          assistantAvatar={assistantAvatarUrl} />
+      ) : event.kind === "tool" ? (
+        <ToolEvent
+          key={event.id}
+          sessionId={detailSessionIdForFiles}
+          workspaceRoot={detailWorkspaceRoot}
+          eventId={event.id}
+          text={displayOutput(event.content)}
+          details={event.tool_details}
+          startedAt={event.started_at}
+          finishedAt={event.finished_at}
+          expandedByDefault={expandTools}
+          showRawToolOutput={showRawToolOutput}
+          onOpenFile={openFileTabForDetail}
+        />
+      ) : (
+        <TranscriptEventRow
+          key={event.id}
+          event={event}
+          detailSessionId={detailSessionIdForFiles}
+          detailWorkspaceRoot={detailWorkspaceRoot}
+          nowMs={rowClockMs}
+          expandTools={expandTools}
+          showRawToolOutput={showRawToolOutput}
+          openFileTabForDetail={openFileTabForDetail}
+        />
+      );
+      rows.set(event.id, {
+        content: event.content,
+        finishedAt: event.finished_at,
+        toolDetails: event.tool_details,
+        rowTime,
+        rowClockMs,
+        element,
+      });
+    }
+
+    if (event.kind === "tool") {
+      if (toolGroupFirstId === null) toolGroupFirstId = event.id;
+      toolGroup.push(element);
+    } else {
+      flushToolGroup();
+      outputNodes.push(element);
+    }
+  }
+  flushToolGroup();
+  return outputNodes;
+}
+
+function LinkedConversationPane({
+  sessionId,
+  splitSlot,
+  sessions,
+  sessionsForMessages,
+  accessibleModels,
+  allCompanions,
+  availableCompanions,
+  assistantAvatarUrl,
+  globalGitIdentity,
+  repos,
+  githubEnabled,
+  reposLoading,
+  connectionLost,
+  pilotUnavailable,
+  nowMs,
+  minuteClockMs,
+  showReasoning,
+  expandTools,
+  showRawToolOutput,
+  showWorkingDetails,
+  colorMode,
+  onColorModeChange,
+  onToggleRawToolOutput,
+  sessionMenuActions,
+  splitViewOptions,
+  onSelectSplitSession,
+  onFocusSession,
+  onOpenFile,
+  onTogglePreview,
+  onOpenTerminal,
+  onToggleSmartlog,
+  onOpenPreviewPort,
+  onOpenImage,
+  sessionScrollStateRef,
+  sessionDraftTextRef,
+  requestedSeenRef,
+  forceFullDetailRef,
+}: {
+  sessionId: string;
+  splitSlot: "left" | "right";
+  sessions: Session[];
+  sessionsForMessages: Session[];
+  accessibleModels: ApiResponse<typeof api, "listModels">["models"] | undefined;
+  allCompanions: Companion[];
+  availableCompanions: Companion[];
+  assistantAvatarUrl: string | null;
+  globalGitIdentity: { name: string; email: string } | null;
+  repos: readonly RepoOption[];
+  githubEnabled: boolean;
+  reposLoading: boolean;
+  connectionLost: boolean;
+  pilotUnavailable: boolean;
+  nowMs: number;
+  minuteClockMs: number;
+  showReasoning: boolean;
+  expandTools: boolean;
+  showRawToolOutput: boolean;
+  showWorkingDetails: boolean;
+  colorMode: ColorMode;
+  onColorModeChange: (mode: ColorMode) => void;
+  onToggleRawToolOutput: () => void;
+  sessionMenuActions: (session: Session) => SessionMenuAction[];
+  splitViewOptions: SplitViewOption[];
+  onSelectSplitSession: (targetId: string | null) => void;
+  onFocusSession: (focusComposer?: boolean) => void;
+  onOpenFile: (path: string) => void;
+  onTogglePreview: () => void;
+  onOpenTerminal: () => void;
+  onToggleSmartlog: () => void;
+  onOpenPreviewPort: (port: number) => void;
+  onOpenImage: (spec: { title: string; src: string; path?: string | null }) => void;
+  sessionScrollStateRef: { current: Map<string, { scrollTop: number; follow: boolean }> };
+  sessionDraftTextRef: { current: Map<string, string> };
+  requestedSeenRef: { current: Map<string, number> };
+  forceFullDetailRef: { current: Set<string> };
+}) {
+  const queryClient = useQueryClient();
+  const terminalBodyRef = useRef<HTMLDivElement>(null);
+  const transcriptContentRef = useRef<HTMLDivElement>(null);
+  const scrollControlsRef = useRef<HTMLDivElement>(null);
+  const scrollToBottomButtonRef = useRef<HTMLButtonElement>(null);
+  const followTranscriptRef = useRef(sessionScrollStateRef.current.get(sessionId)?.follow ?? true);
+  const showScrollToBottomRef = useRef(false);
+  const snappedSessionRef = useRef<string | null>(null);
+  const lastScrollMetricsRef = useRef<{ sessionId: string | null; scrollHeight: number; scrollTop: number } | null>(null);
+  const prevListStatusRef = useRef<{ id: string; status: Session["status"] | null } | null>(null);
+  const renderedRowCacheRef = useRef<TranscriptRowCache | null>(null);
+
+  const setShowScrollToBottom = useCallback((show: boolean) => {
+    showScrollToBottomRef.current = show;
+    scrollControlsRef.current?.classList.toggle("visible", show);
+    if (scrollToBottomButtonRef.current) scrollToBottomButtonRef.current.tabIndex = show ? 0 : -1;
+  }, []);
+
+  const listSession = sessions.find((item) => item.id === sessionId) ?? null;
+  const detailQuery = useQuery({
+    queryKey: ["code-session", sessionId],
+    queryFn: async () => {
+      const id = sessionId;
+      const cached = queryClient.getQueryData<ApiResponse<typeof api, "getSession">>(["code-session", id]);
+      const forceFull = forceFullDetailRef.current.has(id);
+      let afterId: number | undefined;
+      let immutablePrefix: TranscriptEvent[] = [];
+      if (!forceFull && cached?.session?.id === id && cached.events.length > 0) {
+        let cutoff = cached.events.length;
+        for (let i = 0; i < cached.events.length; i++) {
+          const ev = cached.events[i]!;
+          if (
+            ((ev.kind === "tool" || ev.kind === "thinking" || ev.kind === "agents") && ev.finished_at === null) ||
+            (ev.kind === "pr_monitor" && parsePrMonitor(ev.content)?.status === "monitoring")
+          ) {
+            cutoff = i;
+            break;
+          }
+        }
+        if (cutoff > 0 && cached.events[cutoff - 1]!.id > 0) {
+          afterId = cached.events[cutoff - 1]!.id;
+          immutablePrefix = cached.events.slice(0, cutoff);
+        }
+      }
+      const stillUrl = afterId === undefined
+        ? artworkForCompanionName(listSession?.title ?? "")?.still
+        : undefined;
+      const [rawData] = await Promise.all([
+        api.getSession({
+          id,
+          event_limit: 1000,
+          ...(afterId !== undefined ? { after_id: afterId } : {}),
+        }),
+        preloadCompanionStill(stillUrl),
+      ]);
+      if (forceFull) forceFullDetailRef.current.delete(id);
+      const mergedEvents = afterId !== undefined && rawData.session
+        ? rawData.events.length === 0 && immutablePrefix.length === cached?.events.length
+          ? cached.events
+          : immutablePrefix.concat(rawData.events).slice(-1000)
+        : rawData.events;
+      const data = afterId !== undefined && rawData.session
+        ? {
+            session: {
+              ...rawData.session,
+              output_count: mergedEvents.length,
+              latest_output: rawData.session.latest_output ?? cached?.session?.latest_output ?? null,
+            },
+            events: mergedEvents,
+          }
+        : rawData;
+      if (data.session) {
+        const body = terminalBodyRef.current;
+        const atBottom = !document.hidden && (body === null || followTranscriptRef.current || transcriptAtBottom(body));
+        const seenBumped = atBottom && data.session.seen_output_revision < data.session.output_revision;
+        const syncedOwnedPrs = ownedPullRequestsFromEvents(data.events);
+        const syncedSession = {
+          ...(seenBumped
+            ? { ...data.session, seen_output_revision: data.session.output_revision }
+            : data.session),
+          owned_prs: syncedOwnedPrs.length > 0 ? syncedOwnedPrs : (data.session.owned_prs ?? []),
+        };
+        if (seenBumped) {
+          const revision = data.session.output_revision;
+          if (revision > (requestedSeenRef.current.get(id) ?? 0)) {
+            requestedSeenRef.current.set(id, revision);
+            void api.markAgentSeen({ id, output_revision: revision });
+          }
+        }
+        return { ...data, session: syncedSession };
+      }
+      return data;
+    },
+    enabled: Boolean(sessionId),
+    staleTime: 1000,
+    refetchInterval: (query) => {
+      const detailStatus = query.state.data?.session?.status;
+      return shouldPollSessionDetail(listSession?.status, detailStatus) ? 5000 : false;
+    },
+  });
+
+  const detail = detailQuery.data;
+  const paneLoadedSession = detail?.session ?? null;
+  const detailSession = detail?.session ?? listSession;
+
+  useEffect(() => {
+    const prev = prevListStatusRef.current;
+    prevListStatusRef.current = { id: sessionId, status: listSession?.status ?? null };
+    if (!prev || prev.id !== sessionId || !listSession) return;
+    if (isLiveToTerminalTransition(prev.status, listSession.status)) {
+      forceFullDetailRef.current.add(sessionId);
+      void queryClient.invalidateQueries({ queryKey: ["code-session", sessionId] }, { cancelRefetch: true });
+    }
+  }, [sessionId, listSession?.status, queryClient]);
+
+  useEffect(() => {
+    if (!listSession || !paneLoadedSession || paneLoadedSession.id !== listSession.id) return;
+    if (
+      listSession.output_revision > paneLoadedSession.output_revision ||
+      listSession.status !== paneLoadedSession.status ||
+      listSession.summary !== paneLoadedSession.summary
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ["code-session", listSession.id] }, { cancelRefetch: false });
+    }
+  }, [
+    listSession?.id,
+    listSession?.output_revision,
+    listSession?.status,
+    listSession?.summary,
+    paneLoadedSession?.id,
+    paneLoadedSession?.output_revision,
+    paneLoadedSession?.status,
+    paneLoadedSession?.summary,
+    queryClient,
+  ]);
+
+  const ownedArtifactsQuery = useQuery({
+    queryKey: ["owned-artifacts", sessionId],
+    queryFn: () => api.listOwnedArtifacts({ session_id: sessionId }),
+    enabled: listSession !== null,
+    staleTime: 4000,
+    placeholderData: keepPreviousData,
+    refetchInterval: listSession && isTurnLive(listSession.status) ? 5000 : false,
+  });
+  const ownedFiles = ownedArtifactsQuery.data?.ok ? ownedArtifactsQuery.data.files : NO_OWNED_FILES;
+
+  const transcriptEvents = useMemo(
+    () => detail?.events.filter((event) => event.kind !== "result" && !isLifecycleMessage(event)) ?? [],
+    [detail?.events],
+  );
+  const rawOwnedPrs = useMemo(() => ownedPullRequestsFromEvents(transcriptEvents), [transcriptEvents]);
+  const ownedPrsKey = rawOwnedPrs.map((p) => `${p.key}:${p.state}:${p.monitoring}:${p.checks ?? ""}`).join("|");
+  const ownedPrs = useMemo(() => (rawOwnedPrs.length === 0 ? EMPTY_OWNED_PRS : rawOwnedPrs), [ownedPrsKey]);
+  const redundantMessageTools = useMemo(() => redundantSendToolIds(transcriptEvents), [transcriptEvents]);
+  const visibleTranscriptEvents = useMemo(() => {
+    const events = showReasoning ? transcriptEvents : transcriptEvents.filter((event) => event.kind !== "thinking");
+    return showRawToolOutput ? events : events.filter((event) => !redundantMessageTools.has(event.id));
+  }, [transcriptEvents, showReasoning, showRawToolOutput, redundantMessageTools]);
+
+  const workflowRunning = useMemo(() => transcriptEvents.some((event) => {
+    if (event.kind !== "agents" || event.finished_at) return false;
+    const row = parseAgentsRow(event.content);
+    const started = event.started_at ? Date.parse(event.started_at) : NaN;
+    return !!row && agentStatusRunning(row.status) && Number.isFinite(started) && Date.now() - started < 12 * 60 * 60 * 1000;
+  }), [transcriptEvents]);
+
+  const sessionActive = detailSession ? !detailSession.archived && isTurnLive(detailSession.status) : false;
+  const awaitingPilot = detailSession?.status === "queued" && detailSession.pilot_session_id === null;
+  const latestUserEvent = useMemo(() => {
+    for (let i = transcriptEvents.length - 1; i >= 0; i--) {
+      if (transcriptEvents[i]!.kind === "user") return transcriptEvents[i];
+    }
+    return undefined;
+  }, [transcriptEvents]);
+  const workingEvents = useMemo(
+    () => transcriptEvents.filter((event) => !redundantMessageTools.has(event.id)),
+    [transcriptEvents, redundantMessageTools],
+  );
+  const promptStartedAt = latestUserEvent?.created_at ?? detailSession?.started_at ?? new Date(nowMs).toISOString();
+  const promptStartedMs = new Date(promptStartedAt).getTime();
+  const workingLabel = useMemo(() => (
+    awaitingPilot ? "Connecting" : getWorkingLabel({
+      status: detailSession?.status,
+      promptStartedMs,
+      events: workingEvents,
+      nowMs,
+      workspaceRoot: detailSession?.workspace_root,
+    })
+  ), [awaitingPilot, detailSession?.status, promptStartedMs, workingEvents, nowMs, detailSession?.workspace_root]);
+  const runElapsedSeconds = Number.isFinite(promptStartedMs) ? (nowMs - promptStartedMs) / 1000 : 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    const syncPartner = async () => {
+      try {
+        const result = await api.syncPilotEvents({ session_id: sessionId });
+        if (!cancelled && result.added > 0) {
+          await queryClient.invalidateQueries({ queryKey: ["code-session", sessionId] }, { cancelRefetch: false });
+        }
+      } catch {
+        // Reconnect on the next tick.
+      }
+    };
+    void syncPartner();
+    const interval = window.setInterval(() => void syncPartner(), (sessionActive || workflowRunning) ? 1000 : 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [sessionId, sessionActive, workflowRunning, queryClient]);
+
+  const vcsSessionId = detailSession?.pilot_session_id ? detailSession.id : null;
+  const vcsStatusQuery = useQuery({
+    queryKey: ["session-vcs-status", vcsSessionId],
+    queryFn: () => api.getSessionVcsStatus({ session_id: vcsSessionId! }),
+    enabled: vcsSessionId !== null && paneLoadedSession?.id === vcsSessionId,
+    staleTime: 4000,
+    refetchInterval: sessionActive ? 5000 : 15_000,
+    retry: false,
+  });
+
+  const detailWorkspaceRoot = detailSession?.workspace_root ?? "";
+  const detailWorkspaceShort = detailSession?.workspace_root ? shortenHomePaths(detailSession.workspace_root) : null;
+  const transcriptClockMs = workflowRunning ? nowMs : minuteClockMs;
+  const renderedEvents = useMemo(
+    () =>
+      renderCachedTranscriptNodes({
+        detailSessionIdForFiles: sessionId,
+        detailWorkspaceRoot,
+        visibleTranscriptEvents,
+        nowMs: transcriptClockMs,
+        sessions: sessionsForMessages,
+        assistantAvatarUrl,
+        expandTools,
+        showRawToolOutput,
+        openFileTabForDetail: onOpenFile,
+        cacheRef: renderedRowCacheRef,
+      }),
+    [
+      sessionId,
+      detailWorkspaceRoot,
+      visibleTranscriptEvents,
+      transcriptClockMs,
+      sessionsForMessages,
+      assistantAvatarUrl,
+      expandTools,
+      showRawToolOutput,
+      onOpenFile,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    const body = terminalBodyRef.current;
+    if (!body) return;
+    const saved = sessionScrollStateRef.current.get(sessionId);
+    if (snappedSessionRef.current !== sessionId && transcriptEvents.length > 0) {
+      snappedSessionRef.current = sessionId;
+      if (saved && !saved.follow) {
+        followTranscriptRef.current = false;
+        body.scrollTop = saved.scrollTop;
+        setShowScrollToBottom(!transcriptAtBottom(body));
+      } else {
+        followTranscriptRef.current = true;
+        body.scrollTop = body.scrollHeight;
+        setShowScrollToBottom(false);
+      }
+      lastScrollMetricsRef.current = {
+        sessionId,
+        scrollHeight: body.scrollHeight,
+        scrollTop: body.scrollTop,
+      };
+    }
+  }, [sessionId, transcriptEvents.length, setShowScrollToBottom, sessionScrollStateRef]);
+
+  useLayoutEffect(() => {
+    const body = terminalBodyRef.current;
+    if (!body) return;
+    if (!shouldFollowTranscript(followTranscriptRef.current, transcriptEvents.length, false)) {
+      const prev = lastScrollMetricsRef.current;
+      if (prev !== null && prev.sessionId === sessionId && body.scrollTop <= 0) {
+        const delta = body.scrollHeight - prev.scrollHeight;
+        if (delta !== 0) {
+          body.scrollTop = prev.scrollTop - delta;
+        }
+      }
+      lastScrollMetricsRef.current = {
+        sessionId,
+        scrollHeight: body.scrollHeight,
+        scrollTop: body.scrollTop,
+      };
+      return;
+    }
+    body.scrollTop = body.scrollHeight;
+    lastScrollMetricsRef.current = {
+      sessionId,
+      scrollHeight: body.scrollHeight,
+      scrollTop: body.scrollTop,
+    };
+  }, [sessionId, transcriptEvents, showReasoning, showRawToolOutput]);
+
+  const markdownContextValue = useMemo(
+    () => ({
+      sessionId,
+      openPreviewPort: onOpenPreviewPort,
+      openImage: onOpenImage,
+    }),
+    [sessionId, onOpenPreviewPort, onOpenImage],
+  );
+
+  if (!detailSession) {
+    return (
+      <div className="transcript linked-transcript-pane" data-split-slot={splitSlot}>
+        <p className="detail-loading">Loading conversation…</p>
+      </div>
+    );
+  }
+
+  const paneAgentName = displayAgentName(listSession?.title ?? detailSession.title);
+  const panePast = detailSession.archived;
+  const paneCompanionActive = !panePast && (sessionActive || workflowRunning);
+  const paneCompanionActivity = workflowRunning && !sessionActive ? "Running helpers" : workingLabel;
+  const paneTaskStarting = sessionActive && (awaitingPilot || (workingLabel === "Starting" && transcriptEvents.filter((e) => e.kind === "user").length <= 1));
+  const detailEventsCharCount = detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0;
+  const savedDraft = sessionDraftTextRef.current.get(sessionId) ?? "";
+  const estimatedContextTokens = Math.ceil(((detailSession.prompt.length ?? 0) + detailEventsCharCount + savedDraft.length) / 4);
+  const paneContextLabel = contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS);
+  const effort = (listSession ?? detailSession).reasoning_effort ?? "high";
+
+  return (
+    <MarkdownSessionContext.Provider value={markdownContextValue}>
+      <div
+        className="transcript linked-transcript-pane"
+        data-split-slot={splitSlot}
+        aria-live={isTurnLive(detailSession.status) ? "polite" : "off"}
+        onPointerDown={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest("button, a, input, summary, details, .wire-debug")) return;
+          onFocusSession(Boolean(target?.closest(".terminal-composer")));
+        }}
+      >
+        <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
+          <TranscriptCompanion
+            key={detailSession.id}
+            name={paneAgentName}
+            connecting={connectionLost || pilotUnavailable}
+            archived={panePast}
+            active={paneCompanionActive}
+            starting={paneTaskStarting}
+            activity={paneCompanionActivity}
+            visible={true}
+          />
+          <div className="chat-floating-actions">
+            <OwnedArtifactMenu paths={ownedFiles} onOpen={onOpenFile} />
+            <NewPreviewButton active={false} onOpen={onTogglePreview} />
+            <NewTerminalButton onOpen={onOpenTerminal} />
+            <SessionMenu
+              actions={sessionMenuActions(listSession ?? detailSession)}
+              colorMode={colorMode}
+              onColorModeChange={onColorModeChange}
+              showRawToolOutput={showRawToolOutput}
+              onToggleRawToolOutput={onToggleRawToolOutput}
+              splitViewOptions={splitViewOptions}
+              onSelectSplitSession={onSelectSplitSession}
+            />
+          </div>
+        </div>
+        <div
+          ref={terminalBodyRef}
+          className="terminal-body"
+          onScroll={(event) => {
+            const follow = transcriptAtBottom(event.currentTarget);
+            followTranscriptRef.current = follow;
+            setShowScrollToBottom(!follow);
+            sessionScrollStateRef.current.set(sessionId, {
+              scrollTop: event.currentTarget.scrollTop,
+              follow,
+            });
+            lastScrollMetricsRef.current = {
+              sessionId,
+              scrollHeight: event.currentTarget.scrollHeight,
+              scrollTop: event.currentTarget.scrollTop,
+            };
+          }}
+        >
+          {visibleTranscriptEvents.length === 0 ? (
+            <div className="transcript-empty">
+              {!connectionLost && !pilotUnavailable && (sessionActive ? (
+                <WorkingIndicator label={workingLabel} elapsedSeconds={runElapsedSeconds} detailed={showWorkingDetails} />
+              ) : "No output yet.")}
+            </div>
+          ) : (
+            <div ref={transcriptContentRef} className="output-stream">
+              {renderedEvents}
+              {sessionActive && !pilotUnavailable && (
+                <WorkingIndicator label={workingLabel} elapsedSeconds={runElapsedSeconds} detailed={showWorkingDetails} />
+              )}
+            </div>
+          )}
+        </div>
+        <div ref={scrollControlsRef} className="transcript-scroll-controls">
+          <button
+            ref={scrollToBottomButtonRef}
+            type="button"
+            className="scroll-to-bottom"
+            aria-label="Scroll to bottom of conversation"
+            tabIndex={-1}
+            onClick={() => {
+              const body = terminalBodyRef.current;
+              if (!body) return;
+              followTranscriptRef.current = true;
+              body.scrollTop = body.scrollHeight;
+              setShowScrollToBottom(false);
+              sessionScrollStateRef.current.set(sessionId, { scrollTop: body.scrollTop, follow: true });
+            }}
+          >
+            Scroll to bottom <ChevronIcon />
+          </button>
+        </div>
+        <form
+          className="terminal-prompt"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onFocusSession(true);
+          }}
+        >
+          {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout || ownedPrs.length > 0) && (
+            <RepoPicker
+              repos={repos}
+              githubEnabled={githubEnabled}
+              loading={reposLoading}
+              selected={detailSession.repo_slug}
+              mode="manage"
+              cloneProgress={null}
+              workspacePath={detailWorkspaceShort}
+              vcsStatus={vcsStatusQuery.data ?? null}
+              ownedPrs={ownedPrs}
+              smartlogOpen={false}
+              onToggleSmartlog={onToggleSmartlog}
+              phase={detailSession.status === "queued" && detailSession.pilot_session_id === null ? "starting" : "idle"}
+              sessionGitAuthor={detailSession.git_author ?? null}
+              globalGitIdentity={globalGitIdentity}
+              onSaveSessionGitAuthor={async (identity) => {
+                const res = await api.setSessionGitAuthor({
+                  session_id: detailSession.id,
+                  name: identity?.name ?? null,
+                  email: identity?.email ?? null,
+                });
+                if (res.ok) await queryClient.invalidateQueries({ queryKey: ["code-sessions"] }, { cancelRefetch: false });
+                return res.ok;
+              }}
+            />
+          )}
+          <div className="terminal-composer">
+            <textarea
+              className="composer-input"
+              value={savedDraft}
+              readOnly
+              onFocus={() => onFocusSession(true)}
+              placeholder={panePast ? "Type a message to resume this task…" : "Type a message…"}
+              rows={1}
+            />
+            <div className="composer-toolbar">
+              <div className="composer-tools" aria-label="Message tools">
+                <CompanionMenu
+                  name={paneAgentName}
+                  effort={effort}
+                  icon={<MuseIcon />}
+                  currentCompanion={allCompanions.find((item) => item.name === paneAgentName)}
+                  picking={panePast}
+                  models={accessibleModels}
+                  options={allCompanions.filter((item) => availableCompanions.some((available) => available.id === item.id))}
+                  busy={false}
+                  onChoose={() => onFocusSession(false)}
+                />
+                <span
+                  className="composer-budget"
+                  title={paneContextLabel}
+                  aria-label={paneContextLabel}
+                >
+                  <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
+                </span>
+              </div>
+              <div className="composer-actions">
+                <AttachmentButton onSelectFiles={() => onFocusSession(true)} />
+                <button
+                  type="button"
+                  className="composer-icon voice-button"
+                  onClick={() => onFocusSession(true)}
+                  title="Start voice input"
+                  aria-label="Start voice input"
+                >
+                  <MicrophoneIcon />
+                </button>
+                <button
+                  type="button"
+                  className="composer-send"
+                  aria-label="Send message"
+                  disabled={savedDraft.trim().length === 0}
+                  onClick={() => onFocusSession(true)}
+                >
+                  <SendIcon />
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </MarkdownSessionContext.Provider>
   );
 }
