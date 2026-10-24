@@ -9,12 +9,17 @@ import { SmartLogIcon } from "./SmartLogPanel";
 
 type Session = ApiResponse<typeof api, "listSessions">["sessions"][number];
 
-function timeOfDayGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 5) return "GOOD EVENING";
-  if (hour < 12) return "GOOD MORNING";
-  if (hour < 17) return "GOOD AFTERNOON";
-  return "GOOD EVENING";
+export function timeOfDayGreeting(userName?: string | null, hour = new Date().getHours()): string {
+  const base =
+    hour < 5
+      ? "GOOD EVENING"
+      : hour < 12
+        ? "GOOD MORNING"
+        : hour < 17
+          ? "GOOD AFTERNOON"
+          : "GOOD EVENING";
+  const trimmed = userName?.trim();
+  return trimmed ? `${base}, ${trimmed}` : base;
 }
 
 function WelcomeStatusDot({ session }: { session: Session }) {
@@ -242,11 +247,13 @@ const FEATURES = [
 
 export function HomeWelcomeCard({
   sessions,
+  userName = null,
   formatTime,
   onSelectSession,
   onPickCompanion,
 }: {
   sessions: readonly Session[];
+  userName?: string | null;
   formatTime: (iso: string) => string;
   onSelectSession: (id: string) => void;
   onPickCompanion: () => void;
@@ -282,7 +289,7 @@ export function HomeWelcomeCard({
       <section className="welcome-home-card" aria-label="Welcome to Code Space">
         <span className="companion-sr-only">Select a task to see its conversation.</span>
         <div className="welcome-home-main">
-          <span className="welcome-home-eyebrow">{timeOfDayGreeting()}</span>
+          <span className="welcome-home-eyebrow">{timeOfDayGreeting(userName)}</span>
           <h2 className="welcome-home-headline">
             {recentSessions.length > 0 ? "Pick up where you left off." : "Start a new conversation."}
           </h2>

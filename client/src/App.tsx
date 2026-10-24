@@ -4986,6 +4986,7 @@ export function App() {
                 /* Pick a companion and tell them what you’d like to do. Select a task to see its conversation. */
                 <HomeWelcomeCard
                   sessions={sessions}
+                  userName={assistantIdentityQuery.data?.user_name ?? null}
                   formatTime={(iso) => formatRelativeTime(iso, sidebarClockMs)}
                   onSelectSession={(id) => {
                     mobileOpenedFromListRef.current = false;
