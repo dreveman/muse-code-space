@@ -1101,17 +1101,19 @@ export const Actions = {
   // How agents see the user's Muse assistant: its avatar name and theme color
   // (default Jolly, #d0e4fc). On a Muse VM the assistant sets its real ones.
   // The name is reserved: agents message it by that name (or "muse").
+  // The same payload carries user_name: the user's own name, provided by
+  // the assistant alongside its own identity (null until it does).
   getAssistantIdentity: defineAction({
     request: z.object({}),
-    response: z.object({ ok: z.boolean(), name: z.string().nullable(), color: z.string().nullable(), avatar_data_url: z.string().nullable(), error: z.string().nullable() }),
+    response: z.object({ ok: z.boolean(), name: z.string().nullable(), color: z.string().nullable(), avatar_data_url: z.string().nullable(), user_name: z.string().nullable(), error: z.string().nullable() }),
     privileged: [privileged.resolvePilotUrl],
     async handler(ctx) {
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
-        const res = await pilotRequest(baseUrl, "/assistant", { method: "GET" }, z.object({ name: z.string(), color: z.string(), avatar_data_url: z.string().nullable() }));
-        return { ok: true, name: res.name, color: res.color, avatar_data_url: res.avatar_data_url, error: null };
+        const res = await pilotRequest(baseUrl, "/assistant", { method: "GET" }, z.object({ name: z.string(), color: z.string(), avatar_data_url: z.string().nullable(), user_name: z.string().nullable().optional() }));
+        return { ok: true, name: res.name, color: res.color, avatar_data_url: res.avatar_data_url, user_name: res.user_name ?? null, error: null };
       } catch (error) {
-        return { ok: false, name: null, color: null, avatar_data_url: null, error: pilotRequestErrorText(error) };
+        return { ok: false, name: null, color: null, avatar_data_url: null, user_name: null, error: pilotRequestErrorText(error) };
       }
     },
   }),
@@ -1121,23 +1123,26 @@ export const Actions = {
       name: z.string().trim().min(1).max(40).optional(),
       color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
       avatar_data_url: z.string().max(350000).nullable().optional(),
+      // The user's own name, provided by the assistant alongside its own
+      // identity. Omission keeps it, null clears it.
+      user_name: z.string().trim().min(1).max(40).nullable().optional(),
     }),
-    response: z.object({ ok: z.boolean(), name: z.string().nullable(), color: z.string().nullable(), avatar_data_url: z.string().nullable(), error: z.string().nullable() }),
+    response: z.object({ ok: z.boolean(), name: z.string().nullable(), color: z.string().nullable(), avatar_data_url: z.string().nullable(), user_name: z.string().nullable(), error: z.string().nullable() }),
     privileged: [privileged.resolvePilotUrl],
     async handler(ctx, args) {
       const denied = terminalAccessError(ctx.viewer);
-      if (denied) return { ok: false, name: null, color: null, avatar_data_url: null, error: denied };
+      if (denied) return { ok: false, name: null, color: null, avatar_data_url: null, user_name: null, error: denied };
       if (args.avatar_data_url != null) {
         const error = validateAssistantAvatar(args.avatar_data_url);
-        if (error) return { ok: false, name: null, color: null, avatar_data_url: null, error };
+        if (error) return { ok: false, name: null, color: null, avatar_data_url: null, user_name: null, error };
       }
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
-        const res = await pilotRequest(baseUrl, "/assistant", { method: "POST", body: JSON.stringify(args) }, z.object({ name: z.string(), color: z.string(), avatar_data_url: z.string().nullable() }));
+        const res = await pilotRequest(baseUrl, "/assistant", { method: "POST", body: JSON.stringify(args) }, z.object({ name: z.string(), color: z.string(), avatar_data_url: z.string().nullable(), user_name: z.string().nullable().optional() }));
         ctx.invalidateQueries({ queryKey: ["assistant-identity"] });
-        return { ok: true, name: res.name, color: res.color, avatar_data_url: res.avatar_data_url, error: null };
+        return { ok: true, name: res.name, color: res.color, avatar_data_url: res.avatar_data_url, user_name: res.user_name ?? null, error: null };
       } catch (error) {
-        return { ok: false, name: null, color: null, avatar_data_url: null, error: pilotRequestErrorText(error) };
+        return { ok: false, name: null, color: null, avatar_data_url: null, user_name: null, error: pilotRequestErrorText(error) };
       }
     },
   }),

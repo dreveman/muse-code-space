@@ -123,7 +123,7 @@ const toolOutputs = new Map<string, string>();
 const sessionFiles = new Map<string, Map<string, string>>();
 const museInbox: Array<{ seq: number; messageId: string; at: string; from: unknown; text: string }> = [];
 // The user's Muse assistant (like the real pilot: default Jolly, Muse blue).
-const assistant = { name: "Jolly", color: "#d0e4fc", avatar_data_url: null as string | null };
+const assistant = { name: "Jolly", color: "#d0e4fc", avatar_data_url: null as string | null, user_name: null as string | null };
 // Global git commit identity for the fake pilot (in-memory; POST
 // /git-identity replaces it). Defaults to a clearly fake author so the
 // composer's Commit-as prefill can be exercised; override with
@@ -168,6 +168,7 @@ function loadState() {
     assistant.color = data.assistant.color;
     assistant.avatar_data_url = data.assistant.avatar_data_url != null && !validateAssistantAvatar(data.assistant.avatar_data_url)
       ? data.assistant.avatar_data_url : null;
+    assistant.user_name = typeof data.assistant.user_name === "string" && data.assistant.user_name.trim() ? data.assistant.user_name.trim() : null;
   }
   for (const [id, output] of data.toolOutputs ?? []) toolOutputs.set(id, output);
   for (const [id, entries] of data.sessionFiles ?? []) sessionFiles.set(id, new Map(entries));
@@ -1899,6 +1900,11 @@ Bun.serve({
         if (body.color !== undefined) {
           if (typeof body.color !== "string" || !/^#[0-9a-f]{6}$/i.test(body.color)) return json(400, { error: "color must be #rrggbb" });
           next.color = body.color.toLowerCase();
+        }
+        if (body.user_name !== undefined) {
+          if (body.user_name === null) next.user_name = null;
+          else if (typeof body.user_name !== "string" || !/^[\p{L}\p{N}][\p{L}\p{N} _.'-]{0,39}$/u.test(body.user_name.trim())) return json(400, { error: "user_name must be 1-40 letters, digits, spaces, - or _" });
+          else next.user_name = body.user_name.trim();
         }
         if (body.avatar_data_url !== undefined) {
           if (body.avatar_data_url !== null) {

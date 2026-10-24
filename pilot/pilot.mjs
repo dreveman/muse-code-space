@@ -1562,6 +1562,9 @@ const DEFAULT_ASSISTANT = {
   name: process.env.MUSE_CODE_SPACE_ASSISTANT_NAME || "Jolly",
   color: process.env.MUSE_CODE_SPACE_ASSISTANT_COLOR || "#d0e4fc", // R .816 G .894 B .988
   avatar_data_url: null,
+  // The user's own name, provided by the Muse assistant the same way it
+  // provides its own name (setAssistantIdentity). Null until it does.
+  user_name: process.env.MUSE_CODE_SPACE_USER_NAME || null,
 };
 function loadAssistant() {
   try {
@@ -1570,6 +1573,7 @@ function loadAssistant() {
       name: typeof saved.name === "string" && saved.name.trim() ? saved.name.trim() : DEFAULT_ASSISTANT.name,
       color: typeof saved.color === "string" && /^#[0-9a-f]{6}$/i.test(saved.color) ? saved.color : DEFAULT_ASSISTANT.color,
       avatar_data_url: saved.avatar_data_url != null && !validateAssistantAvatar(saved.avatar_data_url) ? saved.avatar_data_url : null,
+      user_name: typeof saved.user_name === "string" && saved.user_name.trim() ? saved.user_name.trim() : DEFAULT_ASSISTANT.user_name,
     };
   } catch {
     return { ...DEFAULT_ASSISTANT };
@@ -1582,8 +1586,18 @@ function reservedNames() {
 function isReservedName(name) {
   return reservedNames().has(String(name ?? "").trim().replace(/^@/, "").toLowerCase());
 }
-function setAssistant({ name, color, avatar_data_url }) {
+const personNamePattern = /^[\p{L}\p{N}][\p{L}\p{N} _.'-]{0,39}$/u;
+function setAssistant({ name, color, avatar_data_url, user_name }) {
   const next = { ...assistant };
+  if (user_name !== undefined) {
+    if (user_name === null) {
+      next.user_name = null;
+    } else {
+      const clean = String(user_name).trim();
+      if (!personNamePattern.test(clean)) return { ok: false, error: "user_name must be 1-40 letters, digits, spaces, - or _" };
+      next.user_name = clean;
+    }
+  }
   if (name !== undefined) {
     const clean = String(name).trim();
     if (!/^[\p{L}\p{N}][\p{L}\p{N} _-]{0,39}$/u.test(clean)) return { ok: false, error: "name must be 1–40 letters, digits, spaces, - or _" };
@@ -2290,7 +2304,7 @@ const server = createServer(async (req, res) => {
       if (req.method === "GET") return json(res, 200, assistant);
       if (req.method === "POST") {
         const body = await readBody(req).catch(() => ({}));
-        const result = setAssistant({ name: body.name, color: body.color, avatar_data_url: body.avatar_data_url });
+        const result = setAssistant({ name: body.name, color: body.color, avatar_data_url: body.avatar_data_url, user_name: body.user_name });
         return json(res, result.ok ? 200 : 400, result.ok ? result.assistant : result);
       }
     }

@@ -754,3 +754,18 @@ test("assistant avatar persists, survives partial identity edits, and clears ato
   assert.equal(t.getAssistant().avatar_data_url,null);
   assert.equal(JSON.parse(readFileSync(path.join(stateDir,"assistant.json"),"utf8")).avatar_data_url,null);
 });
+
+test("user_name persists, survives partial identity edits, and clears with null", () => {
+  assert.equal(t.getAssistant().user_name, null);
+  assert.equal(t.setAssistant({ user_name: "  Alex Doe  " }).ok, true);
+  assert.equal(t.getAssistant().user_name, "Alex Doe");
+  assert.equal(JSON.parse(readFileSync(path.join(stateDir, "assistant.json"), "utf8")).user_name, "Alex Doe");
+  assert.equal(t.loadAssistant().user_name, "Alex Doe", "a restarted pilot reloads the persisted user name");
+  assert.equal(t.setAssistant({ color: "#aabbcc" }).ok, true);
+  assert.equal(t.getAssistant().user_name, "Alex Doe", "partial identity edits keep the user name");
+  assert.equal(t.setAssistant({ user_name: "bad/name!" }).ok, false);
+  assert.equal(t.getAssistant().user_name, "Alex Doe", "invalid names are refused without clobbering");
+  assert.equal(t.setAssistant({ user_name: null }).ok, true);
+  assert.equal(t.getAssistant().user_name, null);
+  assert.equal(JSON.parse(readFileSync(path.join(stateDir, "assistant.json"), "utf8")).user_name, null);
+});
