@@ -164,12 +164,55 @@ function MentionIllustration() {
   );
 }
 
+function SplitViewIllustration() {
+  return (
+    <div className="welcome-illus-window" aria-hidden="true">
+      <div className="welcome-illus-tabbar">
+        <span className="welcome-illus-tab">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="2.5" width="12" height="11" rx="2" />
+            <path d="M8 2.5v11" />
+          </svg>
+          Split view
+        </span>
+        <span className="welcome-illus-live">
+          <i /> Linked
+        </span>
+      </div>
+      <div className="welcome-illus-split-body">
+        <div className="welcome-illus-split-pane">
+          <div className="welcome-illus-split-head">
+            <span className="welcome-illus-sl-dot head" />
+            <span>Poppy</span>
+          </div>
+          <div className="welcome-illus-dim">Build UI layout</div>
+          <div className="welcome-illus-ok">✓ Ready</div>
+        </div>
+        <div className="welcome-illus-split-pane">
+          <div className="welcome-illus-split-head">
+            <span className="welcome-illus-sl-dot head" />
+            <span>Remy</span>
+          </div>
+          <div className="welcome-illus-dim">Run test suite</div>
+          <div className="welcome-illus-ok">● Working</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const FEATURES = [
   {
     id: "mention",
     title: "Message companions with @.",
     description: "Type @ in any conversation to message another companion or your Muse assistant.",
     Illustration: MentionIllustration,
+  },
+  {
+    id: "split",
+    title: "Link tasks in split view.",
+    description: "Use Split view in the menu to link two active conversations side by side.",
+    Illustration: SplitViewIllustration,
   },
   {
     id: "github",
