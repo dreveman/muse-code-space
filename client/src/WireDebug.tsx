@@ -40,6 +40,13 @@ export type SessionMenuAction = {
   onActivate: () => void;
 };
 
+export type SplitViewOption = {
+  id: string;
+  label: string;
+  description: string;
+  checked: boolean;
+};
+
 function detectUiBuildId(): string {
   if (typeof document === "undefined") return "dev";
   const jsSrc = document.querySelector<HTMLScriptElement>('script[src*="chunk-"]')?.getAttribute("src") ?? "";
@@ -119,12 +126,22 @@ function SettingsMenuItem({ label, description, checked, disabled = false, trail
 
 // The transcript header's burger menu: view preferences, session actions
 // (the touch-friendly path to rename/archive), and the wire-log toggle.
-export function SessionMenu({ actions = [], colorMode, onColorModeChange, showRawToolOutput, onToggleRawToolOutput }: {
+export function SessionMenu({
+  actions = [],
+  colorMode,
+  onColorModeChange,
+  showRawToolOutput,
+  onToggleRawToolOutput,
+  splitViewOptions,
+  onSelectSplitSession,
+}: {
   actions?: SessionMenuAction[];
   colorMode: ColorMode;
   onColorModeChange: (mode: ColorMode) => void;
   showRawToolOutput: boolean;
   onToggleRawToolOutput: () => void;
+  splitViewOptions?: SplitViewOption[];
+  onSelectSplitSession?: (targetSessionId: string | null) => void;
 }) {
   const [panelVisible, setPanelVisible] = useState(false);
   const [relayVisible, setRelayVisible] = useState(false);
@@ -229,6 +246,37 @@ export function SessionMenu({ actions = [], colorMode, onColorModeChange, showRa
           {actions.map((action) => (
             <ActionMenuItem key={action.key} action={action} onDone={() => setMenuOpen(false)} />
           ))}
+          {onSelectSplitSession && (
+            <>
+              <div className="session-menu-separator" role="separator" />
+              <details className="session-menu-section" role="group" aria-label="Split view">
+                <summary className="session-menu-heading">
+                  <span>Split view</span>
+                  <span className="session-menu-chevron" aria-hidden="true">›</span>
+                </summary>
+                {splitViewOptions && splitViewOptions.length > 0 ? (
+                  splitViewOptions.map((option) => (
+                    <ActionMenuItem
+                      key={`split-${option.id}`}
+                      action={{
+                        key: `split-${option.id}`,
+                        label: option.label,
+                        description: option.description,
+                        checked: option.checked,
+                        radio: true,
+                        onActivate: () => onSelectSplitSession(option.checked ? null : option.id),
+                      }}
+                      onDone={() => {}}
+                    />
+                  ))
+                ) : (
+                  <div className="wire-settings-empty-hint">
+                    No other active conversations to link.
+                  </div>
+                )}
+              </details>
+            </>
+          )}
           <div className="session-menu-separator" role="separator" />
           <details className="session-menu-section" role="group" aria-label="Color mode">
             <summary className="session-menu-heading">Color mode<span className="session-menu-chevron" aria-hidden="true">›</span></summary>

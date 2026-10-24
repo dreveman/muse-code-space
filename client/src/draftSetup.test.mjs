@@ -34,7 +34,7 @@ test("companion cards have a first-message composer", () => {
   assert.ok(app.includes("composer={firstMessageComposer}"));
   assert.ok(app.includes("title: queued.draft.companionName"), "the chosen companion starts the task");
   const menus = app.match(/<CompanionMenu/g) ?? [];
-  assert.equal(menus.length, 2, "card and live composers share companion options");
+  assert.equal(menus.length, 3, "card, live, and linked split composers share companion options");
   assert.ok(app.includes("onSubmit={submitDraft}"), "first message must still create the session");
 });
 

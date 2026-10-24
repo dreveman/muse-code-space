@@ -15,9 +15,9 @@ test("attachment icon is defined", () => {
   assert.ok(app.includes("function AttachmentIcon()"), "expected an AttachmentIcon component");
 });
 
-test("both composers render the attachment button next to the voice button", () => {
+test("all composers render the attachment button next to the voice button", () => {
   const attachments = [...app.matchAll(/<AttachmentButton\b/g)];
-  assert.equal(attachments.length, 2, "expected the attachment button in both composers");
+  assert.equal(attachments.length, 3, "expected the attachment button in draft, live, and linked split composers");
   const voices = [...app.matchAll(/className=\{`composer-icon voice-button/g)];
   assert.equal(voices.length, 2, "expected the voice button in both composers");
   for (let i = 0; i < 2; i += 1) {

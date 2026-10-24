@@ -10,8 +10,8 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(path.join(root, "App.tsx"), "utf8");
 const actions = readFileSync(path.join(root, "../../server/src/actions.ts"), "utf8");
 
-test("both composers show companion controls instead of model and effort pickers", () => {
-  assert.equal((app.match(/<CompanionMenu/g) ?? []).length, 2);
+test("all composers show companion controls instead of model and effort pickers", () => {
+  assert.equal((app.match(/<CompanionMenu/g) ?? []).length, 3);
   assert.ok(!app.includes("ModelEffortMenu"));
   assert.ok(!app.includes("choosePreference"));
   assert.ok(!app.includes("model_id: queued.model"), "the client cannot override the roster model");
