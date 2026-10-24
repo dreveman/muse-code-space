@@ -668,7 +668,9 @@ async function recoverSession(id, meta) {
     // that message it by name still reach it.
     if (recoveredMeta.name) void renameBackendSession(session.sessionId, recoveredMeta.name);
     const seed = buildRecoverySeed(id);
-    if (seed) pendingSeeds.set(id, seed);
+    const soulSeed = soulBlock(recoveredMeta.soul);
+    const combinedSeed = soulSeed && seed ? `${soulSeed}\n\n${seed}` : soulSeed ?? seed;
+    if (combinedSeed) pendingSeeds.set(id, combinedSeed);
     // Visible in the transcript as a small notice; the app-visible session
     // id never changes, so this reads as one continuous conversation.
     broadcast(id, {
@@ -1652,15 +1654,32 @@ function findAgent(ref) {
   return undefined;
 }
 
+const MAX_SOUL_LENGTH = 8000;
+function cleanSoul(value) {
+  if (typeof value !== "string") return null;
+  const clean = value.trim().slice(0, MAX_SOUL_LENGTH);
+  return clean ? clean : null;
+}
+function soulBlock(soul) {
+  const clean = cleanSoul(soul);
+  return clean ? `[SOUL.md]\n${clean}` : null;
+}
+
 // Told to every named agent on its first turn (the app shows the user's
-// prompt from its own DB, so this doesn't clutter the transcript).
-function agentPreamble(name) {
-  return [
+// prompt from its own DB, so this doesn't clutter the transcript). The
+// companion's SOUL.md rides along here so its personality actually shapes
+// the conversation; it sits before the --- separator, so transcript
+// restore keeps stripping it along with the rest of the preamble.
+function agentPreamble(name, soul) {
+  const lines = [
     `[Code Space] You are agent "${name}". Other agents and the user's Muse assistant (${assistant.name}) may message you; messages arrive as turns starting with "Message from …".`,
     'To message another agent or the assistant, use mcp__code_space__send_message with a name from mcp__code_space__list_agents (including the assistant’s avatar name).',
     'If the user asks "Send @name a message ...", @name refers to a Code Space agent: call mcp__code_space__send_message with to: "name" (without @) and the requested message as text. A quoted mention like @"My Agent" means the exact multiword name. Never use a shell or code-agents for agent messaging.',
     'When you start or preview a web/dev server on 127.0.0.1:<port>, run it in the background until it is listening, call mcp__code_space__preview_screenshot with port: <port>, and paste the returned [![...](.code-space/preview-<port>.png)](http://127.0.0.1:<port>/) Markdown line verbatim into your reply so the user can click it to open the live Preview tab. You can also embed any workspace image in your reply with ![alt](relative/path.png).',
-  ].join("\n");
+  ];
+  const block = soulBlock(soul);
+  if (block) lines.push("", block);
+  return lines.join("\n");
 }
 
 // Add a routing hint only to an explicit "Send @agent ..." command. The app
@@ -2011,6 +2030,7 @@ async function createPilotSessionInner(body, appSessionId) {
       gitAuthor: appliedGitAuthor ?? effectiveGitIdentity(),
       appSessionId,
       initialTurnId: null,
+      soul: cleanSoul(body.soul),
     };
     const session = await client.startSession({ workspaceRoot: wsDir, modelId: meta.modelId, approvalMode: "allowAll" });
     wireSession(session, meta);
@@ -2029,7 +2049,7 @@ async function createPilotSessionInner(body, appSessionId) {
       return { code: 503, body: { error: "credential relay unavailable; retry once it is back", code: "relay_down", sessionId: entry.logId } };
     }
     try {
-      const firstText = entry.meta.name ? `${agentPreamble(entry.meta.name)}\n\n---\n\n${body.prompt}` : body.prompt;
+      const firstText = entry.meta.name ? `${agentPreamble(entry.meta.name, entry.meta.soul)}\n\n---\n\n${body.prompt}` : body.prompt;
       const turn = await entry.session.sendUserTurn({
         input: buildTurnInputParts(firstText, body.attachments),
         reasoningEffort: normEffort(body.reasoningEffort),
@@ -2379,6 +2399,17 @@ const server = createServer(async (req, res) => {
       const canonical = await renameBackendSession(entry.session.sessionId, name);
       if (!canonical) return json(res, 409, { error: "Muse rejected the name", code: "rename_rejected" });
       entry.meta.name = canonical;
+      if (body.soul !== undefined) {
+        entry.meta.soul = cleanSoul(body.soul);
+        // The next user turn carries the new companion's personality ahead
+        // of it (via the pending-seed slot), so a handoff changes how the
+        // agent works from its very next reply.
+        const block = soulBlock(entry.meta.soul);
+        if (block) {
+          const existing = pendingSeeds.get(entry.logId);
+          pendingSeeds.set(entry.logId, existing ? `${block}\n\n${existing}` : block);
+        }
+      }
       saveRegistry();
       return json(res, 200, { name: canonical });
     }
@@ -2873,6 +2904,8 @@ export const __test__ = {
   healthPayload,
   agentDirectory,
   agentPreamble,
+  cleanSoul,
+  soulBlock,
   annotateAgentMention,
   mcpTokens,
   mcpDeps,

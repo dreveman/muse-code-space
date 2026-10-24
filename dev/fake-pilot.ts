@@ -94,6 +94,8 @@ type Session = {
   /** Per-checkout commit author override (POST /sessions/:id/git-author). */
   gitAuthor?: { name: string; email: string } | null;
   appSessionId?: string;
+  /** Companion SOUL.md sent at start/handoff; stored like the real pilot's meta. */
+  soul?: string | null;
   initialTurnId?: string | null;
   nextPrNumber?: number;
   modelId: string;
@@ -1775,6 +1777,7 @@ Bun.serve({
         ...(typeof body.workspaceRoot === "string" ? { workspaceRoot: body.workspaceRoot } : {}),
         ...(repo !== null ? { repo } : {}),
         ...(appSessionId ? { appSessionId } : {}),
+        soul: typeof body.soul === "string" && body.soul.trim() ? body.soul.trim().slice(0, 8000) : null,
         initialTurnId: null,
         modelId: String(body.modelId || (MODELS.find((m) => m.isDefault) ?? MODELS[0]!).modelId),
         events: [],
@@ -1792,6 +1795,7 @@ Bun.serve({
           repo: session.repo ?? null,
           gitAuthor: validGitAuthor(body.gitAuthor) ?? fakeGitIdentity,
           appSessionId: session.appSessionId ?? null,
+          soul: session.soul ?? null,
           createdAt: new Date().toISOString(),
         },
       });
@@ -2167,6 +2171,7 @@ Bun.serve({
       if (!name) return json(400, { error: "name required", code: "bad_request" });
       if (isReserved(name)) return json(409, { error: `"${name}" is reserved for the user's Muse assistant`, code: "reserved_name" });
       session.name = name;
+      if (typeof body.soul === "string") session.soul = body.soul.trim() ? body.soul.trim().slice(0, 8000) : null;
       saveState();
       push(session, "name_changed", { name });
       return json(200, { name });

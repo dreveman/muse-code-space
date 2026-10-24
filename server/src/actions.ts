@@ -30,6 +30,17 @@ import { isReservedAgentName } from "./agentNames";
 import { transcriptToRows, type TranscriptImport } from "./transcriptRestore";
 import * as schema from "./schema";
 import companionCatalog from "../../companions/catalog.json" with { type: "json" };
+import poppySoul from "../../companions/poppy/SOUL.md" with { type: "text" };
+import remySoul from "../../companions/remy/SOUL.md" with { type: "text" };
+import tillySoul from "../../companions/tilly/SOUL.md" with { type: "text" };
+import novaSoul from "../../companions/nova/SOUL.md" with { type: "text" };
+import sageSoul from "../../companions/sage/SOUL.md" with { type: "text" };
+
+// Built-in SOUL.md texts, bundled so session starts can inject them into
+// the pilot's first turn wherever the actions bundle runs.
+const BUILTIN_SOULS: Readonly<Record<string, string>> = {
+  poppy: poppySoul, remy: remySoul, tilly: tillySoul, nova: novaSoul, sage: sageSoul,
+};
 
 const statusSchema = z.enum([
   "queued",
@@ -609,6 +620,7 @@ async function pilotSessionIdFor(db: ReturnType<Parameters<typeof Actions.getSes
 type PilotStartRow = Pick<typeof schema.sessions.$inferSelect,
   "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "gitAuthorName" | "gitAuthorEmail" | "modelId" | "requestedModelId" | "reasoningEffort"> & {
   attachments?: readonly PilotAttachmentInput[];
+  soul?: string;
 };
 
 async function requirePaidModelAccess(baseUrl: string, modelId: string) {
@@ -621,6 +633,7 @@ type AssignableCompanion = {
   id: string;
   name: string;
   effort: string;
+  soul: string;
   model: { preferredId: string; ifUnavailable: string };
 };
 
@@ -632,7 +645,7 @@ const companionNameKey = (name: string) => name.normalize("NFKC").trim().replace
 function builtinAssignableCompanions(): AssignableCompanion[] {
   return BUILTIN_COMPANION_IDS.flatMap((id) => {
     const entry = companionCatalog.companions.find((item) => item.id === id);
-    return entry ? [{ id: entry.id, name: entry.name, effort: entry.effort, model: entry.model }] : [];
+    return entry ? [{ id: entry.id, name: entry.name, effort: entry.effort, soul: BUILTIN_SOULS[entry.id] ?? "", model: entry.model }] : [];
   });
 }
 
@@ -643,6 +656,7 @@ function customToAssignable(row: CustomCompanionRow): AssignableCompanion {
     id: row.id,
     name: row.name,
     effort: row.effort,
+    soul: row.soul,
     model: {
       preferredId: row.modelId,
       ifUnavailable: Object.hasOwn(PAID_COMPANION_MODELS, row.modelId) ? "upgrade-required" : "use-catalog-default",
@@ -716,6 +730,7 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
         ...(row.repoSlug && row.gitAuthorName && row.gitAuthorEmail
           ? { gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail } }
           : {}),
+        ...(row.soul?.trim() ? { soul: row.soul } : {}),
         ...(row.attachments && row.attachments.length > 0 ? { attachments: row.attachments } : {}),
       }),
     },
@@ -784,8 +799,9 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
     .returning({ id: schema.sessions.id });
   if (!lease[0]) return { started: 0, failed: 0 };
 
+  const soulCompanion = await assignableCompanionByName(db, row.title).catch(() => undefined);
   try {
-    const pilot = await startPilotAgent(baseUrl, row);
+    const pilot = await startPilotAgent(baseUrl, { ...row, soul: soulCompanion?.soul });
     if (!pilot.turnId) {
       const error = new Error("Pilot has not admitted the first turn yet") as Error & { code?: string };
       error.code = "turn_not_admitted";
@@ -2955,6 +2971,7 @@ export const Actions = {
             modelId,
             requestedModelId: modelId,
             reasoningEffort: effort,
+            soul: agent.soul,
             attachments: args.attachments,
           });
           if (!pilot.turnId) throw new Error("Pilot has not admitted the first turn yet");
@@ -3172,7 +3189,7 @@ export const Actions = {
           if (session.pilotSessionId) {
             ({ baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {}));
             const renamed = await pilotRequest(baseUrl, `/sessions/${encodeURIComponent(session.pilotSessionId)}/rename`,
-              { method: "POST", body: JSON.stringify({ name: companion.name }) }, z.object({ name: z.string() }));
+              { method: "POST", body: JSON.stringify({ name: companion.name, soul: companion.soul }) }, z.object({ name: z.string() }));
             if (renamed.name !== companion.name) throw new Error("The pilot could not use the selected agent's name.");
           }
           // Claim only if the task stayed idle and the target is still free.
