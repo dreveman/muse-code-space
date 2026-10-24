@@ -151,8 +151,8 @@
   box-shadow: 0 12px 40px rgb(0 0 0 / .035);
 }
 /* More room for wrapping text and skill chips, shared by every companion. */
-@container (max-width: 440px) {
-  .companion-card { height: 556px; }
+@container (max-width: 460px) {
+  .companion-card { height: 484px; }
 }
 :root[data-color-mode="dark"] .companion-card { background: var(--surface); box-shadow: none; }
 /* Keep the upgrade notice clear while the locked companion looks inactive. */
@@ -214,17 +214,34 @@
   .companion-card .companion-skills { height: auto; min-height: 56px; }
   .companion-card .companion-tradeoff { height: auto; min-height: 52px; margin: 0; }
   .companion-card .companion-details { min-height: 38px; margin: auto 0 0; padding-top: 6px; }
-  @container (max-width: 440px) {
-    .companion-card { padding: 20px 22px 10px; }
-    .companion-card-identity { height: 152px; gap: 16px; }
-    .companion-card-portrait { width: 120px; height: 120px; border-radius: 20px; }
-    .companion-card .companion-stats { grid-template-columns: 1fr; gap: 8px; }
-    .companion-card .companion-stat-bars > span { width: 16px; }
+  @container (max-width: 460px) {
+    .companion-card { --companion-phone-portrait: clamp(72px, calc(100cqw - 164px), 108px); gap: 6px; height: 484px; padding: 16px 16px 10px; overflow: hidden; border-radius: 18px; }
+    .companion-card-identity { gap: 12px; height: var(--companion-phone-portrait); }
+    .companion-card-portrait { width: var(--companion-phone-portrait); height: var(--companion-phone-portrait); border-radius: 18px; }
+    .companion-card-heading h2 { order: -1; margin: 0 0 4px; font-size: 28px; }
+    .companion-card-role { font-size: 12px; line-height: 16px; }
+    .companion-card-description { display: none; }
+    .companion-card-access { height: 40px; }
+    .companion-card-access:empty { display: flex; }
+    .companion-phone-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--dim); font: 12px/18px var(--sans); }
+    .companion-card .companion-stats { grid-template-columns: 1fr; gap: 6px; height: auto; margin: 0; padding: 8px 0; }
+    .companion-card .companion-stat { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+    .companion-card .companion-stat dt { font-size: 12px; line-height: 14px; white-space: nowrap; }
+    .companion-card .companion-stat dd { flex: 0 0 auto; }
+    .companion-card .companion-stat-bars { display: flex; gap: 3px; }
+    .companion-card .companion-stat-bars > span { width: 16px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+    .companion-card .companion-skills { min-height: 60px; margin-top: 2px; margin-bottom: auto; }
+    .companion-card h3 { margin-bottom: 5px; line-height: 16px; }
+    .companion-card .companion-skills ul { gap: 4px; }
+    .companion-card .companion-skills li { padding: 2px 7px; font-size: 11px; line-height: 14px; }
+    .companion-card .companion-tradeoff { height: 58px; margin: -2px 0 0; }
+    .companion-card .companion-tradeoff p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 18px; }
+    .companion-card .companion-details { margin-top: auto; padding-top: 6px; }
   }
 }
 
 @media (max-width: 779px) {
-  .session-rail { padding: 16px; }
+  .session-rail { padding: 16px 14px; }
   .companion-welcome { overflow: visible; }
   .companion-welcome-content {
     overflow-y: auto;
@@ -243,12 +260,12 @@
   .companion-welcome-content:not(:has(.companion-card-expanded)) {
     flex-direction: column-reverse;
   }
-  .companion-card-browser { width: min(calc(100% - 88px), 460px); height: 476px; }
+  .companion-card-browser { width: min(calc(100% - 88px), 460px); height: 484px; }
   .companion-card-navigation { top: calc(50% + 16px); width: min(calc(100% - 104px), 460px); }
   .companion-card-navigation button { width: 40px; height: 44px; }
   .companion-card-navigation button:first-child { left: -46px; }
   .companion-card-navigation button:last-child { right: -46px; }
-  .companion-card { --companion-phone-portrait: clamp(72px, calc(100cqw - 164px), 108px); display: flex; flex-direction: column; gap: 6px; width: 100%; height: 100%; padding: 16px; overflow: hidden; scrollbar-gutter: auto; border-radius: 18px; }
+  .companion-card { --companion-phone-portrait: clamp(72px, calc(100cqw - 164px), 108px); display: flex; flex-direction: column; gap: 6px; width: 100%; height: 100%; padding: 16px 16px 10px; overflow: hidden; scrollbar-gutter: auto; border-radius: 18px; }
   .companion-card > * { flex-shrink: 0; min-width: 0; }
   .companion-card-identity { display: flex; align-items: center; gap: 12px; height: var(--companion-phone-portrait); }
   .companion-card-portrait { flex: 0 0 auto; width: var(--companion-phone-portrait); height: var(--companion-phone-portrait); margin: 0; border-radius: 18px; }
@@ -261,12 +278,12 @@
   .companion-card-access .companion-access-notice > span { white-space: nowrap; }
   .companion-card-access .companion-access-notice a { display: inline-flex; align-items: center; min-height: 40px; flex: 0 0 auto; }
   .companion-phone-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--dim); font: 12px/18px var(--sans); }
-  .companion-card .companion-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; height: 80px; margin: 0; padding: 8px 0; }
-  .companion-card .companion-stat { flex-direction: column; align-items: flex-start; gap: 5px; }
-  .companion-card .companion-stat dt { font-size: 12px; line-height: 14px; }
-  .companion-card .companion-stat dd { width: 100%; }
-  .companion-card .companion-stat-bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; width: 100%; max-width: 120px; }
-  .companion-card .companion-stat-bars > span { width: auto; height: 8px; border-radius: 2px; }
+  .companion-card .companion-stats { grid-template-columns: 1fr; gap: 6px; height: auto; margin: 0; padding: 8px 0; }
+  .companion-card .companion-stat { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+  .companion-card .companion-stat dt { font-size: 12px; line-height: 14px; white-space: nowrap; }
+  .companion-card .companion-stat dd { flex: 0 0 auto; }
+  .companion-card .companion-stat-bars { display: flex; gap: 3px; }
+  .companion-card .companion-stat-bars > span { width: 16px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
   .companion-card .companion-skills { min-height: 60px; margin-top: 2px; margin-bottom: auto; }
   .companion-card h3 { margin-bottom: 5px; line-height: 16px; }
   .companion-card .companion-skills ul { gap: 4px; }
@@ -274,25 +291,35 @@
   .companion-card .companion-tradeoff { height: 58px; margin: -2px 0 0; }
   .companion-card .companion-tradeoff p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 18px; }
   .companion-card .companion-details { margin-top: auto; padding-top: 6px; }
-  .companion-details .companion-more-button { min-height: 38px; }
 }
 
 /* Only collapsed cards share a fixed height. Expanded cards grow naturally;
    the surrounding view scrolls while the prompt stays in place. */
 @media (min-width: 780px) {
-  .companion-card-expanded { height: auto; min-height: 508px; }
-  @container (max-width: 440px) {
-    .companion-card-expanded { min-height: 556px; }
+  .companion-card-expanded { height: auto; min-height: 508px; padding-bottom: 24px; }
+  @container (max-width: 460px) {
+    .companion-card-expanded { height: auto; min-height: 484px; padding-bottom: 18px; overflow: visible; }
+    .companion-card-expanded .companion-card-identity { height: auto; min-height: 48px; }
+    .companion-card-expanded .companion-card-role { display: block; }
+    .companion-card-expanded .companion-card-access { flex-direction: column; align-items: stretch; gap: 6px; height: auto; min-height: 40px; }
+    .companion-card-expanded .companion-phone-description { display: block; overflow: visible; }
+    .companion-card-expanded .companion-stats { display: grid; height: auto; padding-block: 8px; }
+    .companion-card-expanded .companion-skills, .companion-card-expanded .companion-tradeoff { display: block; height: auto; }
+    .companion-card-expanded .companion-skills { margin-bottom: var(--companion-skills-spacing, 0px); }
+    .companion-card-expanded .companion-tradeoff { min-height: 58px; }
+    .companion-card-expanded .companion-skills ul { display: flex; }
+    .companion-card-expanded .companion-tradeoff p { display: block; overflow: visible; }
+    .companion-card-expanded .companion-details { margin-top: var(--companion-details-spacing, 0px); }
   }
 }
 @media (max-width: 779px) {
-  .companion-card-browser:has(> .companion-card-expanded) { height: auto; min-height: 476px; visibility: visible; pointer-events: auto; }
-  .companion-card-expanded { height: auto; min-height: 476px; overflow: visible; }
+  .companion-card-browser:has(> .companion-card-expanded) { height: auto; min-height: 484px; visibility: visible; pointer-events: auto; }
+  .companion-card-expanded { height: auto; min-height: 484px; padding-bottom: 18px; overflow: visible; }
   .companion-card-expanded .companion-card-identity { height: auto; min-height: 48px; }
   .companion-card-expanded .companion-card-role { display: block; }
   .companion-card-expanded .companion-card-access { flex-direction: column; align-items: stretch; gap: 6px; height: auto; min-height: 40px; }
   .companion-card-expanded .companion-phone-description { display: block; overflow: visible; }
-  .companion-card-expanded .companion-stats { display: grid; height: auto; min-height: 80px; padding-block: 8px; }
+  .companion-card-expanded .companion-stats { display: grid; height: auto; padding-block: 8px; }
   .companion-card-expanded .companion-skills, .companion-card-expanded .companion-tradeoff { display: block; height: auto; }
   .companion-card-expanded .companion-skills { margin-bottom: var(--companion-skills-spacing, 0px); }
   .companion-card-expanded .companion-tradeoff { min-height: 58px; }
@@ -349,12 +376,15 @@
    the stage; on phones the card grows like an expanded card so the whole
    card is reachable by scrolling instead of being clipped at 476px. */
 @media (max-width: 779px) {
-  .companion-card-browser:has(> .companion-create-card) { height: auto; min-height: 476px; }
-  .companion-create-card { height: auto; min-height: 476px; overflow: visible; }
+  .companion-card-browser:has(> .companion-create-card) { height: auto; min-height: 484px; }
+  .companion-create-card { height: auto; min-height: 484px; padding-bottom: 16px; overflow: visible; }
   .companion-welcome-content:has(.companion-create-card) { flex-direction: column; }
 }
 @media (min-width: 780px) {
-  .companion-create-card { max-height: none; }
+  .companion-create-card { max-height: none; padding-bottom: 24px; }
+  @container (max-width: 460px) {
+    .companion-create-card { height: auto; min-height: 484px; padding-bottom: 16px; overflow: visible; }
+  }
 }
 .companion-required-wrap { display: inline-flex; align-items: flex-start; gap: 2px; width: 100%; }
 .companion-required-wrap > input { flex: 1 1 auto; }
