@@ -231,7 +231,7 @@ How it maps to the real host:
   `setAgentSummary`, and `assignCompanion` are no longer exposed. Agent names,
   artwork, SOUL, and preferences remain authored in `companions/`.
 - **Muse assistant avatar**: `getAssistantIdentity()` returns `name`, `color`,
-  and nullable `avatar_data_url` (plus `ok/error`). `setAssistantIdentity`
+  nullable `avatar_data_url`, and nullable `user_name` (plus `ok/error`). `setAssistantIdentity`
   accepts optional `avatar_data_url`: omission preserves it, `null` clears
   it. It must be a static PNG/JPEG/WebP data URL, at most 256 KiB and 512px
   per side. Both actions and pilots validate it without extra dependencies.
@@ -719,14 +719,16 @@ interactive (TUI) sessions, so serve-hosted agents never get its
   or invoke a bash messenger. A queued offline prompt keeps the same text.
 - **Your Muse assistant** uses the app's actions (`artifact.invoke_action`):
   `listAgents`, `sendAgentMessage({to, text})`, `readMuseMessages({since})`,
-  and `getAssistantIdentity` / `setAssistantIdentity({name?, color?, avatar_data_url?})`.
+  and `getAssistantIdentity` / `setAssistantIdentity({name?, color?, avatar_data_url?, user_name?})`.
 - **The assistant's identity:**
   - Default **Jolly** (the default Muse avatar), color **`#d0e4fc`**
     (R .816 G .894 B .988).
   - On a Muse VM the assistant sets its real avatar name and theme color
     with `setAssistantIdentity`. It's saved in `state/assistant.json`;
     `MUSE_CODE_SPACE_ASSISTANT_NAME` / `MUSE_CODE_SPACE_ASSISTANT_COLOR`
-    change the defaults.
+    change the defaults. The same call carries `user_name`, the user's own
+    name as provided by the assistant (nullable; `MUSE_CODE_SPACE_USER_NAME`
+    changes its default, and `null` clears it).
   - **Reserved names:** `muse`, `jolly` and the assistant's name. No agent
     can take them (new names skip them, renames are refused), and messages
     addressed to any of them go to the assistant. `muse` remains a working

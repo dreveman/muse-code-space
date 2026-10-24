@@ -325,10 +325,13 @@ Use the exact action names with `artifact.invoke_action`:
 - `listAgents()` is the messaging directory. `sendAgentMessage({to, text})`
   addresses an agent by **name**, not the app session ID. Read replies with
   `readMuseMessages({since})` and use its returned `latest` for the next read.
-- `getAssistantIdentity()` returns `name`, `color`, and nullable
-  `avatar_data_url` alongside `ok/error`. `setAssistantIdentity({name?,
-  color?, avatar_data_url?})` configures Muse's own identity. Omission keeps
-  the current avatar; `null` clears it. Supply a static PNG/JPEG/WebP data
+- `getAssistantIdentity()` returns `name`, `color`, nullable
+  `avatar_data_url`, and nullable `user_name` alongside `ok/error`.
+  `setAssistantIdentity({name?, color?, avatar_data_url?, user_name?})`
+  configures Muse's own identity and the user's name. Omission keeps
+  the current values; `null` clears the avatar or the user name. The
+  assistant provides `user_name` (the user's own name) through this same
+  call when it knows it; until then it reads back as `null`. Supply a static PNG/JPEG/WebP data
   URL, no larger than 256 KiB or 512px per side. It persists with the pilot's
   identity, and incoming Muse messages show it beside the text. The Muse
   logo is the fallback. Do not copy image bytes into messages or summaries.
