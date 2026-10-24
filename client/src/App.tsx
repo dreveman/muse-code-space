@@ -7,6 +7,7 @@ import { shouldSnapToBottom, shouldFollowTranscript } from "./scrollSnap";
 import { agentVisualStatus, transcriptAtBottom, type AgentVisualStatus } from "./agentStatus";
 import { artworkForCompanionName, CompanionContact, CompanionWelcome, companions, customCompanionToCompanion, registerCustomCompanionArtwork, type Companion } from "./Companions";
 import { CreateCompanionCard, type CreateCompanionInput } from "./CreateCompanionCard";
+import { HomeWelcomeCard } from "./HomeWelcomeCard";
 import { CUSTOM_COMPANION_LIMIT } from "./companionCustom";
 import { CompanionMenu } from "./CompanionMenu";
 import { CompanionAccessNotice } from "./CompanionAccess";
@@ -1256,8 +1257,8 @@ function RestoreIcon() {
 
 function FilterIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 5h16l-6.5 7.5V19l-3 2v-8.5L4 5z" />
+    <svg aria-hidden="true" fill="none" height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg" color="currentColor">
+      <path d="M2 4h12M4.5 8h7M7 12h2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
     </svg>
   );
 }
@@ -1703,7 +1704,8 @@ export function App() {
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
   const [isNarrow, setIsNarrow] = useState(() => window.matchMedia("(max-width: 779px)").matches);
-  const [mobileListOpen, setMobileListOpen] = useState(() => window.matchMedia("(max-width: 779px)").matches);
+  const [mobileListOpen, setMobileListOpen] = useState(false);
+  const mobileOpenedFromListRef = useRef(false);
   // Narrow screens get a third full-screen view for the side panel
   // (tab strip + active tab), reached from the conversation and left
   // via its back button — same pattern as list <-> conversation.
@@ -2617,6 +2619,15 @@ export function App() {
     setMobileListOpen(false);
   };
 
+  const openHomeWelcome = useCallback(() => {
+    if (creating || queuedPrompt?.kind === "draft") return;
+    setCreateCompanionOpen(false);
+    setSelectedCompanionId(null);
+    setSelectedId(null);
+    setMobileListOpen(false);
+    setMobileSideOpen(false);
+  }, [creating, queuedPrompt?.kind]);
+
   const createCompanion = async (input: CreateCompanionInput): Promise<string | null> => {
     setCreatingCompanion(true);
     try {
@@ -2647,13 +2658,9 @@ export function App() {
   // (companion roster / "select a task") flashes on every entry.
   useLayoutEffect(() => {
     if (!sessionsQuery.data) return; // never judge a selection against a list that hasn't loaded
-    const autoPickFirst = !initialPickDoneRef.current;
+    const autoPickFirst = false;
     initialPickDoneRef.current = true;
     if (selectedCompanionId !== null) return;
-    if (sessions.length === 0 && draft === null) {
-      selectCompanion("poppy", false);
-      return;
-    }
     setSelectedId((current) =>
       resolveSelectedId(
         current,
@@ -4333,16 +4340,21 @@ export function App() {
               <button
                 type="button"
                 className="sidebar-collapse-toggle"
-                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                onClick={toggleSidebarCollapsed}
+                aria-label={isNarrow ? "Close coding team" : sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={isNarrow ? "Close coding team" : sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                onClick={isNarrow ? openHomeWelcome : toggleSidebarCollapsed}
               >
-                {sidebarCollapsed ? <SidebarOpenIcon /> : <SidebarCloseIcon />}
+                {!isNarrow && sidebarCollapsed ? <SidebarOpenIcon /> : <SidebarCloseIcon />}
               </button>
               <header className="command-bar">
-                <span className="command-bar-eyebrow">
+                <button
+                  type="button"
+                  className="command-bar-eyebrow"
+                  title={isNarrow ? undefined : "Welcome page"}
+                  onClick={isNarrow ? undefined : openHomeWelcome}
+                >
                   <span className="command-bar-eyebrow-word">THE</span> <MuseIcon /> <span className="command-bar-eyebrow-word">CODING TEAM</span>
-                </span>
+                </button>
                 {!sidebarHintDismissed && (
                   <div className="command-bar-description">
                     <span>Specialized code helpers that work for you and your assistant</span>
@@ -4440,6 +4452,7 @@ export function App() {
                               onDeleteClick={() => askToDelete(session)}
                               nowMs={nowMs}
                               onSelect={() => {
+                                mobileOpenedFromListRef.current = true;
                                 setSelectedCompanionId(null);
                                 setSelectedId(session.id);
                                 setMobileListOpen(false);
@@ -4499,6 +4512,7 @@ export function App() {
                     <CompanionContact key={companion.id} companion={companion} selected={!createCompanionOpen && selectedCompanionId === companion.id} models={accessibleModels}
                       disabled={(creating || queuedPrompt?.kind === "draft") && draft?.companionId !== companion.id}
                       onSelect={() => {
+                        mobileOpenedFromListRef.current = true;
                         selectCompanion(companion.id);
                         requestAnimationFrame(() => document.getElementById("companion-welcome-heading")?.focus());
                       }} />
@@ -4552,6 +4566,8 @@ export function App() {
     toggleSidebarCollapsed,
     sidebarHintDismissed,
     dismissSidebarHint,
+    openHomeWelcome,
+    isNarrow,
   ]);
   const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
   const smartlogTabActive = Boolean(
@@ -4572,7 +4588,12 @@ export function App() {
     return (
                     <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
                       <button type="button" className="mobile-back-button" aria-label="Back to companions"
-                        onClick={() => { setMobileListOpen(true); setSelectedId(null); }}><BackIcon /></button>
+                        onClick={() => {
+                          if (mobileOpenedFromListRef.current) {
+                            setMobileListOpen(true);
+                          }
+                          setSelectedId(null);
+                        }}><BackIcon /></button>
                       <TranscriptCompanion key={detailSession.id} name={detailAgentName}
                         connecting={connectionLost || pilotUnavailable}
                         archived={sessionPast}
@@ -4783,16 +4804,31 @@ export function App() {
                 browsingDisabled={creating || queuedPrompt?.kind === "draft"}
                 composer={firstMessageComposer}
                 onBack={() => {
-                  setMobileListOpen(true);
-                  requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".companion-contact[aria-current]")?.focus());
+                  if (mobileOpenedFromListRef.current) {
+                    setMobileListOpen(true);
+                    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".companion-contact[aria-current]")?.focus());
+                  } else {
+                    openHomeWelcome();
+                  }
                 }}
                 actions={<SessionMenu actions={viewMenuActions} colorMode={colorMode}
                   onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
                   showRawToolOutput={showRawToolOutput} onToggleRawToolOutput={() => setShowRawToolOutput((value) => !value)} />} /> : <>
               {!draftSelected && (selectedId === null || shouldShowConversationLoading({ isPending: detailQuery.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null }) || !sessionsQuery.data || sessions.length === 0) && (
                 <div className="chat-floating-toolbar" role="group" aria-label="Chat controls">
-                  <button type="button" className="mobile-back-button" aria-label="Back to companions"
-                    onClick={() => setMobileListOpen(true)}><BackIcon /></button>
+                  {sessionsQuery.data && (sessions.length === 0 || selectedId === null) ? (
+                    <button
+                      type="button"
+                      className="mobile-team-button command-bar-eyebrow"
+                      aria-label="Open coding team"
+                      onClick={() => setMobileListOpen(true)}
+                    >
+                      <span className="command-bar-eyebrow-word">THE</span> <MuseIcon /> <span className="command-bar-eyebrow-word">CODING TEAM</span>
+                    </button>
+                  ) : (
+                    <button type="button" className="mobile-back-button" aria-label="Back to companions"
+                      onClick={() => setMobileListOpen(true)}><BackIcon /></button>
+                  )}
                   <div className="chat-floating-actions">
                     <SessionMenu actions={viewMenuActions} colorMode={colorMode}
                       onColorModeChange={(mode) => { applyColorMode(mode); setColorMode(mode); }}
@@ -4810,10 +4846,27 @@ export function App() {
                     </div>
                   </div>
                 </div>
-              ) : sessions.length === 0 ? (
-                <p className="detail-loading">Pick a companion and tell them what you’d like to do.</p>
-              ) : selectedId === null ? (
-                <p className="detail-loading">Select a task to see its conversation.</p>
+              ) : sessions.length === 0 || selectedId === null ? (
+                /* Pick a companion and tell them what you’d like to do. Select a task to see its conversation. */
+                <HomeWelcomeCard
+                  sessions={sessions}
+                  formatTime={(iso) => formatRelativeTime(iso, sidebarClockMs)}
+                  onSelectSession={(id) => {
+                    mobileOpenedFromListRef.current = false;
+                    setCreateCompanionOpen(false);
+                    setSelectedCompanionId(null);
+                    setSelectedId(id);
+                    setMobileListOpen(false);
+                  }}
+                  onPickCompanion={() => {
+                    if (isNarrow) {
+                      setMobileListOpen(true);
+                      return;
+                    }
+                    const firstAvailable = availableCompanions[0] ?? allCompanions[0];
+                    if (firstAvailable) selectCompanion(firstAvailable.id);
+                  }}
+                />
               ) : shouldShowConversationLoading({ isPending: detailQuery.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null }) || !detailSession ? (
                 <p className="detail-loading">Loading conversation…</p>
               ) : (
