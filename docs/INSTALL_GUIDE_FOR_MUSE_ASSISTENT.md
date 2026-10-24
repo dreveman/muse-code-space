@@ -6,6 +6,57 @@ anything destructive. Keep the app, pilot and credential relay as **separate
 components**. On this platform the app is a Hatch TypeScript web artifact;
 cloning a repository does not install or publish that artifact by itself.
 
+## First: provision credentials in Secure Vault (required gate)
+
+Do this **before** every other step in this guide — before cleanup, before
+`install.sh`, before publishing the app. An install can complete every
+mechanical step and still be useless because a credential is missing: the
+relay authenticates every model request through the user's Secure Vault
+credential, so without it every agent turn fails with an auth error that
+only surfaces after the install looks done. Collect and verify the
+credentials up front, while the fix is still "ask the user," not "debug a
+finished install."
+
+**Never ask the user to paste a secret in chat.** Every credential below is
+stored through the platform's Secure Vault flow (the secure entry card /
+API-access flow), which the assistant never sees the value of. Secure Vault
+has **no read-back**: no tool can retrieve a stored value, so each
+credential must be verified by *issuance*, not inspection — request a
+surrogate for the entry and confirm the credential service issues one.
+
+1. **Meta Model API credential — critical, gates the install.** The user
+   must have a custom Secure Vault API credential named
+   `custom.meta-model-api` holding their Meta Model API key. If it is not
+   already stored, walk the user through storing it now via the Secure
+   Vault API-access flow. Then verify: a surrogate (`hsurr:*`) can be
+   issued for `custom.meta-model-api`. **If the credential is missing or
+   cannot be issued, stop here and report that.** Do not run the installer
+   and do not publish the app; there is no partial install worth having
+   without it. (The `## Credentials` section under Step 1 explains how the
+   relay consumes this credential, including the sentinel `auth.json` —
+   that mechanism is why no real key ever lands on the pilot host.)
+2. **GitHub broker credential — optional, ask once, now.** Ask the user
+   whether Code Space sessions should have GitHub access. If yes, have
+   them create a fine-grained GitHub PAT (Contents + Pull requests
+   read/write, **selected repositories only**) and store it through Secure
+   Vault as a custom API credential named `custom.github-broker`, then
+   verify a surrogate can be issued for it the same way. If they decline,
+   note the choice and proceed — the broker stays up and reports a clear
+   credential error until one is provisioned, and this step can be done
+   later without reinstalling. If the user instead plans GitHub **App**
+   mode (full git transport), tell them to have the App ID, installation
+   ID, and private key ready for the post-install setup dialog: the App
+   private key is **not** stored in Secure Vault (it cannot be — the pilot
+   must hold the real key to mint tokens, and the vault has no read-back);
+   it is entered in the app's GitHub setup dialog and held in a host-local
+   600 file written by the pilot, as described in `## Credentials` below.
+
+Record which credentials verified before moving on, and say so in your
+first progress report. This gate is also reproduced verbatim in
+`docs/INSTALL_PROMPT.md`, the copy-paste prompt that starts an install, so
+the requirement reaches the installing assistant even when the guide itself
+is only skimmed.
+
 ## 0. Confirm prerequisites and clean up the unreleased test install
 
 1. Confirm you have access to the web-artifact builder interface and its
@@ -62,6 +113,11 @@ host's clone of the same repository. The pilot's isolated Muse config and
 credentials belong under `~/.config/muse-code-space-pilot/muse/`.
 
 ## Credentials
+
+You should already have completed the **credentials gate** at the top of
+this guide (Secure Vault entries stored and verified by issuance) before
+reaching this section; what follows is the reference for how each
+credential is consumed.
 
 The standard install does **not** need a real CLI credential in `auth.json`.
 The pilot writes a sentinel placeholder that satisfies the CLI's startup
