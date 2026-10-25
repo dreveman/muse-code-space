@@ -1781,6 +1781,10 @@ export function App() {
   const [pendingEchoAnchor, setPendingEchoAnchor] = useState(0);
   const [sendingDirection, setSendingDirection] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [compactingContext, setCompactingContext] = useState(false);
+  const [compactError, setCompactError] = useState<string | null>(null);
+  const contextMenuWrapRef = useRef<HTMLDivElement>(null);
   const [retryingStart, setRetryingStart] = useState(false);
   const [startRetryError, setStartRetryError] = useState<string | null>(null);
   const [takeoverError, setTakeoverError] = useState<string | null>(null);
@@ -2445,8 +2449,33 @@ export function App() {
     setInputBusyId(null);
     setInputError(null);
     setInterrupting(false);
+    setContextMenuOpen(false);
+    setCompactingContext(false);
+    setCompactError(null);
     voiceRecognitionRef.current?.stop();
   }, [selectedId]);
+  useLayoutEffect(() => {
+    const composer = contextMenuWrapRef.current?.closest(".terminal-composer");
+    if (!contextMenuOpen) return;
+    composer?.classList.add("menu-open");
+    const close = (event: PointerEvent | FocusEvent) => {
+      if (event.target instanceof Node && !contextMenuWrapRef.current?.contains(event.target)) {
+        setContextMenuOpen(false);
+      }
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("focusin", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      composer?.classList.remove("menu-open");
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("focusin", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [contextMenuOpen]);
   useEffect(() => {
     if (selectedId && !draftSelected) {
       if (direction) sessionDraftTextRef.current.set(selectedId, direction);
@@ -2834,9 +2863,18 @@ export function App() {
     // unmatched tools, and show every tool in the raw debugging mode.
     return showRawToolOutput ? events : events.filter((event) => !redundantMessageTools.has(event.id));
   }, [transcriptEvents, showReasoning, showRawToolOutput, redundantMessageTools]);
+  const eventsSinceCompaction = useMemo(() => {
+    const events = detail?.events ?? [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i]!.kind === "system" && events[i]!.content === "Conversation context was compacted.") {
+        return { events: events.slice(i + 1), compacted: true };
+      }
+    }
+    return { events, compacted: false };
+  }, [detail?.events]);
   const detailEventsCharCount = useMemo(
-    () => detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0,
-    [detail?.events],
+    () => eventsSinceCompaction.events.reduce((sum, event) => sum + event.content.length, 0),
+    [eventsSinceCompaction.events],
   );
   const fakePilotTurnCount = useMemo(() => {
     const isFakeSession = Boolean(
@@ -2844,13 +2882,14 @@ export function App() {
         detail?.events.some((event) => event.content.startsWith("**FAKE-OK**")),
     );
     if (!isFakeSession) return 0;
-    const userTurns = detail?.events.filter((event) => event.kind === "user").length ?? 0;
-    return Math.max(1, userTurns);
-  }, [detailSession?.workspace_root, detail?.events]);
+    const userTurns = eventsSinceCompaction.events.filter((event) => event.kind === "user").length;
+    return eventsSinceCompaction.compacted ? userTurns : Math.max(1, userTurns);
+  }, [detailSession?.workspace_root, detail?.events, eventsSinceCompaction]);
   const estimatedContextTokens = Math.ceil(
-    fakePilotTurnCount * 28_000 +
+    (eventsSinceCompaction.compacted ? 2_000 : 0) +
+      fakePilotTurnCount * 28_000 +
       (
-        (detailSession?.prompt.length ?? 0) +
+        (eventsSinceCompaction.compacted ? 0 : (detailSession?.prompt.length ?? 0)) +
         detailEventsCharCount +
         direction.length
       ) / 4,
@@ -5305,13 +5344,69 @@ export function App() {
                           <div className="composer-toolbar">
                             <div className="composer-tools" aria-label="Message tools">
                               {takeoverCompanionMenu}
-                              <span
-                                className="composer-budget"
-                                title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
-                                aria-label={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
-                              >
-                                <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
-                              </span>
+                              <div ref={contextMenuWrapRef} className="context-budget-wrap">
+                                <button
+                                  type="button"
+                                  className={`composer-budget${contextMenuOpen ? " active" : ""}`}
+                                  title={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
+                                  aria-label={contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
+                                  aria-haspopup="dialog"
+                                  aria-expanded={contextMenuOpen}
+                                  onClick={() => {
+                                    setCompactError(null);
+                                    setContextMenuOpen((open) => !open);
+                                  }}
+                                >
+                                  <ContextRing value={estimatedContextTokens} max={CONTEXT_WINDOW_TOKENS} />
+                                </button>
+                                {contextMenuOpen && (
+                                  <div className="context-budget-menu" role="dialog" aria-label="Context usage">
+                                    <div className="context-budget-header">
+                                      <strong>Context usage</strong>
+                                      <span>{Math.min(100, Math.max(0, (estimatedContextTokens / CONTEXT_WINDOW_TOKENS) * 100)).toFixed(1)}%</span>
+                                    </div>
+                                    <div className="context-budget-bar" aria-hidden="true">
+                                      <div
+                                        className="context-budget-bar-fill"
+                                        style={{ width: `${Math.min(100, Math.max(0, (estimatedContextTokens / CONTEXT_WINDOW_TOKENS) * 100))}%` }}
+                                      />
+                                    </div>
+                                    <p className="context-budget-detail">
+                                      {contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS)}
+                                    </p>
+                                    {compactError && (
+                                      <p className="context-budget-error" role="alert">{compactError}</p>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="context-budget-compact-btn"
+                                      disabled={compactingContext || sessionActive || sendingDirection || !detailSession.pilot_session_id}
+                                      onClick={() => {
+                                        if (!detailSession || compactingContext) return;
+                                        setCompactingContext(true);
+                                        setCompactError(null);
+                                        void api.compactContext({ session_id: detailSession.id }).then(async (res) => {
+                                          if (!res.ok) {
+                                            setCompactError(res.error ?? "Context could not be compacted.");
+                                            return;
+                                          }
+                                          await Promise.all([
+                                            queryClient.invalidateQueries({ queryKey: ["code-session", detailSession.id] }),
+                                            queryClient.invalidateQueries({ queryKey: ["code-sessions"] }),
+                                          ]);
+                                          setContextMenuOpen(false);
+                                        }).catch(() => {
+                                          setCompactError("Context could not be compacted. Try again.");
+                                        }).finally(() => {
+                                          setCompactingContext(false);
+                                        });
+                                      }}
+                                    >
+                                      {compactingContext ? "Compacting…" : "Compact context"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <div className="composer-actions">
                               <AttachmentButton

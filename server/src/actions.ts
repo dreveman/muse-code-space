@@ -3900,6 +3900,61 @@ export const Actions = {
     },
   }),
 
+  compactContext: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+    }),
+    response: z.object({ ok: z.boolean(), noop: z.boolean().optional(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const db = ctx.db<typeof schema>();
+      const rows = await db
+        .select({
+          id: schema.sessions.id,
+          status: schema.sessions.status,
+          pilotSessionId: schema.sessions.pilotSessionId,
+          outputRevision: schema.sessions.outputRevision,
+        })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, args.session_id))
+        .limit(1);
+      const session = rows[0];
+      if (!session) return { ok: false, error: "Session not found" };
+      if (!session.pilotSessionId) return { ok: false, error: "Companion connection unavailable" };
+      if (session.status === "queued" || session.status === "running") {
+        return { ok: false, error: "Stop the current turn before compacting context." };
+      }
+      let status = "accepted";
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/compact`,
+          { method: "POST", body: JSON.stringify({}) },
+          z.object({ ok: z.boolean(), status: z.string().optional(), reason: z.string().optional() }),
+        );
+        if (res.status) status = res.status;
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
+      }
+      if (status !== "noop") {
+        await db.insert(schema.outputEvents).values({
+          sessionId: session.id,
+          kind: "system",
+          content: "Conversation context was compacted.",
+          createdAt: new Date(),
+        });
+        await db.update(schema.sessions)
+          .set({
+            outputRevision: session.outputRevision + 1,
+          })
+          .where(eq(schema.sessions.id, session.id));
+        ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", session.id]] });
+      }
+      return { ok: true, noop: status === "noop", error: null };
+    },
+  }),
+
   syncPilotEvents: defineAction({
     request: z.object({
       session_id: z.string().min(1).max(200),
