@@ -2158,6 +2158,12 @@ Bun.serve({
       session.cancel?.();
       return json(200, { ok: true, turnId });
     }
+    if (sub === "/compact" && req.method === "POST") {
+      if (session.openTurn) {
+        return json(409, { error: "Cannot compact while a turn is running.", code: "turn_running" });
+      }
+      return json(200, { ok: true, status: "accepted" });
+    }
     if (sub === "/git-author" && req.method === "POST") {
       if (body.identity === null || (body.name === null && body.email === null)) {
         session.gitAuthor = null;

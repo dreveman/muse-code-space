@@ -2686,6 +2686,32 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // POST /sessions/:id/compact — manually compact the session's conversation context.
+    const mCompact = path.match(/^\/sessions\/([^/]+)\/compact$/);
+    if (req.method === "POST" && mCompact) {
+      const entry = resolveEntry(decodeURIComponent(mCompact[1]));
+      if (!entry) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });
+      try {
+        const result = await connection.command("session/compact", {
+          commandId: uuidv7(),
+          sessionId: entry.session.sessionId,
+        });
+        const status =
+          result && typeof result === "object" && typeof result.status === "string"
+            ? result.status
+            : "accepted";
+        const reason =
+          result && typeof result === "object" && typeof result.reason === "string"
+            ? result.reason
+            : undefined;
+        return json(res, 200, { ok: true, status, ...(reason ? { reason } : {}) });
+      } catch (e) {
+        const error = `compact rejected: ${String(e?.message ?? e).slice(0, 300)}`;
+        return json(res, 400, { error, code: "compact_rejected" });
+      }
+    }
+
     if (req.method === "POST" && path === "/sessions") {
       const body = await readBody(req);
       const result = await createPilotSessionOnce(body);
