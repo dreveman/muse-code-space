@@ -116,6 +116,7 @@ const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
 const WORKING_DETAILS_KEY = "muse-code-space:working-details";
 const SHOW_ADD_COMPANION_KEY = "muse-code-space:show-add-companion";
 const HIDE_ADD_COMPANION_KEY = "muse-code-space:hide-add-companion";
+const COMPACT_LAYOUT_KEY = "muse-code-space:compact-layout";
 const SORT_MODE_KEY = "muse-code-space:sort-mode";
 // Home folder on the pilot's machine, from the server's getHostConfig
 // (the VM is /home/hatch; a pilot on a Mac is /Users/<you>). Module-level so
@@ -1836,6 +1837,9 @@ export function App() {
       return window.localStorage.getItem(SHOW_ADD_COMPANION_KEY) === "false";
     } catch { return false; }
   });
+  const [compactLayout, setCompactLayout] = useState(() => {
+    try { return window.localStorage.getItem(COMPACT_LAYOUT_KEY) === "true"; } catch { return false; }
+  });
   const [colorMode, setColorMode] = useState<ColorMode>(loadColorMode);
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
@@ -1889,6 +1893,31 @@ export function App() {
   // device Enter is a newline until a hardware-only key proves a physical
   // keyboard — only the send button submits before that.
 
+  useLayoutEffect(() => {
+    let lastWidth = window.innerWidth;
+    let restingHeight = window.innerHeight;
+    const syncShortViewport = (initial = false) => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+      const activeTag = document.activeElement?.tagName;
+      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
+      if (initial || !coarsePointer || width !== lastWidth || height > restingHeight || !inputFocused) {
+        restingHeight = height;
+        lastWidth = width;
+      }
+      if (restingHeight <= 760) {
+        document.documentElement.setAttribute("data-short-viewport", "true");
+      } else {
+        document.documentElement.removeAttribute("data-short-viewport");
+      }
+    };
+    syncShortViewport(true);
+    const onResize = () => syncShortViewport(false);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   useEffect(() => {
     // A saved desktop width must not make a newly narrowed window overflow.
     const onResize = () => {
@@ -1920,10 +1949,8 @@ export function App() {
       if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height;
       if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
-      const activeTag = document.activeElement?.tagName;
-      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
       const viewportShrunk = viewport.height < maxViewportHeight - 4;
-      const keyboardOpen = inputFocused || viewportShrunk;
+      const keyboardOpen = viewportShrunk;
       if (keyboardOpen) {
         element.dataset.keyboardOpen = "true";
         hatchRoot?.setAttribute("data-keyboard-open", "true");
@@ -1982,6 +2009,14 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem(HIDE_ADD_COMPANION_KEY, String(hideAddCompanion)); } catch { /* webview storage can be disabled */ }
   }, [hideAddCompanion]);
+  useEffect(() => {
+    try { window.localStorage.setItem(COMPACT_LAYOUT_KEY, String(compactLayout)); } catch { /* webview storage can be disabled */ }
+    if (compactLayout) {
+      document.documentElement.setAttribute("data-compact-layout", "true");
+    } else {
+      document.documentElement.removeAttribute("data-compact-layout");
+    }
+  }, [compactLayout]);
   useEffect(() => {
     try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch { /* webview storage can be disabled */ }
   }, [sortMode]);
@@ -3890,6 +3925,13 @@ export function App() {
       checked: showWorkingDetails,
       onActivate: () => setShowWorkingDetails((value) => !value),
     },
+    {
+      key: "compact-layout",
+      label: "Compact layout",
+      description: "Smaller top companion icon and full-height bottom prompt",
+      checked: compactLayout,
+      onActivate: () => setCompactLayout((value) => !value),
+    },
   ];
   // The sidebar's rename/archive buttons are hover-only; the transcript's
   // session menu carries the same actions so touch devices can reach them.
@@ -4306,11 +4348,12 @@ export function App() {
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
       <RepoPicker
-        leadingControl={(
+        leadingControl={startingDraft?.draft.id === selectedId && !startingDraft.draft.projectKey ? undefined : (
           <ProjectPicker bare
             projects={projects}
+            infoOnly={startingDraft?.draft.id === selectedId}
             companionHue={agentNameHue(draft?.companionName ?? selectedCompanion?.name ?? "")}
-            selected={draft?.projectKey ? draft.projectKey : null}
+            selected={startingDraft?.draft.id === selectedId ? (startingDraft.draft.projectKey || null) : (draft?.projectKey ? draft.projectKey : null)}
             disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
             onChoose={chooseDraftProject}
             onCreateProject={createProjectForPicker}
@@ -4794,6 +4837,7 @@ export function App() {
     showReasoning,
     expandTools,
     showWorkingDetails,
+    compactLayout,
     archiveBusy,
     deleteBusy,
     renameBusy,
@@ -5151,17 +5195,17 @@ export function App() {
                       <form ref={takeoverFormRef} className="terminal-prompt" onSubmit={submitTakeover}>
                         {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout || ownedPrs.length > 0) ? (
                           <RepoPicker
-                            leadingControl={(
+                            leadingControl={detailSession.project_id !== null ? (
                               <ProjectPicker bare
                                 projects={projects}
-                                infoOnly={detailSession.project_id !== null}
+                                infoOnly
                                 companionHue={agentNameHue(detailAgentName)}
                                 selected={detailSession.project_id}
                                 disabled={handoffBusy}
                                 onChoose={assignDetailProject(detailSession.id)}
                                 onCreateProject={createProjectForPicker}
                               />
-                            )}
+                            ) : undefined}
                             repos={reposQuery.data?.repos ?? EMPTY_REPOS}
                             githubEnabled={reposQuery.data?.github_enabled ?? true}
                             loading={reposQuery.isPending}
@@ -5178,17 +5222,17 @@ export function App() {
                             globalGitIdentity={globalGitIdentity}
                             onSaveSessionGitAuthor={saveSessionGitAuthor}
                           />
-                        ) : (
+                        ) : detailSession.project_id !== null ? (
                           <ProjectPicker
                             projects={projects}
-                            infoOnly={detailSession.project_id !== null}
+                            infoOnly
                             companionHue={agentNameHue(detailAgentName)}
                             selected={detailSession.project_id}
                             disabled={handoffBusy}
                             onChoose={assignDetailProject(detailSession.id)}
                             onCreateProject={createProjectForPicker}
                           />
-                        )}
+                        ) : null}
                         {companionBusyElsewhere && <p className="task-resume-notice" role="status">
                           {detailAgentName} is on another task. Pick another companion below to resume.
                         </p>}

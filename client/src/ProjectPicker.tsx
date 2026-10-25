@@ -88,7 +88,7 @@ export const ProjectPicker = memo(function ProjectPicker({ projects, selected, d
           : companionHue !== undefined ? { "--companion-hue": companionHue } : undefined) as CSSProperties | undefined}>
         <div className={`repo-picker-control${selectedProject ? " repo-has-selection" : ""}`}>
           <button type="button" className="repo-picker-trigger project-picker-trigger" aria-haspopup="dialog" aria-expanded={open}
-            aria-controls={`${id}-menu`} disabled={disabled} title="Assign project"
+            aria-controls={`${id}-menu`} disabled={disabled} title={infoOnly ? undefined : "Assign project"}
             onClick={() => setOpen((value) => !value)}>
             <ProjectFolderIcon />
             {selectedProject
@@ -154,7 +154,7 @@ export const ProjectPicker = memo(function ProjectPicker({ projects, selected, d
               </form>
             ) : (
               <button type="button" className="project-menu-create-toggle" onClick={() => setCreating(true)}>
-                + Create new project
+                + New project
               </button>
             )}
           </div>
