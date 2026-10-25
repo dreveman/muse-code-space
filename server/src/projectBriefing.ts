@@ -10,6 +10,8 @@ export type BriefingProject = {
   name: string;
   description: string;
   references: BriefingReference[];
+  /** PROJECT.md agent briefing, sent to agents as-is. */
+  briefing?: string;
 };
 
 // Builds the context block for a session filed under a project, or null when
@@ -19,13 +21,16 @@ export function buildProjectBriefing(project: BriefingProject): string | null {
   const references = project.references
     .map((ref) => ({ label: ref.label.trim(), target: ref.target.trim() }))
     .filter((ref) => ref.label !== "" && ref.target !== "");
-  if (description === "" && references.length === 0) return null;
+  const projectMd = (project.briefing ?? "").trim();
+  if (description === "" && references.length === 0 && projectMd === "") return null;
   const lines = [`[Project: ${project.name.trim()}]`];
   if (description !== "") lines.push(description);
   if (references.length > 0) {
     lines.push("References:");
     for (const ref of references) lines.push(`- ${ref.label}: ${ref.target}`);
   }
+  // The PROJECT.md briefing goes to agents verbatim, like a SOUL.md.
+  if (projectMd !== "") lines.push("", projectMd);
   return lines.join("\n");
 }
 

@@ -25,6 +25,7 @@ import { newSessionIdentity, randomUuid } from "./sessionWorkspace";
 import { SortMenu } from "./SortMenu";
 import { AgentMentionMenu } from "./AgentMentionMenu";
 import { RepoPicker } from "./RepoPicker";
+import { ProjectPicker, type NewProjectInput } from "./ProjectPicker";
 import type { RepoOption } from "./repoOptions";
 import { ownedPullRequestsFromEvents, type OwnedPullRequest } from "./ownedPullRequests";
 
@@ -4283,10 +4284,38 @@ export function App() {
   const chooseDraftRepo = useCallback((slug: string | null) => {
     setDraft((current) => (current ? { ...current, repoSlug: slug } : current));
   }, []);
+  const chooseDraftProject = useCallback((projectId: string | null) => {
+    setDraft((current) => (current ? { ...current, projectKey: projectId ?? "" } : current));
+  }, []);
+  const createProjectForPicker = useCallback(async (input: NewProjectInput): Promise<{ id: string | null; error: string | null }> => {
+    try {
+      const result = await api.createProject({ project_id: randomUuid(), name: input.name, description: "", color: input.color, briefing: input.briefing });
+      if (!result.ok || !result.id) return { id: null, error: result.error };
+      await queryClient.invalidateQueries({ queryKey: ["code-projects"] });
+      return { id: result.id, error: null };
+    } catch {
+      return { id: null, error: "Project was not created. Try again." };
+    }
+  }, [queryClient]);
+  const assignDetailProject = useCallback((sessionId: string) => (projectId: string | null) => {
+    void api.setSessionProject({ session_id: sessionId, project_id: projectId }).then((result) => {
+      if (result.ok) void queryClient.invalidateQueries({ queryKey: ["code-sessions"] });
+    });
+  }, [queryClient]);
   const firstMessageComposer = (startingDraft?.draft.id === selectedId || selectedCompanion !== null) ? (
     <form ref={draftFormRef} className="terminal-prompt companion-first-prompt" onSubmit={submitDraft}>
       {queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id && <QueuedEcho text={queuedPrompt.prompt} onCancel={cancelQueuedPrompt} sending={flushingRef.current} />}
       <RepoPicker
+        leadingControl={(
+          <ProjectPicker bare
+            projects={projects}
+            companionHue={agentNameHue(draft?.companionName ?? selectedCompanion?.name ?? "")}
+            selected={draft?.projectKey ? draft.projectKey : null}
+            disabled={creating || startingDraft?.draft.id === selectedId || queuedPrompt?.kind === "draft"}
+            onChoose={chooseDraftProject}
+            onCreateProject={createProjectForPicker}
+          />
+        )}
         repos={reposQuery.data?.repos ?? EMPTY_REPOS}
         githubEnabled={reposQuery.data?.github_enabled ?? true}
         loading={reposQuery.isPending}
@@ -4499,7 +4528,8 @@ export function App() {
                   </p>
                 ) : (
                   sessionGroups.map((group) => (
-                    <section key={group.key === "" ? "none" : group.key} className="session-group" aria-label={group.name}>
+                    <section key={group.key === "" ? "none" : group.key} className={`session-group${group.projectId !== null ? " project-group" : ""}`} aria-label={group.name}
+                      style={group.projectId !== null ? { "--project-color": projects.find((project) => project.id === group.projectId)?.color ?? "#8a8a8a" } as CSSProperties : undefined}>
                       <div className="session-group-header-row">
                         <button
                           type="button"
@@ -4511,8 +4541,8 @@ export function App() {
                             <ChevronIcon />
                           </span>
                           <span className="session-group-name">{group.name}</span>
-                          {/* The flat task list needs no group count. */}
-                          {group.key !== "" && <span className="session-group-count">{group.sessions.length}</span>}
+                          {/* Project groups show no count; age groups keep theirs. */}
+                          {group.key !== "" && group.projectId === null && <span className="session-group-count">{group.sessions.length}</span>}
                         </button>
                       </div>
                       {(sidebarCollapsed || !collapsedGroups.has(group.key)) && (
@@ -5119,8 +5149,19 @@ export function App() {
                     ) : (
                     /* Shown for past sessions too: sending resumes them ("Resume & send"). */
                       <form ref={takeoverFormRef} className="terminal-prompt" onSubmit={submitTakeover}>
-                        {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout || ownedPrs.length > 0) && (
+                        {(detailSession.repo_slug || vcsStatusQuery.data?.isGitCheckout || ownedPrs.length > 0) ? (
                           <RepoPicker
+                            leadingControl={(
+                              <ProjectPicker bare
+                                projects={projects}
+                                infoOnly={detailSession.project_id !== null}
+                                companionHue={agentNameHue(detailAgentName)}
+                                selected={detailSession.project_id}
+                                disabled={handoffBusy}
+                                onChoose={assignDetailProject(detailSession.id)}
+                                onCreateProject={createProjectForPicker}
+                              />
+                            )}
                             repos={reposQuery.data?.repos ?? EMPTY_REPOS}
                             githubEnabled={reposQuery.data?.github_enabled ?? true}
                             loading={reposQuery.isPending}
@@ -5136,6 +5177,16 @@ export function App() {
                             sessionGitAuthor={detailSession.git_author ?? null}
                             globalGitIdentity={globalGitIdentity}
                             onSaveSessionGitAuthor={saveSessionGitAuthor}
+                          />
+                        ) : (
+                          <ProjectPicker
+                            projects={projects}
+                            infoOnly={detailSession.project_id !== null}
+                            companionHue={agentNameHue(detailAgentName)}
+                            selected={detailSession.project_id}
+                            disabled={handoffBusy}
+                            onChoose={assignDetailProject(detailSession.id)}
+                            onCreateProject={createProjectForPicker}
                           />
                         )}
                         {companionBusyElsewhere && <p className="task-resume-notice" role="status">

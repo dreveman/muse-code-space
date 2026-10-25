@@ -669,7 +669,9 @@ async function recoverSession(id, meta) {
     if (recoveredMeta.name) void renameBackendSession(session.sessionId, recoveredMeta.name);
     const seed = buildRecoverySeed(id);
     const soulSeed = soulBlock(recoveredMeta.soul);
-    const combinedSeed = soulSeed && seed ? `${soulSeed}\n\n${seed}` : soulSeed ?? seed;
+    const briefingSeed = cleanSoul(recoveredMeta.projectBriefing);
+    const soulAndBriefing = [soulSeed, briefingSeed].filter(Boolean).join("\n\n") || null;
+    const combinedSeed = soulAndBriefing && seed ? `${soulAndBriefing}\n\n${seed}` : soulAndBriefing ?? seed;
     if (combinedSeed) pendingSeeds.set(id, combinedSeed);
     // Visible in the transcript as a small notice; the app-visible session
     // id never changes, so this reads as one continuous conversation.
@@ -1670,7 +1672,7 @@ function soulBlock(soul) {
 // companion's SOUL.md rides along here so its personality actually shapes
 // the conversation; it sits before the --- separator, so transcript
 // restore keeps stripping it along with the rest of the preamble.
-function agentPreamble(name, soul) {
+function agentPreamble(name, soul, projectBriefing) {
   const lines = [
     `[Code Space] You are agent "${name}". Other agents and the user's Muse assistant (${assistant.name}) may message you; messages arrive as turns starting with "Message from …".`,
     'To message another agent or the assistant, use mcp__code_space__send_message with a name from mcp__code_space__list_agents (including the assistant’s avatar name).',
@@ -1679,6 +1681,10 @@ function agentPreamble(name, soul) {
   ];
   const block = soulBlock(soul);
   if (block) lines.push("", block);
+  // The project briefing ([Project: …] description/references/PROJECT.md)
+  // rides the same hidden channel as the SOUL.
+  const briefing = cleanSoul(projectBriefing);
+  if (briefing) lines.push("", briefing);
   return lines.join("\n");
 }
 
@@ -2031,6 +2037,7 @@ async function createPilotSessionInner(body, appSessionId) {
       appSessionId,
       initialTurnId: null,
       soul: cleanSoul(body.soul),
+      projectBriefing: cleanSoul(body.project_briefing),
     };
     const session = await client.startSession({ workspaceRoot: wsDir, modelId: meta.modelId, approvalMode: "allowAll" });
     wireSession(session, meta);
@@ -2049,7 +2056,7 @@ async function createPilotSessionInner(body, appSessionId) {
       return { code: 503, body: { error: "credential relay unavailable; retry once it is back", code: "relay_down", sessionId: entry.logId } };
     }
     try {
-      const firstText = entry.meta.name ? `${agentPreamble(entry.meta.name, entry.meta.soul)}\n\n---\n\n${body.prompt}` : body.prompt;
+      const firstText = entry.meta.name ? `${agentPreamble(entry.meta.name, entry.meta.soul, entry.meta.projectBriefing)}\n\n---\n\n${body.prompt}` : body.prompt;
       const turn = await entry.session.sendUserTurn({
         input: buildTurnInputParts(firstText, body.attachments),
         reasoningEffort: normEffort(body.reasoningEffort),

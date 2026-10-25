@@ -204,6 +204,13 @@
       "when": 1792800000000,
       "tag": "0029_add_custom_companion_icon",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792900000000,
+      "tag": "0030_add_project_color_briefing",
+      "breakpoints": true
     }
   ]
 }

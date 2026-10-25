@@ -1,4 +1,4 @@
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ExpandButton } from "./MoreCompanionsButton";
 import { PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { SmartLogIcon } from "./SmartLogPanel";
@@ -96,6 +96,7 @@ export const RepoPicker = memo(function RepoPicker({
   githubSetup = null,
   onPerformGithubSetupStep,
   onSaveGlobalGitAuthor,
+  leadingControl = null,
 }: {
   repos: readonly RepoOption[];
   githubEnabled: boolean;
@@ -117,6 +118,8 @@ export const RepoPicker = memo(function RepoPicker({
   githubSetup?: { brokerDone: boolean; appDone: boolean; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean } | null;
   onPerformGithubSetupStep?: (step: "broker" | "app" | "app-help", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean }>;
   onSaveGlobalGitAuthor?: (identity: { name: string; email: string }) => Promise<boolean>;
+  /** Extra control rendered at the start of the picker row (e.g. ProjectPicker). */
+  leadingControl?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [openPrKey, setOpenPrKey] = useState<string | null>(null);
@@ -338,9 +341,10 @@ export const RepoPicker = memo(function RepoPicker({
 
   return (
     <div className="repo-row">
+      {leadingControl}
       {(mode === "pick" || selected) && (
       <div className="repo-picker-wrap" ref={wrapRef}>
-        <div className="repo-picker-control">
+        <div className={`repo-picker-control${selected ? " repo-has-selection" : ""}`}>
           <button ref={triggerRef} type="button" className="repo-picker-trigger"
             aria-label={mode === "manage"
               ? `Repository connection: ${selected}`
@@ -358,6 +362,14 @@ export const RepoPicker = memo(function RepoPicker({
               </>
             )}
           </button>
+          {mode === "pick" && selected && (
+            <button type="button" className="repo-picker-dismiss"
+              aria-label="Remove repository" title="Remove repository"
+              disabled={disabled}
+              onClick={() => choose(null)}>
+              <DismissIcon />
+            </button>
+          )}
           {showConnectPrompt && (
             <button type="button" className="repo-picker-dismiss"
               aria-label="Dismiss" title="Dismiss"

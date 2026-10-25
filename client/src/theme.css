@@ -1690,3 +1690,72 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .detail-split { flex-direction: column; }
   .side-panel { border-left: 0; border-top: 1px solid var(--border); }
 }
+.project-menu-option-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12px/1.4 var(--sans); }
+.project-menu-create-toggle { flex: 0 0 auto; margin: 0 4px; padding: 6px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: 500 12px/1.4 var(--sans); }
+.project-menu-create { flex: 0 0 auto; display: grid; gap: 6px; margin: 4px 4px 2px; padding-top: 8px; border-top: 1px solid var(--terminal-faint); }
+.project-menu-create input[type="text"], .project-menu-create textarea { padding: 6px 8px; border: 1px solid var(--terminal-faint); border-radius: 6px; background: transparent; color: inherit; font: 12px/1.4 var(--sans); }
+.project-menu-create textarea { font: 11px/1.6 var(--mono); resize: vertical; }
+.project-menu-colors { display: flex; align-items: center; gap: 6px; }
+.project-color-swatch { width: 20px; height: 20px; padding: 0; border: 2px solid transparent; border-radius: 50%; cursor: pointer; }
+.project-color-swatch.selected { border-color: var(--terminal-text); box-shadow: 0 0 0 1px var(--terminal-faint); }
+.project-menu-colors input[type="color"] { width: 26px; height: 22px; padding: 0; border: 1px solid var(--terminal-faint); border-radius: 6px; background: transparent; cursor: pointer; }
+.project-menu-briefing-label { font: 600 11px/1.4 var(--sans); color: inherit; }
+.project-menu-create [role="alert"] { color: var(--error); font: 11px/1.4 var(--sans); }
+.project-menu-create-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.project-menu-create-actions button { padding: 5px 10px; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--terminal-text) 7%, transparent); color: inherit; cursor: pointer; font: 600 11px/1.3 var(--sans); }
+.project-menu-create-actions button:disabled { opacity: .55; cursor: default; }
+/* Project picker: by default the dimmed companion color (the same tint as
+   the companion card's skill chips); once a project is picked the control
+   (and its dropdown dots) take that project's color-coded hue. */
+.project-picker-trigger { background: transparent; color: var(--terminal-text); }
+.project-picker-trigger svg { color: var(--terminal-text); }
+.project-picker-wrap[style*="--project-color"] .project-picker-trigger svg { color: var(--project-color); }
+
+.project-color-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.repo-row:has(> .project-picker-wrap) { gap: 4px; }
+.repo-row:has(> .project-picker-wrap) .project-picker-trigger { padding-right: 2px; }
+.repo-row > .project-picker-wrap + .repo-picker-wrap .repo-picker-trigger { padding-left: 2px; }
+
+.repo-menu.project-menu .repo-menu-option:hover, .project-menu-create-toggle:hover { background: color-mix(in srgb, var(--terminal-text) 7%, transparent); }
+.project-hover-label { padding-right: 4px; }
+.repo-picker-trigger:focus-visible .project-hover-label,
+.repo-picker-trigger[aria-expanded="true"] .project-hover-label { max-width: 132px; margin-left: 7px; opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .repo-picker-control:hover .project-hover-label { max-width: 132px; margin-left: 7px; opacity: 1; }
+}
+.project-menu-create-actions button[type="submit"]:hover:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 16%, transparent); }
+.project-menu-create-actions button[type="submit"]:active:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 22%, transparent); }
+
+/* Assigned project: the name area gets a dimmed project-color background
+   (like a companion skill chip), and the remove × only takes up space
+   while the control is hovered or focused. */
+.project-picker-wrap[style*="--project-color"] .project-picker-trigger { background: color-mix(in srgb, var(--project-color) 14%, var(--surface)); }
+.project-picker-dismiss { width: 0; margin: 0; opacity: 0; pointer-events: none; overflow: hidden; transition: width 140ms ease, margin 140ms ease, opacity 120ms ease; }
+.repo-picker-control:hover .project-picker-dismiss,
+.repo-picker-control:focus-within .project-picker-dismiss { width: 18px; margin: 2px 3px 2px 1px; opacity: 1; pointer-events: auto; }
+/* Repo/project dismiss ×: only takes up space on hover/focus, and the
+   project × takes the assigned project's color. */
+.repo-picker-dismiss { width: 0; margin: 0; opacity: 0; pointer-events: none; overflow: hidden; transition: width 140ms ease, margin 140ms ease, opacity 120ms ease; color: var(--terminal-text); }
+.repo-picker-control:hover .repo-picker-dismiss,
+.repo-picker-control:focus-within .repo-picker-dismiss { width: 18px; margin: 2px 3px 2px 1px; opacity: 1; pointer-events: auto; }
+.project-picker-wrap .project-picker-dismiss { color: var(--project-color, var(--terminal-text)); }
+/* Assigned names get a dimmed background chip, projects and repos alike. */
+.project-picker-wrap[style*="--project-color"] .project-picker-trigger { padding-right: 7px; }
+/* The dim chip covers the whole control (trigger + ×) once a repo/project
+   is picked — never before — so the × sits on the same background. */
+.repo-picker-control.repo-has-selection { background: color-mix(in srgb, var(--terminal-text) 8%, var(--surface)); border-radius: 6px; }
+.repo-picker-control.repo-has-selection .repo-picker-trigger { background: transparent; }
+.project-picker-wrap[style*="--project-color"] .repo-picker-control.repo-has-selection { background: color-mix(in srgb, var(--project-color) 14%, var(--surface)); }
+.project-picker-wrap[style*="--project-color"] .project-picker-trigger { background: transparent; }
+@media (hover: none) {
+  .repo-picker-dismiss { width: 18px; margin: 2px 3px 2px 1px; opacity: 1; pointer-events: auto; }
+}
+.repo-picker-trigger[aria-expanded="true"] { background: color-mix(in srgb, var(--terminal-text) 8%, var(--surface)); }
+.session-group.project-group { background: color-mix(in srgb, var(--project-color) 5%, transparent); border-radius: 10px; padding: 2px; }
+.session-group.project-group .session-group-name { color: color-mix(in srgb, var(--project-color) 72%, var(--text)); }
+.project-info { display: grid; gap: 6px; padding: 2px 4px; }
+.project-info-name { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13px/1.4 var(--sans); }
+.project-info-description { margin: 0; color: var(--terminal-dim); font: 12px/1.5 var(--sans); white-space: pre-wrap; }
+.project-info-meta { margin: 0; color: var(--terminal-dim); font: 11px/1.4 var(--sans); }
+.project-info-briefing-label { margin: 4px 0 0; font: 600 11px/1.4 var(--sans); }
+.project-info-briefing { margin: 0; max-height: 220px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--terminal-dim); font: 11px/1.6 var(--mono); }
