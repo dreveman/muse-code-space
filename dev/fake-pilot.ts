@@ -96,6 +96,7 @@ type Session = {
   appSessionId?: string;
   /** Companion SOUL.md sent at start/handoff; stored like the real pilot's meta. */
   soul?: string | null;
+  projectBriefing?: string | null;
   initialTurnId?: string | null;
   nextPrNumber?: number;
   modelId: string;
@@ -1778,6 +1779,7 @@ Bun.serve({
         ...(repo !== null ? { repo } : {}),
         ...(appSessionId ? { appSessionId } : {}),
         soul: typeof body.soul === "string" && body.soul.trim() ? body.soul.trim().slice(0, 8000) : null,
+        projectBriefing: typeof body.project_briefing === "string" && body.project_briefing.trim() ? body.project_briefing.trim().slice(0, 8000) : null,
         initialTurnId: null,
         modelId: String(body.modelId || (MODELS.find((m) => m.isDefault) ?? MODELS[0]!).modelId),
         events: [],
@@ -1796,6 +1798,7 @@ Bun.serve({
           gitAuthor: validGitAuthor(body.gitAuthor) ?? fakeGitIdentity,
           appSessionId: session.appSessionId ?? null,
           soul: session.soul ?? null,
+          projectBriefing: session.projectBriefing ?? null,
           createdAt: new Date().toISOString(),
         },
       });
@@ -2166,6 +2169,11 @@ Bun.serve({
       return json(200, { ok: true, identity });
     }
     if (sub === "/recover" && req.method === "POST") return json(200, { sessionId: session.id, recovered: false });
+    if (sub === "/briefing" && req.method === "POST") {
+      session.projectBriefing = typeof body.briefing === "string" && body.briefing.trim() ? body.briefing.trim().slice(0, 8000) : null;
+      saveState();
+      return json(200, { ok: true });
+    }
     if (sub === "/rename" && req.method === "POST") {
       const name = typeof body.name === "string" ? body.name.trim() : "";
       if (!name) return json(400, { error: "name required", code: "bad_request" });

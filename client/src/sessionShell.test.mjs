@@ -83,8 +83,9 @@ test("expanded groups draw a guide line under the chevron", () => {
   assert.ok(app.includes("<ChevronIcon />") && !app.includes('"⌄"'), "SVG chevron replaces the ⌄/› glyphs");
 });
 
-test("No Project header has no count and no +", () => {
-  assert.ok(app.includes('{group.key !== "" && <span className="session-group-count">'));
+test("project group headers have no count and no +", () => {
+  assert.ok(app.includes('{group.key !== "" && group.projectId === null && <span className="session-group-count">'));
+  assert.ok(app.includes('className={`session-group${group.projectId !== null ? " project-group" : ""}`}'));
   assert.ok(!app.includes('className="session-group-add"'), "no explicit task creation controls");
 });
 

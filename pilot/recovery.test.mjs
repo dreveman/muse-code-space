@@ -781,3 +781,15 @@ test("the first-turn preamble carries the companion SOUL before the separator", 
   assert.equal(t.cleanSoul(123), null);
   assert.equal(t.soulBlock("x".repeat(9000))?.length, "[SOUL.md]\n".length + 8000);
 });
+
+test("project briefing rides the hidden preamble channel with the SOUL", () => {
+  const briefing = "[Project: Website]\nRebuild it.\n\n# Goals\n\nShip.";
+  const text = t.agentPreamble("poppy", "You are Poppy.", briefing);
+  assert.ok(text.includes("[SOUL.md]\nYou are Poppy."));
+  assert.ok(text.includes(briefing));
+  // Hidden like the rest of the preamble: everything soul/briefing sits
+  // ahead of the pilot's --- separator.
+  const firstText = `${text}\n\n---\n\nHello`;
+  assert.ok(firstText.indexOf(briefing) < firstText.indexOf("\n\n---\n\n"));
+  assert.ok(!t.agentPreamble("poppy", null, null).includes("[Project:"));
+});

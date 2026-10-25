@@ -91,6 +91,11 @@ export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  // Hex color (#rrggbb) color-coding the project in pickers and lists.
+  color: text("color").notNull().default("#8a8a8a"),
+  // PROJECT.md agent briefing: goals, constraints, and working notes,
+  // sent to agents as-is in the session briefing. Empty by default.
+  briefing: text("briefing").notNull().default(""),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

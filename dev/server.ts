@@ -475,10 +475,46 @@ async function syncModelsFromPilot() {
   console.log(`[dev] synced ${models.length} models from pilot`);
 }
 
+// With a fake pilot, seed a couple of demo projects so project surfaces
+// (assign picker, sidebar groups) have something realistic to show. Only
+// seeds when the projects table is completely empty.
+const FAKE_PROJECTS = [
+  {
+    project_id: "fake-project-website",
+    name: "Website Redesign",
+    description: "Rebuild the marketing site.",
+    color: "#0090ff",
+    briefing: "# Goals\n\nRebuild the marketing site.\n\n## Constraints\n\n- Keep the current stack.\n\n## Working notes\n\nDesign mockups live in Figma.",
+  },
+  {
+    project_id: "fake-project-mobile",
+    name: "Mobile App",
+    description: "Ship the iOS beta.",
+    color: "#46a758",
+    briefing: "# Goals\n\nShip the iOS beta.\n\n## Constraints\n\n- Offline first.\n\n## Working notes\n\nTestFlight build every Friday.",
+  },
+];
+async function seedFakeProjects() {
+  const listProjects = actions.listProjects;
+  const createProject = actions.createProject;
+  if (!isAction(listProjects) || !isAction(createProject)) return;
+  const listCtx = makeCtx("dev-seed-projects", listProjects.privileged) as unknown as Parameters<typeof listProjects.handler>[0];
+  const { projects } = await listProjects.handler(listCtx, {});
+  if (projects.length > 0) return;
+  for (const project of FAKE_PROJECTS) {
+    const ctx = makeCtx(`dev-seed-project-${project.project_id}`, createProject.privileged) as unknown as Parameters<typeof createProject.handler>[0];
+    await createProject.handler(ctx, createProject.request.parse(project));
+  }
+  console.log(`[dev] seeded ${FAKE_PROJECTS.length} fake projects`);
+}
+
 console.log(`[dev] workspace home: ${process.env.MUSE_CODE_SPACE_HOME_ROOT ?? "/home/hatch"} (pilot's machine; MUSE_CODE_SPACE_HOME_ROOT overrides)`);
 if (pilotHealth) {
   console.log("[dev] pilot health:", JSON.stringify(pilotHealth));
   syncModelsFromPilot().catch((e) => console.warn("[dev] model sync failed:", String(e)));
+  if (pilotHealth.fake === true) {
+    seedFakeProjects().catch((e) => console.warn("[dev] fake project seed failed:", String(e)));
+  }
 } else {
   console.warn(
     `[dev] pilot not reachable at ${pilotUrl} — the UI will load but sessions won't run.\n` +

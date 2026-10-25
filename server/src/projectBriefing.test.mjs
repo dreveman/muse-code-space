@@ -50,3 +50,15 @@ test("withProjectBriefing joins with a separator", () => {
 test("withProjectBriefing leaves the prompt alone when briefing is null", () => {
   assert.equal(withProjectBriefing("Do the thing", null), "Do the thing");
 });
+
+test("briefs the PROJECT.md content as-is", () => {
+  const md = "# Goals\n\nShip it.\n\n## Constraints\n\n- No new deps.";
+  assert.equal(
+    buildProjectBriefing({ name: "P", description: "", references: [], briefing: md }),
+    `[Project: P]\n\n${md}`,
+  );
+  assert.equal(
+    buildProjectBriefing({ name: "P", description: "Desc.", references: [], briefing: md }),
+    `[Project: P]\nDesc.\n\n${md}`,
+  );
+});

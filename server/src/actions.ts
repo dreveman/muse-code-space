@@ -16,7 +16,7 @@ pilotTurnOutcomeError,
 type PilotItem,
 type UserInputQuestionShape,
 } from "./pilotEvents";
-import { buildProjectBriefing, withProjectBriefing } from "./projectBriefing";
+import { buildProjectBriefing } from "./projectBriefing";
 import { isGeneratedWorkspaceRoot, shortWorkspaceToken } from "./generatedWorkspace";
 import { countsAsUnread } from "./transcriptVisibility";
 import { parseToolDetails, toolDetailsFromItem, type ToolDetails } from "./toolDetails";
@@ -357,6 +357,8 @@ const projectResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  color: z.string(),
+  briefing: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
   references: z.array(projectReferenceSchema),
@@ -621,6 +623,7 @@ type PilotStartRow = Pick<typeof schema.sessions.$inferSelect,
   "id" | "title" | "prompt" | "workspaceRoot" | "repoSlug" | "gitAuthorName" | "gitAuthorEmail" | "modelId" | "requestedModelId" | "reasoningEffort"> & {
   attachments?: readonly PilotAttachmentInput[];
   soul?: string;
+  projectBriefing?: string | null;
 };
 
 async function requirePaidModelAccess(baseUrl: string, modelId: string) {
@@ -690,6 +693,22 @@ async function assignableCompanionById(db: CompanionDb, id: string): Promise<Ass
   return (await assignableCompanions(db)).find((companion) => companion.id === id);
 }
 
+async function projectBriefingFor(db: CompanionDb, projectId: string | null | undefined): Promise<string | null> {
+  if (!projectId) return null;
+  const rows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId)).limit(1);
+  const project = rows[0];
+  if (!project) return null;
+  const refs = await db.select().from(schema.projectReferences)
+    .where(eq(schema.projectReferences.projectId, project.id))
+    .orderBy(asc(schema.projectReferences.createdAt));
+  return buildProjectBriefing({
+    name: project.name,
+    description: project.description,
+    references: refs.map((ref) => ({ label: ref.label, target: ref.target })),
+    briefing: project.briefing,
+  });
+}
+
 async function assignableCompanionByName(db: CompanionDb, name: string): Promise<AssignableCompanion | undefined> {
   const key = companionNameKey(name);
   return (await assignableCompanions(db)).find((companion) => companionNameKey(companion.name) === key);
@@ -731,6 +750,7 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
           ? { gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail } }
           : {}),
         ...(row.soul?.trim() ? { soul: row.soul } : {}),
+        ...(row.projectBriefing?.trim() ? { project_briefing: row.projectBriefing } : {}),
         ...(row.attachments && row.attachments.length > 0 ? { attachments: row.attachments } : {}),
       }),
     },
@@ -800,8 +820,9 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
   if (!lease[0]) return { started: 0, failed: 0 };
 
   const soulCompanion = await assignableCompanionByName(db, row.title).catch(() => undefined);
+  const queuedBriefing = await projectBriefingFor(db, row.projectId).catch(() => null);
   try {
-    const pilot = await startPilotAgent(baseUrl, { ...row, soul: soulCompanion?.soul });
+    const pilot = await startPilotAgent(baseUrl, { ...row, soul: soulCompanion?.soul, projectBriefing: queuedBriefing });
     if (!pilot.turnId) {
       const error = new Error("Pilot has not admitted the first turn yet") as Error & { code?: string };
       error.code = "turn_not_admitted";
@@ -2578,6 +2599,8 @@ export const Actions = {
               id: row.id,
               name: row.name,
               description: row.description,
+              color: row.color,
+              briefing: row.briefing,
               created_at: row.createdAt.toISOString(),
               updated_at: row.updatedAt.toISOString(),
               references: references.map((ref) => ({
@@ -2598,14 +2621,21 @@ export const Actions = {
       project_id: z.string().trim().min(1).max(200),
       name: z.string().trim().min(1).max(80),
       description: z.string().trim().max(2000).default(""),
+      color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+      briefing: z.string().max(8000).default(""),
     }),
     response: z.object({ ok: z.boolean(), id: z.string().nullable(), error: z.string().nullable() }),
     async handler(ctx, args) {
       const db = ctx.db<typeof schema>();
       const now = new Date();
+      // Projects created without a color (e.g. by the assistant) get a
+      // stable one derived from their id.
+      let hash = 0;
+      for (let i = 0; i < args.project_id.length; i++) hash = (hash * 31 + args.project_id.charCodeAt(i)) >>> 0;
+      const color = args.color ?? `hsl(${hash % 360} 45% 45%)`;
       const inserted = await db
         .insert(schema.projects)
-        .values({ id: args.project_id, name: args.name, description: args.description, createdAt: now, updatedAt: now })
+        .values({ id: args.project_id, name: args.name, description: args.description, color, briefing: args.briefing, createdAt: now, updatedAt: now })
         .returning({ id: schema.projects.id });
       if (!inserted[0]) return { ok: false, id: null, error: "Project was not created" };
       ctx.invalidateQueries({ queryKey: ["code-projects"] });
@@ -2618,13 +2648,15 @@ export const Actions = {
       id: z.string().min(1).max(200),
       name: z.string().trim().min(1).max(80),
       description: z.string().trim().max(2000),
+      color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+      briefing: z.string().max(8000).optional(),
     }),
     response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
     async handler(ctx, args) {
       const db = ctx.db<typeof schema>();
       const updated = await db
         .update(schema.projects)
-        .set({ name: args.name, description: args.description, updatedAt: new Date() })
+        .set({ name: args.name, description: args.description, ...(args.color !== undefined ? { color: args.color } : {}), ...(args.briefing !== undefined ? { briefing: args.briefing } : {}), updatedAt: new Date() })
         .where(eq(schema.projects.id, args.id))
         .returning({ id: schema.projects.id });
       if (updated.length === 0) return { ok: false, error: "Project not found" };
@@ -2710,6 +2742,7 @@ export const Actions = {
       project_id: z.string().trim().min(1).max(200).nullable(),
     }),
     response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
     async handler(ctx, args) {
       const db = ctx.db<typeof schema>();
       if (args.project_id !== null) {
@@ -2724,9 +2757,20 @@ export const Actions = {
         .update(schema.sessions)
         .set({ projectId: args.project_id })
         .where(eq(schema.sessions.id, args.session_id))
-        .returning({ id: schema.sessions.id });
+        .returning({ id: schema.sessions.id, pilotSessionId: schema.sessions.pilotSessionId });
       if (updated.length === 0) return { ok: false, error: "Session not found" };
       ctx.invalidateQueries({ queryKeys: [["code-sessions"], ["code-session", args.session_id]] });
+      // Match the SOUL handoff: the (new) project's briefing is seeded into
+      // the live conversation's next turn, hidden from the transcript.
+      const pilotSessionId = updated[0]?.pilotSessionId;
+      if (pilotSessionId) {
+        try {
+          const briefing = await projectBriefingFor(db, args.project_id);
+          const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+          await pilotRequest(baseUrl, `/sessions/${encodeURIComponent(pilotSessionId)}/briefing`,
+            { method: "POST", body: JSON.stringify({ briefing }) }, z.object({ ok: z.boolean() }));
+        } catch { /* filing still succeeded; the briefing just won't seed */ }
+      }
       return { ok: true, error: null };
     },
   }),
@@ -2904,11 +2948,13 @@ export const Actions = {
             name: project.name,
             description: project.description,
             references: refs.map((ref) => ({ label: ref.label, target: ref.target })),
+            briefing: project.briefing,
           });
         }
-        // Filed sessions carry the project briefing so a new session catches up
-        // on description + references from its first prompt.
-        const prompt = withProjectBriefing(args.prompt, briefing);
+        // The project briefing travels to the pilot separately (first-turn
+        // preamble), so the stored prompt and the displayed first message
+        // stay exactly what the user wrote.
+        const prompt = args.prompt;
         const inserted = await db
           .insert(schema.sessions)
           .values({
@@ -2972,6 +3018,7 @@ export const Actions = {
             requestedModelId: modelId,
             reasoningEffort: effort,
             soul: agent.soul,
+            projectBriefing: briefing,
             attachments: args.attachments,
           });
           if (!pilot.turnId) throw new Error("Pilot has not admitted the first turn yet");
