@@ -17,14 +17,16 @@ export function agentVisualStatus(agent: AgentStatusInput): AgentVisualStatus {
 }
 
 // A few pixels of rounding/slop accommodate fractional scroll positions and
-// mobile momentum. A zero-height transcript counts as bottom on first load.
-// On `.terminal-body` (`flex-direction: column-reverse`), `scrollTop === 0`
-// is the bottom and scrolling up produces negative `scrollTop` values.
+// mobile momentum. A zero-height or non-overflowing transcript counts as
+// bottom, and on `.terminal-body` (`flex-direction: column-reverse`),
+// `scrollTop === 0` is the bottom, `scrollTop > 0` is rubber-band overscroll
+// beyond the bottom, and `scrollTop < 0` is scrolling up toward older output.
 export function transcriptAtBottom(
   element: Pick<HTMLElement, "scrollHeight" | "scrollTop" | "clientHeight"> & { classList?: DOMTokenList },
   tolerance = 24,
 ): boolean {
+  if (element.scrollHeight <= element.clientHeight + 1) return true;
   if (element.scrollTop < 0) return -element.scrollTop <= tolerance;
-  if (element.classList?.contains("terminal-body")) return element.scrollTop <= tolerance;
+  if (element.classList?.contains("terminal-body")) return true;
   return element.scrollHeight - element.scrollTop - element.clientHeight <= tolerance;
 }
