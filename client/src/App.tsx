@@ -4837,6 +4837,10 @@ export function App() {
                           setSelectedId(null);
                         }}><BackIcon /></button>
                       <TranscriptCompanion key={detailSession.id} name={detailAgentName}
+                        companion={allCompanions.find((item) => item.name === detailAgentName)}
+                        summary={sessionTaskTitle(detailMenuSession)}
+                        startedAt={detailSession.started_at}
+                        events={transcriptEvents}
                         connecting={connectionLost || pilotUnavailable}
                         archived={sessionPast}
                         active={detailCompanionActive}
@@ -4888,6 +4892,8 @@ export function App() {
     linkedPartnerId,
     splitViewOptionsFor,
     linkConversations,
+    allCompanions,
+    transcriptEvents,
   ]);
   const takeoverDisabledReason = liveWork || sendingDirection || pendingDirection !== null
     ? "Stop the current turn before handing over this task." : queuedPrompt !== null
@@ -6165,6 +6171,10 @@ function LinkedConversationPane({
           <TranscriptCompanion
             key={detailSession.id}
             name={paneAgentName}
+            companion={allCompanions.find((item) => item.name === paneAgentName)}
+            summary={sessionTaskTitle(listSession ?? detailSession)}
+            startedAt={detailSession.started_at}
+            events={transcriptEvents}
             connecting={connectionLost || pilotUnavailable}
             archived={panePast}
             active={paneCompanionActive}
