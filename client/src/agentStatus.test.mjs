@@ -42,9 +42,14 @@ test("only visible agent output counts as unread, not our prompts or lifecycle n
   assert.equal(countsAsUnread(notice), false);
 });
 
-test("bottom detection tolerates rounding but not unread output below the viewport", () => {
+test("bottom detection tolerates rounding and iOS bottom overscroll, but not unread output below the viewport", () => {
   assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: 1600, clientHeight: 400 }), true);
   assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: 1578, clientHeight: 400 }), true);
   assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: 1500, clientHeight: 400 }), false);
   assert.equal(transcriptAtBottom({ scrollHeight: 0, scrollTop: 0, clientHeight: 0 }), true);
+  // column-reverse (.terminal-body): scrollTop > 0 is iOS rubber-band overscroll beyond the bottom.
+  const terminalClassList = { contains: (cls) => cls === "terminal-body" };
+  assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: 64, clientHeight: 400, classList: terminalClassList }), true);
+  assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: -12, clientHeight: 400, classList: terminalClassList }), true);
+  assert.equal(transcriptAtBottom({ scrollHeight: 2000, scrollTop: -80, clientHeight: 400, classList: terminalClassList }), false);
 });
