@@ -5097,7 +5097,7 @@ export function App() {
               {!sessionsQuery.data ? (
                 <div className="detail-loading boot-loader" role="status" aria-live="polite">
                   <div className="boot-loader-box">
-                    <span>Loading companions…</span>
+                    <span>Loading code space…</span>
                     <div className="boot-progress-track" aria-hidden="true">
                       <div className="boot-progress-fill detail-loading-progress-fill" />
                     </div>
