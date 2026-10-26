@@ -116,7 +116,6 @@ const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
 const WORKING_DETAILS_KEY = "muse-code-space:working-details";
 const SHOW_ADD_COMPANION_KEY = "muse-code-space:show-add-companion";
 const HIDE_ADD_COMPANION_KEY = "muse-code-space:hide-add-companion";
-const COMPACT_LAYOUT_KEY = "muse-code-space:compact-layout";
 const SORT_MODE_KEY = "muse-code-space:sort-mode";
 // Home folder on the pilot's machine, from the server's getHostConfig
 // (the VM is /home/hatch; a pilot on a Mac is /Users/<you>). Module-level so
@@ -1841,9 +1840,6 @@ export function App() {
       return window.localStorage.getItem(SHOW_ADD_COMPANION_KEY) === "false";
     } catch { return false; }
   });
-  const [compactLayout, setCompactLayout] = useState(() => {
-    try { return window.localStorage.getItem(COMPACT_LAYOUT_KEY) === "true"; } catch { return false; }
-  });
   const [colorMode, setColorMode] = useState<ColorMode>(loadColorMode);
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
@@ -1910,7 +1906,7 @@ export function App() {
         restingHeight = height;
         lastWidth = width;
       }
-      if (restingHeight <= 760) {
+      if (restingHeight < 600) {
         document.documentElement.setAttribute("data-short-viewport", "true");
       } else {
         document.documentElement.removeAttribute("data-short-viewport");
@@ -2013,14 +2009,6 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem(HIDE_ADD_COMPANION_KEY, String(hideAddCompanion)); } catch { /* webview storage can be disabled */ }
   }, [hideAddCompanion]);
-  useEffect(() => {
-    try { window.localStorage.setItem(COMPACT_LAYOUT_KEY, String(compactLayout)); } catch { /* webview storage can be disabled */ }
-    if (compactLayout) {
-      document.documentElement.setAttribute("data-compact-layout", "true");
-    } else {
-      document.documentElement.removeAttribute("data-compact-layout");
-    }
-  }, [compactLayout]);
   useEffect(() => {
     try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch { /* webview storage can be disabled */ }
   }, [sortMode]);
@@ -3964,13 +3952,6 @@ export function App() {
       checked: showWorkingDetails,
       onActivate: () => setShowWorkingDetails((value) => !value),
     },
-    {
-      key: "compact-layout",
-      label: "Compact layout",
-      description: "Smaller top companion icon and full-height bottom prompt",
-      checked: compactLayout,
-      onActivate: () => setCompactLayout((value) => !value),
-    },
   ];
   // The sidebar's rename/archive buttons are hover-only; the transcript's
   // session menu carries the same actions so touch devices can reach them.
@@ -4876,7 +4857,6 @@ export function App() {
     showReasoning,
     expandTools,
     showWorkingDetails,
-    compactLayout,
     archiveBusy,
     deleteBusy,
     renameBusy,
