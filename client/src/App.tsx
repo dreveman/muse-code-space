@@ -1894,28 +1894,44 @@ export function App() {
   // keyboard — only the send button submits before that.
 
   useLayoutEffect(() => {
-    let lastWidth = window.innerWidth;
-    let restingHeight = window.innerHeight;
-    const syncShortViewport = (initial = false) => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-      const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-      const activeTag = document.activeElement?.tagName;
-      const inputFocused = activeTag === "TEXTAREA" || activeTag === "INPUT";
-      if (initial || !coarsePointer || width !== lastWidth || height > restingHeight || !inputFocused) {
-        restingHeight = height;
-        lastWidth = width;
-      }
-      if (restingHeight < 600) {
-        document.documentElement.setAttribute("data-short-viewport", "true");
-      } else {
+    const timers = new Set<number>();
+    const syncShortViewport = () => {
+      const height = Math.max(
+        window.innerHeight,
+        window.visualViewport?.height ?? 0,
+        document.documentElement.clientHeight,
+      );
+      if (height >= 600) {
         document.documentElement.removeAttribute("data-short-viewport");
+      } else if (layoutRef.current?.dataset.keyboardOpen !== "true") {
+        document.documentElement.setAttribute("data-short-viewport", "true");
       }
     };
-    syncShortViewport(true);
-    const onResize = () => syncShortViewport(false);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const onOrientationOrResize = () => {
+      syncShortViewport();
+      for (const delay of [120, 350]) {
+        const id = window.setTimeout(() => {
+          timers.delete(id);
+          syncShortViewport();
+        }, delay);
+        timers.add(id);
+      }
+    };
+    syncShortViewport();
+    const vv = window.visualViewport;
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncShortViewport) : null;
+    ro?.observe(document.documentElement);
+    if (layoutRef.current) ro?.observe(layoutRef.current);
+    window.addEventListener("resize", onOrientationOrResize);
+    window.addEventListener("orientationchange", onOrientationOrResize);
+    vv?.addEventListener("resize", onOrientationOrResize);
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      ro?.disconnect();
+      window.removeEventListener("resize", onOrientationOrResize);
+      window.removeEventListener("orientationchange", onOrientationOrResize);
+      vv?.removeEventListener("resize", onOrientationOrResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -1942,10 +1958,16 @@ export function App() {
     const viewport = window.visualViewport;
     const spaceRoot = document.querySelector<HTMLElement>("[data-generated-space-root]");
     const hatchRoot = document.querySelector<HTMLElement>(".hatch-space-root[data-hatch-space-root]");
+    let lastViewportWidth = viewport?.width ?? window.innerWidth;
     let maxViewportHeight = viewport?.height ?? window.innerHeight;
     let restingHeight = element.offsetHeight;
     const measure = () => {
       if (!viewport || viewport.scale !== 1) return;
+      if (Math.abs(viewport.width - lastViewportWidth) > 4) {
+        lastViewportWidth = viewport.width;
+        maxViewportHeight = viewport.height;
+        restingHeight = 0;
+      }
       if (viewport.height > maxViewportHeight) maxViewportHeight = viewport.height;
       if (spaceRoot && spaceRoot.scrollTop !== 0) spaceRoot.scrollTop = 0;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
