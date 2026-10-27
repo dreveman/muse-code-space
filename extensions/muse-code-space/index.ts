@@ -487,10 +487,78 @@ export function resolveBunRuntime(
     }
   }
 
-  // Pi itself is a compiled Bun binary; setting BUN_BE_BUN=1 makes it act as
-  // the full `bun` CLI (`bun install`, `bun dev/server.ts`, `Bun.serve`, etc.)
-  // even when no standalone `bun` binary is installed in $PATH.
-  return { command: execPath, env: { BUN_BE_BUN: "1" } };
+  // Prefer the unwrapped `.real` binary when Pi is installed behind a wrapper
+  // binary (`<dir>/pi` -> `<dir>/pi.real`), because the wrapper injects CLI
+  // flags (`--extension ...`) that would otherwise be passed to Bun.
+  const resolvedExec = (() => {
+    try {
+      return fs.realpathSync(execPath);
+    } catch {
+      return execPath;
+    }
+  })();
+
+  const realCandidates = [
+    `${resolvedExec}.real`,
+    `${execPath}.real`,
+    ...pathDirs.map((dir) => {
+      const piPath = path.join(dir, "pi");
+      try {
+        return `${fs.realpathSync(piPath)}.real`;
+      } catch {
+        return `${piPath}.real`;
+      }
+    }),
+  ];
+
+  for (const realBin of realCandidates) {
+    try {
+      fs.accessSync(realBin, fs.constants.X_OK);
+      return { command: realBin, env: { BUN_BE_BUN: "1" } };
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return { command: resolvedExec, env: { BUN_BE_BUN: "1" } };
+}
+
+function runBunInstall(
+  cwd: string,
+  bunRuntime: { command: string; env: Record<string, string> },
+  customEnv: Record<string, string>,
+  logFd: number,
+): void {
+  const baseEnv: Record<string, string | undefined> = {
+    ...process.env,
+    ...customEnv,
+    ...bunRuntime.env,
+  };
+  const first = spawnSync(bunRuntime.command, ["install"], {
+    cwd,
+    env: baseEnv as NodeJS.ProcessEnv,
+    stdio: ["ignore", logFd, logFd],
+  });
+  if (first.status === 0) return;
+
+  // If an outer launcher set a loopback-only HTTP(S)_PROXY that blocks package
+  // registries (403) and the user did not explicitly set a proxy in customEnv,
+  // retry without the loopback proxy variables.
+  const proxyVal = baseEnv.HTTPS_PROXY || baseEnv.https_proxy || baseEnv.HTTP_PROXY || baseEnv.http_proxy || "";
+  const hasCustomProxy = Boolean(
+    customEnv.HTTPS_PROXY || customEnv.https_proxy || customEnv.HTTP_PROXY || customEnv.http_proxy,
+  );
+  if (!hasCustomProxy && /(?:localhost|127\.0\.0\.1)/i.test(proxyVal)) {
+    const cleanEnv = { ...baseEnv };
+    for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
+      delete cleanEnv[k];
+    }
+    spawnSync(bunRuntime.command, ["install"], {
+      cwd,
+      env: cleanEnv as NodeJS.ProcessEnv,
+      stdio: ["ignore", logFd, logFd],
+    });
+  }
 }
 
 function buildFallbackSpaceSdkTarball(stateDir: string): string {
@@ -616,6 +684,7 @@ function ensureRepoDependencies(
   stateDir: string,
   bunRuntime: { command: string; env: Record<string, string> },
   customEnv: Record<string, string>,
+  logFd: number,
 ): void {
   const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
   const reactModuleDir = path.join(repoRoot, "node_modules", "react");
@@ -636,11 +705,7 @@ function ensureRepoDependencies(
       const patchedPkg = origPkg.replace(`file:${hatchTgz}`, `file:${fallbackTgz}`);
       fs.writeFileSync(pkgJsonPath, patchedPkg);
     }
-    spawnSync(bunRuntime.command, ["install"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...customEnv, ...bunRuntime.env },
-      stdio: "ignore",
-    });
+    runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
   } finally {
     if (needsFallbackSdk) {
       try {
@@ -685,23 +750,21 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
 
   const ensureServicesRunning = async (forceStart = false): Promise<{ pilotUp: boolean; webUp: boolean }> => {
     const shouldStart = forceStart || cfg.autoStart;
+    const customEnv = loadPersistedPilotEnv(cfg.stateDir);
+    const bunRuntime = resolveBunRuntime(process.env);
     let pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
     if (!pilotUp && shouldStart) {
       const pilotDir = path.join(cfg.repoRoot, "pilot");
       const pilotScript = path.join(pilotDir, "pilot.mjs");
       if (fs.existsSync(pilotScript)) {
-        const sdkDir = path.join(pilotDir, "node_modules", "@muse-code", "sdk");
-        if (!fs.existsSync(sdkDir)) {
-          spawnSync("npm", ["ci", "--no-audit", "--no-fund"], {
-            cwd: pilotDir,
-            stdio: "ignore",
-          });
-        }
         const pilotStateDir = path.join(cfg.stateDir, "pilot-state");
         fs.mkdirSync(pilotStateDir, { recursive: true, mode: 0o700 });
-        const customEnv = loadPersistedPilotEnv(cfg.stateDir);
         const logPath = path.join(cfg.stateDir, "pilot.log");
         const logFd = fs.openSync(logPath, "w");
+        const sdkDir = path.join(pilotDir, "node_modules", "@muse-code", "sdk");
+        if (!fs.existsSync(sdkDir)) {
+          runBunInstall(pilotDir, bunRuntime, customEnv, logFd);
+        }
         try {
           spawnedPilot = spawn("node", [pilotScript], {
             cwd: cfg.repoRoot,
@@ -741,14 +804,12 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     if (!webUp && shouldStart) {
       const serverScript = path.join(cfg.repoRoot, "dev", "server.ts");
       if (fs.existsSync(serverScript)) {
-        const customEnv = loadPersistedPilotEnv(cfg.stateDir);
-        const bunRuntime = resolveBunRuntime(process.env);
-        ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv);
         const webDir = path.join(cfg.stateDir, "web-build");
         const dbPath = path.join(cfg.stateDir, "app.db");
         fs.mkdirSync(webDir, { recursive: true, mode: 0o700 });
         const logPath = path.join(cfg.stateDir, "web.log");
         const logFd = fs.openSync(logPath, "w");
+        ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv, logFd);
         try {
           spawnedWeb = spawn(bunRuntime.command, [serverScript], {
             cwd: cfg.repoRoot,

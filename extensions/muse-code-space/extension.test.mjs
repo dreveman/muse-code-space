@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -177,11 +177,15 @@ test("pilot.env persistence and inline KEY=VALUE parsing work for passing env va
       MUSE_BASE_URL: "https://gateway.example.com/v1",
     });
 
-    // When standalone `bun` is not in PATH, resolveBunRuntime falls back to
-    // Pi's own compiled Bun executable with BUN_BE_BUN=1.
-    const fallbackBun = resolveBunRuntime({ PATH: "/nonexistent", HOME: dir }, "/path/to/pi.real");
+    // When standalone `bun` is not in PATH, resolveBunRuntime prefers `<execPath>.real`
+    // (when present) or falls back to `execPath` with BUN_BE_BUN=1.
+    const fakePi = path.join(dir, "pi");
+    const fakePiReal = path.join(dir, "pi.real");
+    writeFileSync(fakePi, "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(fakePiReal, "#!/bin/sh\n", { mode: 0o755 });
+    const fallbackBun = resolveBunRuntime({ PATH: "/nonexistent", HOME: dir }, fakePi);
     assert.deepEqual(fallbackBun, {
-      command: "/path/to/pi.real",
+      command: realpathSync(fakePiReal),
       env: { BUN_BE_BUN: "1" },
     });
   } finally {
