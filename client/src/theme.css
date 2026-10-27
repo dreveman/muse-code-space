@@ -2069,8 +2069,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 @media (hover: hover) and (pointer: fine) {
   .repo-picker-control:hover .project-hover-label { max-width: 132px; margin-left: 7px; opacity: 1; }
 }
-.project-menu-create-actions button[type="submit"]:hover:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 16%, transparent); }
-.project-menu-create-actions button[type="submit"]:active:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 22%, transparent); }
+.project-menu-create-actions button:hover:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 16%, transparent); }
+.project-menu-create-actions button:active:not(:disabled) { background: color-mix(in srgb, var(--terminal-text) 22%, transparent); }
 
 /* Assigned project: the name area gets a dimmed project-color background
    (like a companion skill chip), and the remove × only takes up space
