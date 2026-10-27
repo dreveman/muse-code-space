@@ -466,6 +466,193 @@ export function formatStartupNotice(status: {
   };
 }
 
+export function resolveBunRuntime(
+  env: NodeJS.ProcessEnv = process.env,
+  execPath: string = process.execPath,
+): { command: string; env: Record<string, string> } {
+  const pathDirs = (env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const homeDir = env.HOME?.trim() || os.homedir();
+  const candidates = [
+    env.BUN_BIN?.trim(),
+    ...pathDirs.map((dir) => path.join(dir, "bun")),
+    path.join(homeDir, ".bun", "bin", "bun"),
+  ].filter((c): c is string => Boolean(c));
+
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return { command: candidate, env: {} };
+    } catch {
+      // try next candidate
+    }
+  }
+
+  // Pi itself is a compiled Bun binary; setting BUN_BE_BUN=1 makes it act as
+  // the full `bun` CLI (`bun install`, `bun dev/server.ts`, `Bun.serve`, etc.)
+  // even when no standalone `bun` binary is installed in $PATH.
+  return { command: execPath, env: { BUN_BE_BUN: "1" } };
+}
+
+function buildFallbackSpaceSdkTarball(stateDir: string): string {
+  const tgzPath = path.join(stateDir, "space-sdk-fallback.tgz");
+  if (fs.existsSync(tgzPath)) return tgzPath;
+  const pkgRoot = path.join(stateDir, "space-sdk-fallback");
+  const distDir = path.join(pkgRoot, "dist");
+  fs.mkdirSync(distDir, { recursive: true, mode: 0o700 });
+
+  fs.writeFileSync(
+    path.join(pkgRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "@hatch/space-sdk",
+        version: "0.14.0",
+        type: "module",
+        exports: {
+          ".": "./dist/index.js",
+          "./client": "./dist/client.js",
+          "./styles.css": "./styles.css",
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  fs.writeFileSync(
+    path.join(pkgRoot, "styles.css"),
+    [
+      ":root {",
+      "  color-scheme: light dark;",
+      "  --twsa-safe-area-inset-top: env(safe-area-inset-top, 0px);",
+      "  --twsa-safe-area-inset-right: env(safe-area-inset-right, 0px);",
+      "  --twsa-safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);",
+      "  --twsa-safe-area-inset-left: env(safe-area-inset-left, 0px);",
+      "}",
+      "html, [data-generated-space-root] { height: 100%; min-height: 100%; }",
+      "[data-generated-space-root] { inset: 0; overflow: auto; position: fixed; scrollbar-width: none; }",
+      ".hatch-space-root[data-hatch-space-root] {",
+      "  --hatch-space-bottom-padding: calc(var(--bottom-padding, 0px) + env(safe-area-inset-bottom, 0px));",
+      "  box-sizing: border-box;",
+      "  min-height: calc(100dvh + var(--header-height, 0px) + var(--hatch-space-bottom-padding));",
+      "  padding-top: var(--header-height, 0px);",
+      "  padding-bottom: var(--hatch-space-bottom-padding);",
+      "}",
+    ].join("\n"),
+  );
+
+  fs.writeFileSync(
+    path.join(distDir, "index.js"),
+    [
+      'import { z } from "zod";',
+      "export { z };",
+      'export const ACTION_BRAND = "@hatch/space-sdk/action/v1";',
+      'export const PRIVILEGED_CONTRACT_BRAND = "@hatch/space-sdk/privileged-contract/v1";',
+      'export const PRIVILEGED_HANDLERS_FORMAT = "hatch-space-privileged-handlers-v1";',
+      "export function defineAction(spec) { return { ...spec, __brand: ACTION_BRAND }; }",
+      'export function isAction(v) { return Boolean(v && typeof v === "object" && "handler" in v && "request" in v); }',
+      "export function definePrivilegedContracts(specs) {",
+      "  const out = {};",
+      "  for (const [name, spec] of Object.entries(specs)) out[name] = { __brand: PRIVILEGED_CONTRACT_BRAND, name, ...spec };",
+      "  return out;",
+      "}",
+      "export function definePrivilegedHandlers(contracts, handlers) {",
+      "  const entries = [];",
+      "  for (const [name, handler] of Object.entries(handlers)) {",
+      "    if (handler && contracts[name]) entries.push({ contract: contracts[name], handler });",
+      "  }",
+      "  return { format: PRIVILEGED_HANDLERS_FORMAT, entries };",
+      "}",
+      'export function isPrivilegedHandlers(v) { return Boolean(v && typeof v === "object" && v.format === PRIVILEGED_HANDLERS_FORMAT); }',
+      "export function createPrivilegedExecutor(transport) {",
+      "  return { executePrivileged(contract, args) { return transport(contract, args); } };",
+      "}",
+    ].join("\n"),
+  );
+
+  fs.writeFileSync(
+    path.join(distDir, "client.js"),
+    [
+      'import "../styles.css";',
+      'import { createElement } from "react";',
+      'import { QueryClient } from "@tanstack/react-query";',
+      "export const spaceQueryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } });",
+      "export function SafeAreaTopScrim({ variant = 'gradient', backgroundColor = 'var(--bg)', zIndex = 40, className, style, ...props }) {",
+      "  return createElement('div', { ...props, 'aria-hidden': true, className, style: { ...style, position: 'fixed', top: 0, left: 0, right: 0, zIndex, pointerEvents: 'none', height: 'var(--twsa-safe-area-inset-top)', backgroundColor } });",
+      "}",
+      "export function bytesToBase64(bytes) {",
+      "  let bin = '';",
+      "  const chunk = 0x8000;",
+      "  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));",
+      "  return btoa(bin);",
+      "}",
+      "export async function fileToBase64(file) {",
+      "  const buf = new Uint8Array(await file.arrayBuffer());",
+      "  return { dataBase64: bytesToBase64(buf), mimeType: file.type || 'application/octet-stream', filename: file.name, sizeBytes: file.size };",
+      "}",
+      "export function createActionClient(options = {}) {",
+      "  const endpoint = options.endpoint ?? './actions';",
+      "  const fetchImpl = options.fetch ?? globalThis.fetch;",
+      "  return new Proxy({}, {",
+      "    get(_t, name) {",
+      "      if (typeof name !== 'string' || name === 'then' || name === 'catch' || name === 'finally') return undefined;",
+      "      return async (args) => {",
+      "        const res = await fetchImpl(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: name, args: args ?? {} }) });",
+      "        const body = await res.json();",
+      "        if (!res.ok || (body && body.error)) throw new Error(String(body?.error ?? res.status));",
+      "        return body.data;",
+      "      };",
+      "    }",
+      "  });",
+      "}",
+    ].join("\n"),
+  );
+
+  spawnSync("tar", ["-czf", tgzPath, "-C", pkgRoot, "."], { stdio: "ignore" });
+  return tgzPath;
+}
+
+function ensureRepoDependencies(
+  repoRoot: string,
+  stateDir: string,
+  bunRuntime: { command: string; env: Record<string, string> },
+  customEnv: Record<string, string>,
+): void {
+  const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
+  const reactModuleDir = path.join(repoRoot, "node_modules", "react");
+  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir)) return;
+
+  const pkgJsonPath = path.join(repoRoot, "package.json");
+  const bunLockPath = path.join(repoRoot, "bun.lock");
+  if (!fs.existsSync(pkgJsonPath)) return;
+
+  const origPkg = fs.readFileSync(pkgJsonPath, "utf8");
+  const origLock = fs.existsSync(bunLockPath) ? fs.readFileSync(bunLockPath, "utf8") : null;
+  const hatchTgz = "/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz";
+  const needsFallbackSdk = !fs.existsSync(hatchTgz);
+
+  try {
+    if (needsFallbackSdk) {
+      const fallbackTgz = buildFallbackSpaceSdkTarball(stateDir);
+      const patchedPkg = origPkg.replace(`file:${hatchTgz}`, `file:${fallbackTgz}`);
+      fs.writeFileSync(pkgJsonPath, patchedPkg);
+    }
+    spawnSync(bunRuntime.command, ["install"], {
+      cwd: repoRoot,
+      env: { ...process.env, ...customEnv, ...bunRuntime.env },
+      stdio: "ignore",
+    });
+  } finally {
+    if (needsFallbackSdk) {
+      try {
+        fs.writeFileSync(pkgJsonPath, origPkg);
+        if (origLock !== null) fs.writeFileSync(bunLockPath, origLock);
+      } catch {
+        // ignore restore error
+      }
+    }
+  }
+}
+
 async function isHttpReachable(url: string, headers?: Record<string, string>): Promise<boolean> {
   try {
     const res = await fetch(url, {
@@ -513,25 +700,37 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         const pilotStateDir = path.join(cfg.stateDir, "pilot-state");
         fs.mkdirSync(pilotStateDir, { recursive: true, mode: 0o700 });
         const customEnv = loadPersistedPilotEnv(cfg.stateDir);
-        const logFd = fs.openSync(path.join(cfg.stateDir, "pilot.log"), "w");
-        spawnedPilot = spawn("node", [pilotScript], {
-          cwd: cfg.repoRoot,
-          env: {
-            ...process.env,
-            ...customEnv,
-            MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
-            MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
-            MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
-            ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
-          },
-          stdio: ["ignore", logFd, logFd],
-          detached: true,
-        });
-        spawnedPilot.unref();
-        for (let i = 0; i < 40; i++) {
-          await new Promise((r) => setTimeout(r, 300));
-          pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
-          if (pilotUp) break;
+        const logPath = path.join(cfg.stateDir, "pilot.log");
+        const logFd = fs.openSync(logPath, "w");
+        try {
+          spawnedPilot = spawn("node", [pilotScript], {
+            cwd: cfg.repoRoot,
+            env: {
+              ...process.env,
+              ...customEnv,
+              MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
+              MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
+              MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
+              ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
+            },
+            stdio: ["ignore", logFd, logFd],
+            detached: true,
+          });
+          spawnedPilot.on("error", (err) => {
+            try {
+              fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
+            } catch {}
+          });
+          spawnedPilot.unref();
+          for (let i = 0; i < 40; i++) {
+            await new Promise((r) => setTimeout(r, 300));
+            pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
+            if (pilotUp) break;
+          }
+        } catch (err) {
+          try {
+            fs.appendFileSync(logPath, `spawn error: ${err instanceof Error ? err.message : String(err)}\n`);
+          } catch {}
         }
       }
     }
@@ -542,31 +741,48 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     if (!webUp && shouldStart) {
       const serverScript = path.join(cfg.repoRoot, "dev", "server.ts");
       if (fs.existsSync(serverScript)) {
+        const customEnv = loadPersistedPilotEnv(cfg.stateDir);
+        const bunRuntime = resolveBunRuntime(process.env);
+        ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv);
         const webDir = path.join(cfg.stateDir, "web-build");
         const dbPath = path.join(cfg.stateDir, "app.db");
         fs.mkdirSync(webDir, { recursive: true, mode: 0o700 });
-        const logFd = fs.openSync(path.join(cfg.stateDir, "web.log"), "w");
-        spawnedWeb = spawn("bun", [serverScript], {
-          cwd: cfg.repoRoot,
-          env: {
-            ...process.env,
-            MUSE_CODE_SPACE_PILOT_URL: cfg.pilotUrl,
-            MUSE_CODE_SPACE_DEV_HOST: cfg.webHost,
-            MUSE_CODE_SPACE_DEV_PORT: String(cfg.webPort),
-            MUSE_CODE_SPACE_DEV_DIR: webDir,
-            MUSE_CODE_SPACE_DEV_DB: dbPath,
-            MUSE_CODE_SPACE_WEB_TOKEN: cfg.webToken,
-            ...(cfg.tlsCert ? { MUSE_CODE_SPACE_TLS_CERT: cfg.tlsCert } : {}),
-            ...(cfg.tlsKey ? { MUSE_CODE_SPACE_TLS_KEY: cfg.tlsKey } : {}),
-          },
-          stdio: ["ignore", logFd, logFd],
-          detached: true,
-        });
-        spawnedWeb.unref();
-        for (let i = 0; i < 20; i++) {
-          await new Promise((r) => setTimeout(r, 350));
-          webUp = await isHttpReachable(webCheckUrl, authHeaders);
-          if (webUp) break;
+        const logPath = path.join(cfg.stateDir, "web.log");
+        const logFd = fs.openSync(logPath, "w");
+        try {
+          spawnedWeb = spawn(bunRuntime.command, [serverScript], {
+            cwd: cfg.repoRoot,
+            env: {
+              ...process.env,
+              ...customEnv,
+              ...bunRuntime.env,
+              MUSE_CODE_SPACE_PILOT_URL: cfg.pilotUrl,
+              MUSE_CODE_SPACE_DEV_HOST: cfg.webHost,
+              MUSE_CODE_SPACE_DEV_PORT: String(cfg.webPort),
+              MUSE_CODE_SPACE_DEV_DIR: webDir,
+              MUSE_CODE_SPACE_DEV_DB: dbPath,
+              MUSE_CODE_SPACE_WEB_TOKEN: cfg.webToken,
+              ...(cfg.tlsCert ? { MUSE_CODE_SPACE_TLS_CERT: cfg.tlsCert } : {}),
+              ...(cfg.tlsKey ? { MUSE_CODE_SPACE_TLS_KEY: cfg.tlsKey } : {}),
+            },
+            stdio: ["ignore", logFd, logFd],
+            detached: true,
+          });
+          spawnedWeb.on("error", (err) => {
+            try {
+              fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
+            } catch {}
+          });
+          spawnedWeb.unref();
+          for (let i = 0; i < 20; i++) {
+            await new Promise((r) => setTimeout(r, 350));
+            webUp = await isHttpReachable(webCheckUrl, authHeaders);
+            if (webUp) break;
+          }
+        } catch (err) {
+          try {
+            fs.appendFileSync(logPath, `spawn error: ${err instanceof Error ? err.message : String(err)}\n`);
+          } catch {}
         }
       }
     }
