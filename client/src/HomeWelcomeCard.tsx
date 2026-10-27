@@ -146,7 +146,7 @@ function GitHubIllustration() {
   );
 }
 
-function MentionIllustration() {
+function MentionIllustration({ assistantName = "Jolly" }: { assistantName?: string } = {}) {
   return (
     <div className="welcome-illus-window" aria-hidden="true">
       <div className="welcome-illus-tabbar">
@@ -158,7 +158,7 @@ function MentionIllustration() {
           <span className="welcome-illus-dim">Companion</span>
         </div>
         <div className="welcome-illus-mention-row">
-          <span className="welcome-illus-mention-chip muse">@Jolly</span>
+          <span className="welcome-illus-mention-chip muse">@{assistantName}</span>
           <span className="welcome-illus-dim">Your Muse assistant</span>
         </div>
         <div className="welcome-illus-cmd">
@@ -248,12 +248,14 @@ const FEATURES = [
 export function HomeWelcomeCard({
   sessions,
   userName = null,
+  assistantName = null,
   formatTime,
   onSelectSession,
   onPickCompanion,
 }: {
   sessions: readonly Session[];
   userName?: string | null;
+  assistantName?: string | null;
   formatTime: (iso: string) => string;
   onSelectSession: (id: string) => void;
   onPickCompanion: () => void;
@@ -265,6 +267,7 @@ export function HomeWelcomeCard({
   const recentSessions = sessions.slice(0, 5);
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
+  const resolvedAssistantName = assistantName?.trim() || "Jolly";
   const teamMembers = ["nova", "poppy", "tilly", "remy", "sage"]
     .map((id) => companions.find((c) => c.id === id))
     .filter((c): c is (typeof companions)[number] => Boolean(c));
@@ -375,7 +378,11 @@ export function HomeWelcomeCard({
           onPointerLeave={() => setHovered(false)}
         >
           <div className="welcome-feature-art">
-            <Illustration />
+            {feature.id === "mention" ? (
+              <MentionIllustration assistantName={resolvedAssistantName} />
+            ) : (
+              <Illustration />
+            )}
           </div>
           <div className="welcome-feature-copy">
             <h3>{feature.title}</h3>

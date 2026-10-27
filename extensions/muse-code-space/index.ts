@@ -65,6 +65,9 @@ export type CodeSpaceExtensionConfig = {
   tlsKey: string | null;
   webToken: string;
   assistantName: string;
+  assistantColor: string | null;
+  assistantAvatarPath: string | null;
+  profilePath: string | null;
   userName: string | null;
   autoStart: boolean;
 };
@@ -140,9 +143,12 @@ export function resolveExtensionConfig(env: NodeJS.ProcessEnv = process.env): Co
   }
 
   const assistantName = env.MUSE_CODE_SPACE_ASSISTANT_NAME?.trim() || "Jolly";
+  const assistantColor = env.MUSE_CODE_SPACE_ASSISTANT_COLOR?.trim() || null;
+  const assistantAvatarPath = env.MUSE_CODE_SPACE_ASSISTANT_AVATAR?.trim() || null;
+  const profilePath = env.MUSE_CODE_SPACE_ASSISTANT_PROFILE?.trim() || null;
   const rawUser = env.MUSE_CODE_SPACE_USER_NAME?.trim() || env.USER?.trim() || os.userInfo().username || null;
   const userName = rawUser ? rawUser.slice(0, 40) : null;
-  const autoStart = env.MUSE_CODE_SPACE_AUTO_START !== "false" && env.MUSE_CODE_SPACE_AUTO_START !== "0";
+  const autoStart = env.MUSE_CODE_SPACE_AUTO_START === "true" || env.MUSE_CODE_SPACE_AUTO_START === "1";
 
   return {
     repoRoot,
@@ -157,8 +163,68 @@ export function resolveExtensionConfig(env: NodeJS.ProcessEnv = process.env): Co
     tlsKey,
     webToken,
     assistantName,
+    assistantColor,
+    assistantAvatarPath,
+    profilePath,
     userName,
     autoStart,
+  };
+}
+
+export function encodeAvatarFileToDataUrl(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  const bytes = fs.readFileSync(resolved);
+  if (bytes.byteLength === 0 || bytes.byteLength > 256 * 1024) {
+    throw new Error("Avatar image must be non-empty and at most 256 KiB.");
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  const mime =
+    ext === ".png"
+      ? "image/png"
+      : ext === ".webp"
+        ? "image/webp"
+        : ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : null;
+  if (!mime) {
+    throw new Error("Avatar image must be a .png, .jpg/.jpeg, or .webp file.");
+  }
+  return `data:${mime};base64,${bytes.toString("base64")}`;
+}
+
+export function buildIdentityPayloadFromConfig(cfg: CodeSpaceExtensionConfig): {
+  name?: string;
+  color?: string;
+  avatar_data_url?: string | null;
+  user_name?: string | null;
+} {
+  if (cfg.profilePath && fs.existsSync(cfg.profilePath)) {
+    const raw = JSON.parse(fs.readFileSync(cfg.profilePath, "utf8")) as {
+      name?: string;
+      color?: string;
+      avatar_path?: string | null;
+      avatar_data_url?: string | null;
+      user_name?: string | null;
+    };
+    let avatarDataUrl: string | null | undefined = raw.avatar_data_url;
+    if (raw.avatar_path !== undefined) {
+      avatarDataUrl =
+        raw.avatar_path === null
+          ? null
+          : encodeAvatarFileToDataUrl(path.resolve(path.dirname(cfg.profilePath), raw.avatar_path));
+    }
+    return {
+      ...(raw.name?.trim() ? { name: raw.name.trim() } : { name: cfg.assistantName }),
+      ...(raw.color?.trim() ? { color: raw.color.trim() } : {}),
+      ...(avatarDataUrl !== undefined ? { avatar_data_url: avatarDataUrl } : {}),
+      ...(raw.user_name !== undefined ? { user_name: raw.user_name } : cfg.userName ? { user_name: cfg.userName } : {}),
+    };
+  }
+  return {
+    name: cfg.assistantName,
+    ...(cfg.assistantColor ? { color: cfg.assistantColor } : {}),
+    ...(cfg.assistantAvatarPath ? { avatar_data_url: encodeAvatarFileToDataUrl(cfg.assistantAvatarPath) } : {}),
+    ...(cfg.userName ? { user_name: cfg.userName } : {}),
   };
 }
 
@@ -233,15 +299,24 @@ export function formatInboxPrompt(msg: {
   ].join("\n");
 }
 
-export function deriveAutomaticSummary(prompt: string): string {
-  const firstLine = prompt
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0 && !line.startsWith("!["));
-  const cleaned = (firstLine ?? prompt).replace(/\s+/g, " ").trim();
-  if (!cleaned) return "Coding task";
-  return cleaned.length > 100 ? `${cleaned.slice(0, 97)}…` : cleaned;
+export function formatSummaryRequestPrompt(session: {
+  id: string;
+  title: string;
+  prompt: string;
+  latest_output?: string | null;
+}): string {
+  const lines = [
+    `[Muse Code Space — Task summary needed for ${session.title} (task_id: "${session.id}")]`,
+    `Initial prompt: ${session.prompt.trim().slice(0, 600)}`,
+  ];
+  if (session.latest_output?.trim()) {
+    lines.push(`Latest progress: ${session.latest_output.trim().slice(0, 600)}`);
+  }
+  lines.push(
+    "",
+    `Write a concise summary (at most 100 characters, never a status like "Thinking") describing the requested work and progress, and save it using \`muse_code_space_update_task\` with \`task_id: "${session.id}"\` and \`summary\`.`,
+  );
+  return lines.join("\n");
 }
 
 export function readLastLogError(logPath: string): string | null {
@@ -321,10 +396,20 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let polling = false;
   let identitySynced = false;
+  const requestedSummaries = new Map<string, number>();
 
-  const ensureServicesRunning = async (): Promise<{ pilotUp: boolean; webUp: boolean }> => {
+  const checkServicesRunning = async (): Promise<{ pilotUp: boolean; webUp: boolean }> => {
+    const pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
+    const webCheckUrl = formatLocalActionUrl(cfg).replace(/\/actions$/, "/");
+    const authHeaders = cfg.webToken ? { authorization: `Bearer ${cfg.webToken}` } : undefined;
+    const webUp = await isHttpReachable(webCheckUrl, authHeaders);
+    return { pilotUp, webUp };
+  };
+
+  const ensureServicesRunning = async (forceStart = false): Promise<{ pilotUp: boolean; webUp: boolean }> => {
+    const shouldStart = forceStart || cfg.autoStart;
     let pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
-    if (!pilotUp && cfg.autoStart) {
+    if (!pilotUp && shouldStart) {
       const pilotDir = path.join(cfg.repoRoot, "pilot");
       const pilotScript = path.join(pilotDir, "pilot.mjs");
       if (fs.existsSync(pilotScript)) {
@@ -345,6 +430,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
             MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
             MUSE_CODE_SPACE_RELAY_URL: process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
             MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
+            ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
           },
           stdio: ["ignore", logFd, logFd],
           detached: true,
@@ -361,7 +447,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     const webCheckUrl = formatLocalActionUrl(cfg).replace(/\/actions$/, "/");
     const authHeaders = cfg.webToken ? { authorization: `Bearer ${cfg.webToken}` } : undefined;
     let webUp = await isHttpReachable(webCheckUrl, authHeaders);
-    if (!webUp && cfg.autoStart) {
+    if (!webUp && shouldStart) {
       const serverScript = path.join(cfg.repoRoot, "dev", "server.ts");
       if (fs.existsSync(serverScript)) {
         const webDir = path.join(cfg.stateDir, "web-build");
@@ -396,17 +482,33 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     return { pilotUp, webUp };
   };
 
+  const startPolling = () => {
+    if (!pollTimer) {
+      pollTimer = setInterval(() => {
+        void syncIdentityAndPollInbox();
+      }, 3000);
+    }
+  };
+
+  const requireRunningOrThrow = async (): Promise<void> => {
+    const { pilotUp, webUp } = await checkServicesRunning();
+    if (!pilotUp || !webUp) {
+      throw new Error(
+        "Muse Code Space is not running on this host. Run `/code-space start` to launch the pilot and web server.",
+      );
+    }
+  };
+
   const syncIdentityAndPollInbox = async () => {
     if (polling) return;
     polling = true;
     try {
-      await ensureServicesRunning();
+      const { pilotUp, webUp } = await checkServicesRunning();
+      if (!pilotUp || !webUp) return;
       if (!identitySynced) {
         try {
-          await invokeCodeSpaceAction(cfg, "setAssistantIdentity", {
-            name: cfg.assistantName,
-            ...(cfg.userName ? { user_name: cfg.userName } : {}),
-          });
+          const payload = buildIdentityPayloadFromConfig(cfg);
+          await invokeCodeSpaceAction(cfg, "setAssistantIdentity", payload);
           identitySynced = true;
         } catch {
           // Will retry on next tick when web/pilot are up.
@@ -446,17 +548,21 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         }
       }
 
-      // Sync pilot events and backfill missing task summaries for active sessions.
+      // Sync pilot events and ask the Pi agent to supply missing task summaries.
       const list = await invokeCodeSpaceAction<{
         sessions: Array<{
           id: string;
+          title: string;
           status: string;
           archived: boolean;
           prompt: string;
           session_summary: string | null;
+          output_count: number;
+          latest_output: string | null;
         }>;
       }>(cfg, "listSessions", { limit: 50 });
 
+      const now = Date.now();
       for (const session of list?.sessions ?? []) {
         if (!session.archived && (session.status === "queued" || session.status === "running")) {
           try {
@@ -465,11 +571,25 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
             // ignore
           }
         }
-        if (!session.session_summary && session.prompt?.trim()) {
-          await invokeCodeSpaceAction(cfg, "setSessionSummary", {
-            id: session.id,
-            summary: deriveAutomaticSummary(session.prompt),
-          });
+        if (session.session_summary?.trim()) {
+          requestedSummaries.delete(session.id);
+          continue;
+        }
+        const hasContext = Boolean(session.prompt?.trim()) && (session.output_count > 0 || session.status === "succeeded");
+        const lastAskedAt = requestedSummaries.get(session.id) ?? 0;
+        // Throttle summary requests per session (10 minutes, matching watchdog lease)
+        if (!session.archived && hasContext && now - lastAskedAt > 10 * 60_000) {
+          requestedSummaries.set(session.id, now);
+          pi.sendMessage(
+            {
+              customType: "muse-code-space-summary",
+              content: formatSummaryRequestPrompt(session),
+              display: true,
+            },
+            { triggerTurn: true },
+          );
+          // Request at most one missing summary per poll cycle.
+          break;
         }
       }
     } catch {
@@ -492,7 +612,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute() {
-      const { pilotUp, webUp } = await ensureServicesRunning();
+      const { pilotUp, webUp } = await checkServicesRunning();
       const webUrl = formatPublicWebUrl(cfg);
       let activeCount = 0;
       let totalCount = 0;
@@ -519,6 +639,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         totalCount,
       };
       const text = [
+        `Status: ${webUp && pilotUp ? "running" : "stopped (run /code-space start to launch)"}`,
         `Web UI URL: ${webUrl}`,
         `Web Server: ${webUp ? "running" : "down"}`,
         `Pilot (${cfg.pilotUrl}): ${pilotUp ? "running" : "down"}`,
@@ -545,7 +666,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute(_id, params) {
-      await ensureServicesRunning();
+      await requireRunningOrThrow();
       const data = await invokeCodeSpaceAction<{
         sessions: Array<{
           id: string;
@@ -566,7 +687,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         };
       }
       const lines = filtered.map((s) => {
-        const summary = s.session_summary?.trim() || deriveAutomaticSummary(s.prompt);
+        const summary = s.session_summary?.trim() || s.prompt.replace(/\s+/g, " ").trim().slice(0, 100);
         return `- ${s.title} (${s.id}) [${s.archived ? "archived" : s.status}]: ${summary} — ${s.workspace_root}`;
       });
       return {
@@ -593,7 +714,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute(_id, params) {
-      await ensureServicesRunning();
+      await requireRunningOrThrow();
       try {
         await invokeCodeSpaceAction(cfg, "syncPilotEvents", { session_id: params.task_id });
       } catch {
@@ -662,7 +783,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute(_id, params) {
-      await ensureServicesRunning();
+      await requireRunningOrThrow();
       const res = await invokeCodeSpaceAction<{
         ok: boolean;
         to: string | null;
@@ -731,7 +852,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute(_id, params) {
-      await ensureServicesRunning();
+      await requireRunningOrThrow();
       const key = params.companion.trim().toLowerCase();
       const match = BUILTIN_COMPANIONS[key] ?? { id: key, name: params.companion.trim() };
       const sessionId = crypto.randomUUID();
@@ -761,11 +882,12 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
           isError: true,
         };
       }
-      const summary = params.summary?.trim() || deriveAutomaticSummary(params.prompt);
-      await invokeCodeSpaceAction(cfg, "setSessionSummary", {
-        id: created.id,
-        summary,
-      });
+      if (params.summary?.trim()) {
+        await invokeCodeSpaceAction(cfg, "setSessionSummary", {
+          id: created.id,
+          summary: params.summary.trim(),
+        });
+      }
       return {
         content: [
           {
@@ -800,7 +922,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       additionalProperties: false,
     },
     async execute(_id, params) {
-      await ensureServicesRunning();
+      await requireRunningOrThrow();
       const updates: string[] = [];
       if (params.summary !== undefined) {
         const res = await invokeCodeSpaceAction<{ ok: boolean; error: string | null }>(cfg, "setSessionSummary", {
@@ -837,10 +959,117 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     },
   });
 
+  pi.registerTool<{
+    name?: string;
+    user_name?: string | null;
+    color?: string;
+    avatar_path?: string | null;
+    avatar_data_url?: string | null;
+  }>({
+    name: "muse_code_space_set_identity",
+    label: "Set Code Space Assistant Identity",
+    description:
+      "Read or update the Muse Assistant identity and user name shown in Muse Code Space (assistant name for @ mentions, #rrggbb theme color, avatar image path or data URL, and the user's name for the Welcome Card greeting). Omit all fields to read the current identity.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Assistant display name shown in @ mentions and message cards (1–40 chars, e.g. 'Jolly').",
+        },
+        user_name: {
+          type: ["string", "null"],
+          description: "The user's own name for the Welcome Card greeting (1–40 chars, or null to clear).",
+        },
+        color: {
+          type: "string",
+          description: "Assistant theme color in #rrggbb hex format (e.g. '#d0e4fc').",
+        },
+        avatar_path: {
+          type: ["string", "null"],
+          description: "Path to a local .png, .jpg, or .webp image file (<= 256 KiB) to use as the assistant avatar, or null to clear.",
+        },
+        avatar_data_url: {
+          type: ["string", "null"],
+          description: "Data URL ('data:image/png;base64,...') for the assistant avatar, or null to clear.",
+        },
+      },
+      additionalProperties: false,
+    },
+    async execute(_id, params) {
+      await requireRunningOrThrow();
+      const hasUpdates =
+        params.name !== undefined ||
+        params.user_name !== undefined ||
+        params.color !== undefined ||
+        params.avatar_path !== undefined ||
+        params.avatar_data_url !== undefined;
+
+      if (!hasUpdates) {
+        const current = await invokeCodeSpaceAction<{
+          ok: boolean;
+          name: string | null;
+          color: string | null;
+          avatar_data_url: string | null;
+          user_name: string | null;
+          error: string | null;
+        }>(cfg, "getAssistantIdentity", {});
+        if (!current.ok) throw new Error(current.error ?? "Failed to read assistant identity");
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `Assistant name: ${current.name ?? "(unset)"}`,
+                `User name: ${current.user_name ?? "(unset)"}`,
+                `Color: ${current.color ?? "(unset)"}`,
+                `Avatar: ${current.avatar_data_url ? `set (${current.avatar_data_url.length} chars)` : "none"}`,
+              ].join("\n"),
+            },
+          ],
+          details: current,
+        };
+      }
+
+      let avatarDataUrl = params.avatar_data_url;
+      if (params.avatar_path !== undefined) {
+        avatarDataUrl = params.avatar_path === null ? null : encodeAvatarFileToDataUrl(params.avatar_path);
+      }
+      const payload: Record<string, unknown> = {};
+      if (params.name !== undefined) payload.name = params.name.trim();
+      if (params.user_name !== undefined) payload.user_name = params.user_name === null ? null : params.user_name.trim();
+      if (params.color !== undefined) payload.color = params.color.trim();
+      if (avatarDataUrl !== undefined) payload.avatar_data_url = avatarDataUrl;
+
+      const updated = await invokeCodeSpaceAction<{
+        ok: boolean;
+        name: string | null;
+        color: string | null;
+        avatar_data_url: string | null;
+        user_name: string | null;
+        error: string | null;
+      }>(cfg, "setAssistantIdentity", payload);
+      if (!updated.ok) throw new Error(updated.error ?? "Failed to update assistant identity");
+      if (updated.name) cfg.assistantName = updated.name;
+      if (updated.user_name !== undefined) cfg.userName = updated.user_name;
+      identitySynced = true;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Updated assistant identity: @${updated.name ?? cfg.assistantName}${updated.user_name ? `, user: ${updated.user_name}` : ""}, color: ${updated.color ?? "default"}, avatar: ${updated.avatar_data_url ? "set" : "none"}.`,
+          },
+        ],
+        details: updated,
+      };
+    },
+  });
+
   // ---- Register /code-space Command ----
 
   pi.registerCommand("code-space", {
-    description: "Show Muse Code Space Web UI URL and status (or /code-space restart | stop)",
+    description: "Manage Muse Code Space: /code-space start | stop | restart | status",
     handler: async (args, ctx) => {
       const sub = args.trim().toLowerCase();
       if (sub === "stop") {
@@ -853,13 +1082,39 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         ctx.ui.notify("Stopped Muse Code Space background polling and spawned services.", "info");
         return;
       }
-      if (sub === "restart") {
-        spawnedWeb?.kill();
-        spawnedPilot?.kill();
-        identitySynced = false;
+      if (sub === "start" || sub === "restart") {
+        if (sub === "restart") {
+          spawnedWeb?.kill();
+          spawnedPilot?.kill();
+          identitySynced = false;
+        }
+        const { pilotUp, webUp } = await ensureServicesRunning(true);
+        if (pilotUp && webUp) {
+          startPolling();
+          void syncIdentityAndPollInbox();
+        }
+        const notice = formatStartupNotice({
+          pilotUp,
+          webUp,
+          webUrl: formatPublicWebUrl(cfg),
+          pilotUrl: cfg.pilotUrl,
+          stateDir: cfg.stateDir,
+          pilotError: pilotUp ? null : readLastLogError(path.join(cfg.stateDir, "pilot.log")),
+          webError: webUp ? null : readLastLogError(path.join(cfg.stateDir, "web.log")),
+        });
+        ctx.ui.notify(notice.message, notice.level);
+        return;
       }
-      const { pilotUp, webUp } = await ensureServicesRunning();
-      void syncIdentityAndPollInbox();
+
+      const { pilotUp, webUp } = await checkServicesRunning();
+      if (!pilotUp && !webUp) {
+        ctx.ui.notify("Muse Code Space is stopped. Run `/code-space start` to launch the pilot and web UI.", "info");
+        return;
+      }
+      if (pilotUp && webUp) {
+        startPolling();
+        void syncIdentityAndPollInbox();
+      }
       const notice = formatStartupNotice({
         pilotUp,
         webUp,
@@ -876,12 +1131,20 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
   // ---- Lifecycle Hooks ----
 
   pi.on("session_start", async (_event, ctx) => {
-    const { pilotUp, webUp } = await ensureServicesRunning();
-    void syncIdentityAndPollInbox();
-    if (!pollTimer) {
-      pollTimer = setInterval(() => {
+    if (!cfg.autoStart) {
+      // Attach quietly if services are already running on this host; otherwise
+      // stay completely idle until the user runs `/code-space start`.
+      const { pilotUp, webUp } = await checkServicesRunning();
+      if (pilotUp && webUp) {
+        startPolling();
         void syncIdentityAndPollInbox();
-      }, 3000);
+      }
+      return;
+    }
+    const { pilotUp, webUp } = await ensureServicesRunning(true);
+    if (pilotUp && webUp) {
+      startPolling();
+      void syncIdentityAndPollInbox();
     }
     if (ctx?.hasUI) {
       const notice = formatStartupNotice({

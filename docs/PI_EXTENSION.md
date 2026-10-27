@@ -26,14 +26,13 @@ pi -e .
 
 ## What It Does
 
-1. **Starts the Pilot & Web UI automatically:**
-   - Installs `pilot/` dependencies if needed and starts `pilot/pilot.mjs`
-     (`MUSE_CODE_SPACE_RELAY_URL=none`, using the host's native `muse serve`
-     binary) and the standalone web server if they are not already running.
-   - Generates a persistent access token in
-     `~/.local/share/muse-code-space/web-token` and prints the full URL
-     (`http(s)://<hostname>:<port>/?token=<token>`) when the session starts or
-     when you run `/code-space`.
+1. **Starts the Pilot & Web UI on demand (`/code-space start`):**
+   - Stays idle on `session_start` by default so the extension can remain
+     installed globally without spawning background processes until you want it.
+   - Running `/code-space start` installs `pilot/` dependencies if needed,
+     starts `pilot/pilot.mjs` (`MUSE_CODE_SPACE_RELAY_URL=none`, using the
+     host's native `muse serve` binary) and the standalone web server, and
+     prints the full URL (`http(s)://<hostname>:<port>/?token=<token>`).
    - Visiting that URL sets an `HttpOnly` cookie so your desktop or phone
      browser stays authenticated across reloads.
 2. **Acts as the Muse Assistant (`@Jolly`):**
@@ -51,6 +50,7 @@ pi -e .
    - `muse_code_space_send_message`
    - `muse_code_space_start_task`
    - `muse_code_space_update_task`
+   - `muse_code_space_set_identity`
 
 ## Environment Variables
 
@@ -63,5 +63,8 @@ pi -e .
 | `MUSE_CODE_SPACE_TLS_CERT` / `MUSE_CODE_SPACE_TLS_KEY` | *(unset)* | Optional separate TLS certificate and key paths |
 | `MUSE_CODE_SPACE_WEB_TOKEN` | *(auto-generated)* | Secret token required to access the Web UI |
 | `MUSE_CODE_SPACE_ASSISTANT_NAME` | `Jolly` | Assistant name shown in `@` mentions |
+| `MUSE_CODE_SPACE_ASSISTANT_COLOR` | `#d0e4fc` | Assistant `#rrggbb` theme color |
+| `MUSE_CODE_SPACE_ASSISTANT_AVATAR` | *(unset)* | Path to `.png`/`.jpg`/`.webp` avatar image |
+| `MUSE_CODE_SPACE_ASSISTANT_PROFILE` | *(unset)* | Optional JSON file with `{name, color, avatar_path, user_name}` |
 | `MUSE_CODE_SPACE_USER_NAME` | `$USER` | User name shown in the Welcome Card greeting |
-| `MUSE_CODE_SPACE_AUTO_START` | `true` | Set `false` to disable auto-spawning pilot/web |
+| `MUSE_CODE_SPACE_AUTO_START` | `false` | Set `true` to auto-start pilot/web on `session_start` |

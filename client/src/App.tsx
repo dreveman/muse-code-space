@@ -5108,6 +5108,7 @@ export function App() {
                 <HomeWelcomeCard
                   sessions={sessions}
                   userName={assistantIdentityQuery.data?.user_name ?? null}
+                  assistantName={assistantIdentityQuery.data?.name ?? null}
                   formatTime={(iso) => formatRelativeTime(iso, sidebarClockMs)}
                   onSelectSession={(id) => {
                     mobileOpenedFromListRef.current = false;
