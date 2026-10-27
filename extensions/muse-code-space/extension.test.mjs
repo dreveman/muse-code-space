@@ -12,6 +12,7 @@ import museCodeSpaceExtension, {
   loadInboxCursor,
   loadPersistedPilotEnv,
   parseInlineEnvTokens,
+  resolveBunRuntime,
   resolveExtensionConfig,
   saveInboxCursor,
   updatePersistedPilotEnv,
@@ -174,6 +175,14 @@ test("pilot.env persistence and inline KEY=VALUE parsing work for passing env va
     updatePersistedPilotEnv(dir, parseInlineEnvTokens(["FOO="]));
     assert.deepEqual(loadPersistedPilotEnv(dir, dir), {
       MUSE_BASE_URL: "https://gateway.example.com/v1",
+    });
+
+    // When standalone `bun` is not in PATH, resolveBunRuntime falls back to
+    // Pi's own compiled Bun executable with BUN_BE_BUN=1.
+    const fallbackBun = resolveBunRuntime({ PATH: "/nonexistent", HOME: dir }, "/path/to/pi.real");
+    assert.deepEqual(fallbackBun, {
+      command: "/path/to/pi.real",
+      env: { BUN_BE_BUN: "1" },
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
