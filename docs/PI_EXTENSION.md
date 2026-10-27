@@ -68,3 +68,26 @@ pi -e .
 | `MUSE_CODE_SPACE_ASSISTANT_PROFILE` | *(unset)* | Optional JSON file with `{name, color, avatar_path, user_name}` |
 | `MUSE_CODE_SPACE_USER_NAME` | `$USER` | User name shown in the Welcome Card greeting |
 | `MUSE_CODE_SPACE_AUTO_START` | `false` | Set `true` to auto-start pilot/web on `session_start` |
+
+## Passing Environment Variables to the Pilot & `muse serve`
+
+Any environment variable passed to the pilot is inherited by `muse serve` (for
+example, `MUSE_BASE_URL`). You can supply environment variables in three ways:
+
+1. **Inline via `/code-space start` or `/code-space env` (persisted across sessions):**
+   ```text
+   /code-space start MUSE_BASE_URL=https://...
+   ```
+   or:
+   ```text
+   /code-space env MUSE_BASE_URL=https://...
+   /code-space restart
+   ```
+   These are saved to `~/.local/share/muse-code-space/pilot.env` (use
+   `/code-space env KEY=` to remove a key).
+2. **Via `~/.config/muse-code-space/env` or `~/.local/share/muse-code-space/pilot.env`:**
+   Add `KEY=VALUE` lines to either file; the extension loads both before
+   spawning `pilot/pilot.mjs` and automatically syncs the pilot's `/models`
+   catalog into the Web UI.
+3. **Via the shell environment before starting `pi`:**
+   `pilot/pilot.mjs` inherits `process.env` from the `pi` process.

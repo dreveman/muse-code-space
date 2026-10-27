@@ -10,8 +10,11 @@ import museCodeSpaceExtension, {
   formatStartupNotice,
   formatSummaryRequestPrompt,
   loadInboxCursor,
+  loadPersistedPilotEnv,
+  parseInlineEnvTokens,
   resolveExtensionConfig,
   saveInboxCursor,
+  updatePersistedPilotEnv,
 } from "./index.ts";
 
 const extDir = path.dirname(fileURLToPath(import.meta.url));
@@ -152,4 +155,27 @@ test("dev/server.ts supports optional TLS and token cookie authentication", () =
   assert.ok(devServerSource.includes("MUSE_CODE_SPACE_TLS_PEM"));
   assert.ok(devServerSource.includes("MUSE_CODE_SPACE_WEB_TOKEN"));
   assert.ok(devServerSource.includes("muse_code_space_token"));
+});
+
+test("pilot.env persistence and inline KEY=VALUE parsing work for passing env vars to pilot and muse", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "code-space-env-test-"));
+  try {
+    const parsed = parseInlineEnvTokens(["MUSE_BASE_URL='https://gateway.example.com/v1'", "FOO=bar"]);
+    assert.deepEqual(parsed, {
+      MUSE_BASE_URL: "https://gateway.example.com/v1",
+      FOO: "bar",
+    });
+    updatePersistedPilotEnv(dir, parsed);
+    assert.deepEqual(loadPersistedPilotEnv(dir, dir), {
+      MUSE_BASE_URL: "https://gateway.example.com/v1",
+      FOO: "bar",
+    });
+    // Clearing a key with KEY= removes it.
+    updatePersistedPilotEnv(dir, parseInlineEnvTokens(["FOO="]));
+    assert.deepEqual(loadPersistedPilotEnv(dir, dir), {
+      MUSE_BASE_URL: "https://gateway.example.com/v1",
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
