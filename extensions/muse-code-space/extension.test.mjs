@@ -5,10 +5,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import museCodeSpaceExtension, {
-  deriveAutomaticSummary,
   formatInboxPrompt,
   formatPublicWebUrl,
   formatStartupNotice,
+  formatSummaryRequestPrompt,
   loadInboxCursor,
   resolveExtensionConfig,
   saveInboxCursor,
@@ -48,6 +48,7 @@ test("extension registers all muse_code_space_* tools and /code-space command", 
     "muse_code_space_send_message",
     "muse_code_space_start_task",
     "muse_code_space_update_task",
+    "muse_code_space_set_identity",
   ]);
   assert.ok(registeredTools.every((name) => name.startsWith("muse_code_space_")));
   assert.deepEqual(registeredCommands, ["code-space"]);
@@ -66,6 +67,7 @@ test("resolveExtensionConfig mints a durable web token and formats http/https UR
       MUSE_CODE_SPACE_USER_NAME: "Alex",
     });
     assert.ok(cfg.webToken.length >= 16, "auto-generates a web token");
+    assert.equal(cfg.autoStart, false, "autoStart defaults to false so explicit /code-space start is required");
     assert.equal(
       formatPublicWebUrl(cfg),
       `http://workstation.example.com:8443/?token=${encodeURIComponent(cfg.webToken)}`,
@@ -109,7 +111,14 @@ test("inbox cursor persistence and message formatting work cleanly", () => {
     });
     assert.ok(prompt.includes("Poppy"));
     assert.ok(prompt.includes("muse_code_space_send_message"));
-    assert.equal(deriveAutomaticSummary("Fix mobile layout\nMore details"), "Fix mobile layout");
+    const summaryPrompt = formatSummaryRequestPrompt({
+      id: "sess-1",
+      title: "Poppy",
+      prompt: "Fix mobile layout\nMore details",
+      latest_output: "Updated CSS rules.",
+    });
+    assert.ok(summaryPrompt.includes("muse_code_space_update_task"));
+    assert.ok(summaryPrompt.includes("sess-1"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
