@@ -130,10 +130,17 @@ export const ProjectPicker = memo(function ProjectPicker({ projects, selected, d
               ))}
             </div>)}
             {creating ? (
-              <form className="project-menu-create" onSubmit={(event) => { event.preventDefault(); void submitCreate(); }}>
+              <div className="project-menu-create" role="group" aria-label="New project">
                 <label className="sr-only" htmlFor={`${id}-new-project`}>Project name (required)</label>
                 <input id={`${id}-new-project`} type="text" value={newName} maxLength={80} placeholder="Name *"
-                  autoFocus disabled={busy} onChange={(event) => setNewName(event.target.value)} />
+                  autoFocus disabled={busy} onChange={(event) => setNewName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void submitCreate();
+                    }
+                  }} />
                 <div className="project-menu-colors" role="radiogroup" aria-label="Project color (required)">
                   {PROJECT_COLORS.map((color) => (
                     <button key={color} type="button" role="radio" aria-checked={newColor === color} title={color}
@@ -149,9 +156,11 @@ export const ProjectPicker = memo(function ProjectPicker({ projects, selected, d
                   onChange={(event) => setNewBriefing(event.target.value)} />
                 {error && <span role="alert">{error}</span>}
                 <div className="project-menu-create-actions">
-                  <button type="submit" disabled={busy || !newName.trim()}>{busy ? "Creating…" : "Create project"}</button>
+                  <button type="button" disabled={busy || !newName.trim()} onClick={() => void submitCreate()}>
+                    {busy ? "Creating…" : "Create project"}
+                  </button>
                 </div>
-              </form>
+              </div>
             ) : (
               <button type="button" className="project-menu-create-toggle" onClick={() => setCreating(true)}>
                 + New project

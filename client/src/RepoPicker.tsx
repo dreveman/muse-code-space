@@ -235,7 +235,7 @@ export const RepoPicker = memo(function RepoPicker({
     () => visibleTopRepos(repos, query, moreExpanded),
     [repos, query, moreExpanded],
   );
-  const showConnectPrompt = mode === "pick" && !githubEnabled && selected === null;
+  const showConnectPrompt = mode === "pick" && (!githubEnabled || showGithubSetup) && selected === null;
   const cloning = Boolean(selected && (phase === "starting" || cloneProgress?.active));
 
   useLayoutEffect(() => {
@@ -352,8 +352,8 @@ export const RepoPicker = memo(function RepoPicker({
             aria-expanded={open} aria-controls={id} aria-haspopup="dialog"
             disabled={mode === "pick" ? disabled : false} onClick={() => { setOpenPrKey(null); setOpen((value) => !value); }}>
             <RepoIcon />
-            <span className={`repo-picker-name${mode === "pick" && githubEnabled && selected === null ? " repo-picker-hover-only" : ""}`}>
-              {repoTriggerLabel(selected, githubEnabled)}
+            <span className={`repo-picker-name${mode === "pick" && githubEnabled && !showGithubSetup && selected === null ? " repo-picker-hover-only" : ""}`}>
+              {repoTriggerLabel(selected, githubEnabled && !showGithubSetup)}
             </span>
             {showConnectPrompt && (
               <>

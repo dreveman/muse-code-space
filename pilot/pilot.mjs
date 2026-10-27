@@ -360,7 +360,14 @@ function effectiveGitIdentity() {
   if (fromFile) return fromFile;
   const gitconfig = join(dirname(STATE_DIR), "gitconfig");
   try {
-    return existsSync(gitconfig) ? readGitconfigIdentity(readFileSync(gitconfig, "utf8")) : null;
+    if (existsSync(gitconfig)) {
+      const parsed = readGitconfigIdentity(readFileSync(gitconfig, "utf8"));
+      if (parsed) return parsed;
+    }
+    if (useDirectGhCli() && HOME && existsSync(join(HOME, ".gitconfig"))) {
+      return readGitconfigIdentity(readFileSync(join(HOME, ".gitconfig"), "utf8"));
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -2261,6 +2268,18 @@ const server = createServer(async (req, res) => {
     // when the broker probe decides.
     if (path === "/github-setup") {
       if (req.method === "GET") {
+        if (useDirectGhCli()) {
+          if (ghCliReadyCache === null) await checkGhCliReady();
+          if (ghCliReadyCache === true) {
+            return json(res, 200, {
+              brokerDone: true,
+              appDone: true,
+              brokerRequested: false,
+              appRequested: false,
+              appHelpRequested: false,
+            });
+          }
+        }
         let mode = null;
         try {
           if (existsSync(GITHUB_BROKER_CONFIG)) mode = JSON.parse(readFileSync(GITHUB_BROKER_CONFIG, "utf8"))?.mode ?? null;
