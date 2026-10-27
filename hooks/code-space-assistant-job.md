@@ -24,7 +24,10 @@ message or session-summary work from being handled, in either identity mode.
 ### Default: use this worker's live assistant identity
 
 1. Read **your own current assistant name and avatar** from the identity/avatar
-   source available to you at runtime. You are the Muse assistant being synced,
+   source available to you at runtime, **and the user's own name (`user_name`)**
+   — the name you use to refer to the user from your memory, user profile, or
+   runtime context (use `null` only when the user's name is genuinely unknown to
+   you). You are the Muse assistant being synced,
    not a Code Space companion. Never substitute a companion roster image and
    never ask the user to provide identity values or maintain a profile file.
    If the avatar source is unavailable, preserve the saved avatar, report sync
@@ -32,16 +35,19 @@ message or session-summary work from being handled, in either identity mode.
    does not mean that the live identity has no avatar.
 2. Call `getAssistantIdentity({})` and check `ok/error`. Preserve the saved
    `color`: there is no live source for your theme color. Prepare a complete
-   payload with your current name, that saved color, and your actual avatar.
+   payload with your current `name`, that saved `color`, your actual
+   `avatar_data_url`, and the user's `user_name`.
    Use a static PNG, JPEG, or WebP data URL, at most 512 pixels per side and
    256 KiB. Reuse the artwork; extract a representative still if animated and
    resize/encode consistently rather than generating a replacement image.
    A live identity that explicitly has no avatar uses `avatar_data_url: null`.
    Omitting the field is not a complete sync and does not remove an old avatar.
-3. Compare the complete prepared payload with the saved `name`, `color`, and
-   `avatar_data_url`. If an `assistant_identity_needs_sync` / `worker_source`
+3. Compare the complete prepared payload with the saved `name`, `color`,
+   `avatar_data_url`, and `user_name` (including when the saved `user_name` is
+   `null` and you know the user's name). If an `assistant_identity_needs_sync` / `worker_source`
    issue already supplies a lease, use it for this pass. When there is no
-   identity issue and your live identity differs, claim a lease with:
+   identity issue and your live identity or `user_name` differs from what is
+   saved on the pilot, claim a lease with:
 
    ```sh
    python3 <hook-directory>/code-space-watchdog-state.py inspect \
@@ -57,9 +63,12 @@ message or session-summary work from being handled, in either identity mode.
    the saved identity before using that lease. If they now match, do nothing
    and let the claim expire. Do not acknowledge that unused claim.
 4. For a normal identity issue, even an already matching saved identity needs
-   acknowledgement when no verified sync is recorded. If a write is needed,
-   call `setAssistantIdentity` with all three fields and check `ok/error`.
-   Read back with `getAssistantIdentity` to confirm the full name/color/avatar.
+   acknowledgement when no verified sync is recorded. If a write is needed
+   (including when `user_name` is `null` on the pilot and you know the user's
+   name), call `setAssistantIdentity` with all four fields (`name`, `color`,
+   `avatar_data_url`, `user_name`) and check `ok/error`.
+   Read back with `getAssistantIdentity` to confirm the full
+   `name`/`color`/`avatar_data_url`/`user_name`.
    Store the exact complete payload in a private temporary JSON file, then run:
 
    ```sh
@@ -135,8 +144,12 @@ file for a normal installation. Never combine `--worker-identity` with
 
 ## Supply missing session summaries
 
+Check for missing session summaries on **every worker invocation** (whether
+woken by `sessions_needing_summary` or for identity/messages):
+
 1. Call `listSessions({limit: 100})`. For each unarchived session whose
-   `session_summary` is null or blank, read `getSession({id, event_limit: 1000})`.
+   `session_summary` is null or blank (including any IDs listed in a
+   `sessions_needing_summary` issue), read `getSession({id, event_limit: 1000})`.
 2. Write a concise sentence describing the requested work and actual progress,
    grounded in that session's prompt/transcript. Keep it within 240 characters;
    do not use a status such as "Thinking" as the summary.

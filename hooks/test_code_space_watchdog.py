@@ -577,6 +577,104 @@ class WatchdogTests(unittest.TestCase):
                                     capture_output=True, text=True, check=True)
             self.assertNotIn("issues", json.loads(result.stdout))
 
+    def test_worker_and_profile_modes_sync_and_detect_user_name_drift(self):
+        # 1. Start with a legacy 3-field acknowledgement, then pilot begins returning user_name: None.
+        self.complete_worker_identity()
+        self.assertEqual(self.inspect_worker(), [])
+        self.current["user_name"] = None
+        issue = self.inspect_worker()[0]
+        self.assertEqual(issue["reason"], "worker_source")
+
+        # Worker syncs user_name alongside name, color, and avatar_data_url.
+        self.complete_worker_identity(issue, {
+            "name": "Actual Muse",
+            "color": "#d0e4fc",
+            "avatar_data_url": AVATAR,
+            "user_name": "Alex",
+        })
+        self.assertEqual(self.inspect_worker(), [])
+
+        # If user_name on the pilot is cleared or changed, inspect wakes the worker again.
+        self.current["user_name"] = None
+        drift_issue = self.inspect_worker()[0]
+        self.assertEqual(drift_issue["reason"], "worker_source")
+
+    def test_hook_discovers_sessions_needing_summary_via_python_sqlite_without_sqlite3_cli(self):
+        import sqlite3
+
+        artifacts_dir = self.root / "ts-spaces"
+        space_dir = artifacts_dir / "code-space-live"
+        space_dir.mkdir(parents=True)
+        (space_dir / "space.json").write_text(json.dumps({"name": "Code Space", "slug": "code-space-live"}))
+        db_path = space_dir / "app.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, archived INTEGER NOT NULL, session_summary TEXT)"
+        )
+        conn.execute("INSERT INTO sessions VALUES ('sess-needs-summary', 0, NULL)")
+        conn.execute("INSERT INTO sessions VALUES ('sess-blank-summary', 0, '   ')")
+        conn.execute("INSERT INTO sessions VALUES ('sess-has-summary', 0, 'Already summarized')")
+        conn.execute("INSERT INTO sessions VALUES ('sess-archived', 1, NULL)")
+        conn.commit()
+        conn.close()
+
+        self.complete_worker_identity()
+        current = self.current
+
+        class Pilot(BaseHTTPRequestHandler):
+            def do_GET(inner):
+                payload = (
+                    {"ok": True}
+                    if inner.path == "/health"
+                    else current
+                    if inner.path == "/assistant"
+                    else {"messages": [], "latest": 0}
+                )
+                inner.send_response(200)
+                inner.send_header("Content-Type", "application/json")
+                inner.end_headers()
+                inner.wfile.write(json.dumps(payload).encode())
+
+            def log_message(*_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Pilot)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        runtime = self.root / "runtime.sh"
+        runtime.write_text('wake() { echo "$2"; }; silent() { echo "$2"; }; log() { :; };\n')
+        binaries = self.root / "bin"
+        binaries.mkdir(exist_ok=True)
+        for tool, code in [("systemctl", 0), ("sqlite3", 127)]:
+            stub = binaries / tool
+            stub.write_text(f"#!/bin/sh\nexit {code}\n")
+            stub.chmod(0o755)
+
+        environment = {
+            **os.environ,
+            "HOME": str(self.root),
+            "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+            "HATCH_HOOK_RUNTIME": str(runtime),
+            "MUSE_CODE_SPACE_PILOT_URL": f"http://127.0.0.1:{server.server_port}",
+            "MUSE_CODE_SPACE_ARTIFACT_SLUG": "code-space-live",
+            "MUSE_CODE_SPACE_WATCHDOG_STATE_DIR": str(self.root / "state"),
+            "MUSE_CODE_SPACE_ARTIFACTS_DIR": str(artifacts_dir),
+        }
+        environment.pop("HATCH_HOOK_DRY_RUN", None)
+        result = subprocess.run(
+            ["bash", str(ROOT / "code-space-watchdog.sh")],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        issues = json.loads(result.stdout)["issues"]
+        summary_issue = next(i for i in issues if i["type"] == "sessions_needing_summary")
+        self.assertEqual(set(summary_issue["session_ids"]), {"sess-needs-summary", "sess-blank-summary"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -348,11 +348,15 @@ state. Do not say "published" until the builder confirms a successful submit.
 ## 3. Operate the user's Muse assistant alongside Code Space agents
 
 The user's Muse assistant is **not** a Code Space agent. The watchdog worker
-reads its own live assistant name and avatar, preserves the color already saved
-on the pilot, and synchronizes the complete identity through
-`setAssistantIdentity({name, color, avatar_data_url})`, then use artifact actions
-`listAgents`, `sendAgentMessage` and `readMuseMessages` (with the returned
-`latest` sequence as the next `since`). Do not impersonate an agent or send
+reads its own live assistant name and avatar (plus the user's own name
+`user_name` that the assistant uses to refer to the user), preserves the color
+already saved on the pilot, and synchronizes the complete identity through
+`setAssistantIdentity({name, color, avatar_data_url, user_name})`, then uses
+artifact actions `listAgents`, `sendAgentMessage` and `readMuseMessages` (with
+the returned `latest` sequence as the next `since`). During installation or
+update verification, call `setAssistantIdentity({name, color, avatar_data_url,
+user_name})` immediately so the user's name is populated on the Welcome Card
+without waiting for a later background poll. Do not impersonate an agent or send
 through a shell fallback; Code Space agents use their required
 `mcp__code_space__send_message` tool. `Muse` and `Jolly` are reserved routing
 aliases for the assistant. Names shown in the UI may be capitalized without
