@@ -426,15 +426,71 @@ async function serveStatic(pathname: string): Promise<Response> {
   });
 }
 
+const TLS_PEM = process.env.MUSE_CODE_SPACE_TLS_PEM?.trim() || "";
+const TLS_CERT = process.env.MUSE_CODE_SPACE_TLS_CERT?.trim() || TLS_PEM;
+const TLS_KEY = process.env.MUSE_CODE_SPACE_TLS_KEY?.trim() || TLS_PEM;
+const WEB_TOKEN = process.env.MUSE_CODE_SPACE_WEB_TOKEN?.trim() || "";
+const AUTH_COOKIE = "muse_code_space_token";
+
+function parseCookieValue(cookieHeader: string | null, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(rest.join("="));
+  }
+  return null;
+}
+
+function isLoopbackHostHeader(req: Request): boolean {
+  const host = (req.headers.get("host") ?? "").trim().toLowerCase();
+  const bare = host.replace(/:\d+$/, "");
+  return bare === "127.0.0.1" || bare === "localhost" || bare === "[::1]" || bare === "::1";
+}
+
+function checkWebTokenAuth(req: Request, url: URL): { authorized: boolean; setCookie?: string } {
+  if (!WEB_TOKEN || isLoopbackHostHeader(req)) return { authorized: true };
+  const queryToken = url.searchParams.get("token");
+  if (queryToken === WEB_TOKEN) {
+    const secure = TLS_CERT ? "; Secure" : "";
+    return {
+      authorized: true,
+      setCookie: `${AUTH_COOKIE}=${encodeURIComponent(WEB_TOKEN)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure}`,
+    };
+  }
+  const authHeader = req.headers.get("authorization");
+  if (authHeader === `Bearer ${WEB_TOKEN}`) return { authorized: true };
+  const cookieToken = parseCookieValue(req.headers.get("cookie"), AUTH_COOKIE);
+  if (cookieToken === WEB_TOKEN) return { authorized: true };
+  return { authorized: false };
+}
+
+const tlsConfig =
+  TLS_CERT && TLS_KEY && existsSync(TLS_CERT) && existsSync(TLS_KEY)
+    ? { cert: Bun.file(TLS_CERT), key: Bun.file(TLS_KEY) }
+    : undefined;
+
 const server = Bun.serve({
   hostname: HOST,
   port: PORT,
   idleTimeout: 0,
+  ...(tlsConfig ? { tls: tlsConfig } : {}),
   async fetch(req) {
     const url = new URL(req.url);
-    if (url.pathname.endsWith("/actions") && req.method === "POST") return handleAction(req);
+    const auth = checkWebTokenAuth(req, url);
+    if (!auth.authorized) {
+      return new Response("Unauthorized — provide a valid ?token= parameter.", { status: 401 });
+    }
+    const attachAuthCookie = (res: Response): Response => {
+      if (!auth.setCookie) return res;
+      const headers = new Headers(res.headers);
+      headers.append("set-cookie", auth.setCookie);
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    };
+    if (url.pathname.endsWith("/actions") && req.method === "POST") {
+      return attachAuthCookie(await handleAction(req));
+    }
     const previewTarget = parseDevPreviewTarget(req, url);
-    if (previewTarget) return handlePreviewRoute(req, url, previewTarget);
+    if (previewTarget) return attachAuthCookie(await handlePreviewRoute(req, url, previewTarget));
     if (url.pathname === "/__dev/events") {
       let ctl: ReadableStreamDefaultController<string>;
       const stream = new ReadableStream<string>({
@@ -447,16 +503,17 @@ const server = Bun.serve({
           listeners.delete(ctl);
         },
       });
-      return new Response(stream, {
+      return attachAuthCookie(new Response(stream, {
         headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" },
-      });
+      }));
     }
     if (req.method !== "GET" && req.method !== "HEAD") return new Response("method not allowed", { status: 405 });
-    return serveStatic(url.pathname);
+    return attachAuthCookie(await serveStatic(url.pathname));
   },
 });
 
-console.log(`[dev] Muse Code Space dev server: http://${server.hostname}:${server.port}`);
+const scheme = tlsConfig ? "https" : "http";
+console.log(`[dev] Muse Code Space dev server: ${scheme}://${server.hostname}:${server.port}`);
 console.log(`[dev] db: ${DB_PATH}`);
 console.log(`[dev] pilot: ${pilotUrl} (set MUSE_CODE_SPACE_PILOT_URL to change)`);
 // On the VM something outside the app calls syncModels; locally, seed the
@@ -499,7 +556,7 @@ async function seedFakeProjects() {
   const createProject = actions.createProject;
   if (!isAction(listProjects) || !isAction(createProject)) return;
   const listCtx = makeCtx("dev-seed-projects", listProjects.privileged) as unknown as Parameters<typeof listProjects.handler>[0];
-  const { projects } = await listProjects.handler(listCtx, {});
+  const { projects } = (await listProjects.handler(listCtx, {})) as { projects: unknown[] };
   if (projects.length > 0) return;
   for (const project of FAKE_PROJECTS) {
     const ctx = makeCtx(`dev-seed-project-${project.project_id}`, createProject.privileged) as unknown as Parameters<typeof createProject.handler>[0];
