@@ -57,8 +57,11 @@ const PORT = Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_PORT ?? 18793);
 const HOME = process.env.MUSE_CODE_SPACE_FAKE_PILOT_HOME;
 // MUSE_CODE_SPACE_FAKE_PILOT_STATE=<file>: persist sessions + event history
 // (like the real pilot's registry and transcripts) so restarts can be
-// tested. A turn running when the process dies is lost, as in a real crash.
-const STATE_FILE = process.env.MUSE_CODE_SPACE_FAKE_PILOT_STATE;
+// tested. Defaults to .dev/fake-pilot-state.json on the default dev port
+// (18793) so `bun --watch` reloads never strand sessions in .dev/app.db.
+const STATE_FILE =
+  process.env.MUSE_CODE_SPACE_FAKE_PILOT_STATE ??
+  (PORT === 18793 ? resolve(import.meta.dir, "..", ".dev", "fake-pilot-state.json") : undefined);
 // MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS=<ms>: hold starts/turns
 // before admitting the turn — a slow pilot, to test the UI's "Sending" state.
 const ADMIT_DELAY_MS = Number(process.env.MUSE_CODE_SPACE_FAKE_PILOT_ADMIT_DELAY_MS ?? 0);
@@ -153,7 +156,55 @@ function validGitAuthor(value: unknown): { name: string; email: string } | null 
   return { name, email };
 }
 const isReserved = (name: unknown) => ["muse", "jolly", assistant.name.toLowerCase()].includes(String(name ?? "").trim().replace(/^@/, "").toLowerCase());
+function hydrateFromDevAppDb() {
+  if (PORT !== 18793) return;
+  const dbPath = resolve(import.meta.dir, "..", ".dev", "app.db");
+  if (!existsSync(dbPath)) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .query("SELECT id, title, workspace_root, repo_slug, model_id, pilot_session_id, pilot_seq FROM sessions WHERE pilot_session_id IS NOT NULL")
+      .all() as Array<{
+      id: string;
+      title: string;
+      workspace_root: string | null;
+      repo_slug: string | null;
+      model_id: string | null;
+      pilot_session_id: string;
+      pilot_seq: number;
+    }>;
+    for (const row of rows) {
+      if (row.pilot_seq > seq) seq = row.pilot_seq;
+      const existing = sessions.get(row.pilot_session_id);
+      if (!existing) {
+        sessions.set(row.pilot_session_id, {
+          id: row.pilot_session_id,
+          appSessionId: row.id,
+          title: row.title,
+          name: row.title,
+          workspaceRoot: row.workspace_root ?? undefined,
+          repo: row.repo_slug ?? undefined,
+          modelId: row.model_id || MODELS[0]!.modelId,
+          events: [],
+          openTurn: null,
+          cancel: null,
+          inputs: new Map(),
+        });
+      } else if (existing.name === "Companion" && row.title) {
+        existing.title = row.title;
+        existing.name = row.title;
+      }
+    }
+    db.close();
+  } catch {
+    // Ignore if bun:sqlite or table is unavailable.
+  }
+}
+
 loadState();
+hydrateFromDevAppDb();
 const wire: Array<{ at: string; dir: string; method: string; ms?: number; ok?: boolean; params?: string }> = [];
 
 function saveState() {
@@ -1167,7 +1218,12 @@ async function runTurn(session: Session, text: string) {
       }
       return /\bmonitor-prs\b/i.test(text) ? [6, 7] : [6];
     })();
-    const sendMessageTool = /\bsend-message-(?:tool|fail)\b/i.test(text);
+    const userOnlyText = text.replace(/\n\n\[System:[\s\S]*$/i, "").trim();
+    const assistantEscaped = assistant.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mentionAssistantRe = new RegExp(`@(?:${assistantEscaped}|muse)\\b`, "i");
+    const mentionAssistant = mentionAssistantRe.test(userOnlyText);
+    const mentionAssistantText = userOnlyText.replace(mentionAssistantRe, "").trim() || userOnlyText;
+    const sendMessageTool = /\bsend-message-(?:tool|fail)\b/i.test(text) || mentionAssistant;
     const sendMessageFail = /\bsend-message-fail\b/i.test(text);
     const receiveMessage = /\breceive-message\b/i.test(text);
     const searchTool = /\bsearch-(?:tool|empty|bad)\b/i.test(text);
@@ -1210,7 +1266,7 @@ async function runTurn(session: Session, text: string) {
         `wrote diagram.svg to workspace`
       )
       : listAgentsTool ? `You are "${session.name ?? "milo"}". You can message:\n- juno\n- pip (busy)\n- ${assistant.name} — your Muse assistant`
-      : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : "Delivered to pip.")
+      : sendMessageTool ? (sendMessageFail ? "Not delivered: offline" : mentionAssistant ? `Delivered to ${assistant.name} (your Muse assistant).` : "Delivered to pip.")
       : writeTodosTool ? "Plan updated: 5 items, 2 completed, 1 in progress."
       : readSkillTool ? skillOutput
       : searchTool ? (searchBad ? "future search format" : searchEmpty ? "" : "alpha.txt-1-ALPHA before\nalpha.txt:2:MCS_SEARCH_PROBE first\nalpha.txt-3-ALPHA after\nbeta.txt-1-BETA before\nbeta.txt:2:MCS_SEARCH_PROBE second\nbeta.txt-3-BETA after")
@@ -1222,7 +1278,7 @@ async function runTurn(session: Session, text: string) {
     const visibleOutput = longOutput ? fullOutput.split("\n").slice(0, 18).join("\n") : fullOutput;
     const toolItem = (status: string, patchReady = false) => ({
       kind: "toolCall", itemId: toolItemId, tool: editDiff ? "edit_file" : readTool ? "read_file" : writeTool ? "write_file" : monitorTool ? "mcp__code_space__github_monitor_pr" : createPrTool ? "mcp__code_space__github_create_pr" : startPreviewMatch ? "mcp__code_space__preview_screenshot" : listAgentsTool ? "mcp__code_space__list_agents" : sendMessageTool ? "mcp__code_space__send_message" : searchTool ? "search" : readSkillTool ? "read_skill" : writeTodosTool ? "write_todos" : jsonTool ? "mystery" : "bash", status,
-      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readPath } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: "pip", text: "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : readSkillTool ? { name: "bundled:demo-review" } : writeTodosTool ? todosArgs : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
+      recordedAt: new Date().toISOString(), args: JSON.stringify(editDiff ? { path: "test.rs", find: "OLD", replace: "NEW" } : readTool ? { path: readPath } : writeTool ? (writeTsTool ? { path: "alpha.ts", content: tsWriteContent } : { path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" }) : monitorTool ? { action: "subscribe", pr_ids: monitoredPrNumbers.map((n) => `#${n}`) } : createPrTool ? { title: `Improve repository picker and Smart Log (#${firstCreatedPrNumber})`, head: `pr-${firstCreatedPrNumber}`, base: "main" } : startPreviewMatch && demoPreview ? { port: demoPreview.port, path: "/", title: `Live preview v${demoPreview.version}` } : listAgentsTool ? {} : sendMessageTool ? { to: mentionAssistant ? assistant.name : "pip", text: mentionAssistant ? mentionAssistantText : "Please run tests" } : searchTool ? { pattern: "MCS_SEARCH_PROBE", paths: ["."], output_mode: "text", context_before: 1, context_after: 1 } : readSkillTool ? { name: "bundled:demo-review" } : writeTodosTool ? todosArgs : jsonTool ? { query: "test" } : bashNonzero ? { command: "printf PROBE_OUTPUT; exit 7", description: "Check a failing command" } : { command: "echo hello" }),
       ...(status === "failed" ? { failureReason: "process exited with status 7" } : {}),
       ...(editDiff && (patchReady || status === "completed") ? {
         patchRef: { id: patchRefId, kind: "tool_patch", byteLen: Buffer.byteLength(patchJson), availability: "available", mediaType: "application/json" },
@@ -1248,11 +1304,33 @@ async function runTurn(session: Session, text: string) {
       }] : []),
       () => push(session, "item", { item: toolItem("inProgress") }),
       ...(editDiff ? [() => push(session, "item", { item: toolItem("inProgress", true) })] : []),
-      ...(sendMessageTool ? [() => push(session, "agent_message", {
-        direction: "out", messageId: crypto.randomUUID(),
-        from: { kind: "agent", name: session.name ?? session.title, sessionId: session.id },
-        to: { kind: "agent", name: "pip", sessionId: "fake-pip" }, text: "Please run tests", queued: false,
-      })] : []),
+      ...(sendMessageTool ? [() => {
+        if (mentionAssistant && !sendMessageFail) {
+          const messageId = crypto.randomUUID();
+          const sender = { kind: "agent" as const, name: session.name ?? session.title, sessionId: session.id };
+          museInbox.push({
+            seq: (museInbox.at(-1)?.seq ?? 0) + 1,
+            messageId,
+            at: new Date().toISOString(),
+            from: sender,
+            text: mentionAssistantText,
+          });
+          push(session, "agent_message", {
+            direction: "out",
+            messageId,
+            from: sender,
+            to: { kind: "muse", name: assistant.name, color: assistant.color },
+            text: mentionAssistantText,
+            queued: false,
+          });
+        } else {
+          push(session, "agent_message", {
+            direction: "out", messageId: crypto.randomUUID(),
+            from: { kind: "agent", name: session.name ?? session.title, sessionId: session.id },
+            to: { kind: "agent", name: "pip", sessionId: "fake-pip" }, text: "Please run tests", queued: false,
+          });
+        }
+      }] : []),
       () => push(session, "item", { item: toolItem(bashNonzero ? "failed" : "completed") }),
       ...(createPrTool && createPrCount > 1 ? [() => {
         for (let i = 1; i < createPrCount; i++) {
@@ -1320,7 +1398,7 @@ async function runTurn(session: Session, text: string) {
       steps.push(() => { startFakeWorkflow(session, turnId); });
       steps.push(() => push(session, "item", { item: { kind: "agentMessage", status: "completed", text: "Launched a workflow with two agents; results will follow." } }));
       steps.push(() => push(session, "turn_completed", { turnId, outcome: { status: "completed" } }));
-    } else if (/\bfail\b/i.test(text)) {
+    } else if (/\bfail\b/i.test(text) && !/\bpass or fail\b/i.test(text)) {
       steps.push(() => push(session, "turn_error", { error: "Fake pilot: simulated model failure." }));
     } else if ((startPreviewMatch || hmrUpdateTool) && demoPreview && previewShot?.ok) {
       steps.push(() =>
@@ -1974,9 +2052,24 @@ Bun.serve({
       saveState();
       return json(200, { ok: true, sessionId: id, existed: !!existing });
     }
-    const session = sessions.get(decodeURIComponent(m[1]!));
-    if (!session) return json(404, { error: "unknown session", code: "unknown_session" });
+    const sessionId = decodeURIComponent(m[1]!);
     const sub = m[2] ?? "";
+    let session = sessions.get(sessionId);
+    if (!session && (sub === "/poll" || sub === "/turns" || sub === "/recover" || sub === "/compact")) {
+      session = {
+        id: sessionId,
+        title: "Companion",
+        name: "Companion",
+        modelId: MODELS[0]!.modelId,
+        events: [],
+        openTurn: null,
+        cancel: null,
+        inputs: new Map(),
+      };
+      sessions.set(sessionId, session);
+      saveState();
+    }
+    if (!session) return json(404, { error: "unknown session", code: "unknown_session" });
 
     if (sub === "/preview/ports" && req.method === "GET") {
       const wsDir = session.workspaceRoot ?? null;
@@ -2133,9 +2226,10 @@ Bun.serve({
 
     if (sub === "/poll") {
       const since = Number(url.searchParams.get("since") ?? 0);
+      if (since > seq) seq = since;
       return json(200, {
         events: session.events.filter((e) => e.seq > since),
-        latestSeq: session.events.at(-1)?.seq ?? since,
+        latestSeq: Math.max(since, session.events.at(-1)?.seq ?? since),
         sessionId: session.id,
         backendSessionId: session.id,
         hasOpenTurn: session.openTurn !== null,

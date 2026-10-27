@@ -10,5 +10,5 @@
       "@space/privileged": ["../server/.generated/privileged.contract"]
     }
   },
-  "include": ["*.ts", "../server/src/**/*", "../server/.generated/**/*"]
+  "include": ["*.ts", "../extensions/muse-code-space/*.ts", "../server/src/**/*", "../server/.generated/**/*"]
 }
