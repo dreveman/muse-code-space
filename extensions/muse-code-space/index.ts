@@ -276,6 +276,96 @@ export function loadInboxCursor(cursorFile: string): number {
   }
 }
 
+export function parseEnvFileText(content: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const stripped = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const eq = stripped.indexOf("=");
+    if (eq <= 0) continue;
+    const key = stripped.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let val = stripped.slice(eq + 1).trim();
+    if (
+      (val.startsWith("'") && val.endsWith("'") && val.length >= 2) ||
+      (val.startsWith('"') && val.endsWith('"') && val.length >= 2)
+    ) {
+      val = val.slice(1, -1);
+    }
+    result[key] = val;
+  }
+  return result;
+}
+
+export function parseInlineEnvTokens(tokens: readonly string[]): Record<string, string | null> {
+  const updates: Record<string, string | null> = {};
+  for (const raw of tokens) {
+    const token = raw.trim();
+    if (!token) continue;
+    const eq = token.indexOf("=");
+    if (eq <= 0) continue;
+    const key = token.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let val = token.slice(eq + 1).trim();
+    if (
+      (val.startsWith("'") && val.endsWith("'") && val.length >= 2) ||
+      (val.startsWith('"') && val.endsWith('"') && val.length >= 2)
+    ) {
+      val = val.slice(1, -1);
+    }
+    updates[key] = val === "" ? null : val;
+  }
+  return updates;
+}
+
+export function loadPersistedPilotEnv(stateDir: string, homeDir = os.homedir()): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const candidates = [
+    path.join(homeDir, ".config", "muse-code-space", "env"),
+    path.join(stateDir, "pilot.env"),
+  ];
+  for (const file of candidates) {
+    try {
+      if (fs.existsSync(file)) {
+        Object.assign(merged, parseEnvFileText(fs.readFileSync(file, "utf8")));
+      }
+    } catch {
+      // ignore unreadable env files
+    }
+  }
+  return merged;
+}
+
+export function updatePersistedPilotEnv(
+  stateDir: string,
+  updates: Record<string, string | null>,
+): Record<string, string> {
+  const envFile = path.join(stateDir, "pilot.env");
+  let current: Record<string, string> = {};
+  try {
+    if (fs.existsSync(envFile)) {
+      current = parseEnvFileText(fs.readFileSync(envFile, "utf8"));
+    }
+  } catch {
+    current = {};
+  }
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === null) {
+      delete current[k];
+    } else {
+      current[k] = v;
+    }
+  }
+  const lines = Object.entries(current).map(([k, v]) => `${k}=${JSON.stringify(v)}`);
+  try {
+    fs.writeFileSync(envFile, `${lines.join("\n")}\n`, { mode: 0o600 });
+  } catch {
+    // ignore write failures
+  }
+  return current;
+}
+
 export function saveInboxCursor(cursorFile: string, cursor: number): void {
   try {
     const tmp = `${cursorFile}.tmp.${process.pid}`;
@@ -422,13 +512,15 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         }
         const pilotStateDir = path.join(cfg.stateDir, "pilot-state");
         fs.mkdirSync(pilotStateDir, { recursive: true, mode: 0o700 });
+        const customEnv = loadPersistedPilotEnv(cfg.stateDir);
         const logFd = fs.openSync(path.join(cfg.stateDir, "pilot.log"), "w");
         spawnedPilot = spawn("node", [pilotScript], {
           cwd: cfg.repoRoot,
           env: {
             ...process.env,
+            ...customEnv,
             MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
-            MUSE_CODE_SPACE_RELAY_URL: process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
+            MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
             MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
             ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
           },
@@ -480,6 +572,22 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
     }
 
     return { pilotUp, webUp };
+  };
+
+  const syncModelsFromPilot = async (): Promise<void> => {
+    try {
+      const res = await fetch(`${cfg.pilotUrl}/models`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return;
+      const catalog = (await res.json()) as { models?: Array<{ modelId?: string; displayLabel?: string }> };
+      const models = (catalog.models ?? [])
+        .filter((m) => m.modelId)
+        .map((m) => ({ id: m.modelId!, display_name: m.displayLabel || m.modelId! }));
+      if (models.length > 0) {
+        await invokeCodeSpaceAction(cfg, "syncModels", { models });
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const startPolling = () => {
@@ -1069,9 +1177,28 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
   // ---- Register /code-space Command ----
 
   pi.registerCommand("code-space", {
-    description: "Manage Muse Code Space: /code-space start | stop | restart | status",
+    description: "Manage Muse Code Space: /code-space start [KEY=VALUE ...] | stop | restart [KEY=VALUE ...] | env [KEY=VALUE ...] | status",
     handler: async (args, ctx) => {
-      const sub = args.trim().toLowerCase();
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const sub = (parts[0] ?? "").toLowerCase();
+      const rest = parts.slice(1);
+
+      if (sub === "env") {
+        const updates = parseInlineEnvTokens(rest);
+        if (Object.keys(updates).length > 0) {
+          updatePersistedPilotEnv(cfg.stateDir, updates);
+        }
+        const merged = loadPersistedPilotEnv(cfg.stateDir);
+        const keys = Object.keys(merged);
+        ctx.ui.notify(
+          keys.length > 0
+            ? `Pilot env (${path.join(cfg.stateDir, "pilot.env")}): ${keys.map((k) => `${k}=${merged[k]}`).join(", ")}`
+            : `No custom pilot env vars set in ${path.join(cfg.stateDir, "pilot.env")}. Usage: /code-space env KEY=VALUE`,
+          "info",
+        );
+        return;
+      }
+
       if (sub === "stop") {
         if (pollTimer) {
           clearInterval(pollTimer);
@@ -1083,13 +1210,18 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         return;
       }
       if (sub === "start" || sub === "restart") {
-        if (sub === "restart") {
+        const updates = parseInlineEnvTokens(rest);
+        if (Object.keys(updates).length > 0) {
+          updatePersistedPilotEnv(cfg.stateDir, updates);
+        }
+        if (sub === "restart" || Object.keys(updates).length > 0) {
           spawnedWeb?.kill();
           spawnedPilot?.kill();
           identitySynced = false;
         }
         const { pilotUp, webUp } = await ensureServicesRunning(true);
         if (pilotUp && webUp) {
+          await syncModelsFromPilot();
           startPolling();
           void syncIdentityAndPollInbox();
         }
