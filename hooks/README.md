@@ -27,10 +27,12 @@ Configure these on the existing hook invocation:
 ### Default identity source: the Muse worker
 
 No profile file is needed. The worker reads its own current assistant name and
-avatar from its runtime source and preserves the theme color already saved on
-the pilot. It never asks the user to supply identity values or uses a companion
-roster image. A live identity with no avatar explicitly clears the saved avatar;
-an unavailable source leaves it intact and keeps sync incomplete.
+avatar from its runtime source, along with the user's name (`user_name` — the
+name the Muse assistant uses to refer to the user), and preserves the theme
+color already saved on the pilot. It never asks the user to supply identity
+values or uses a companion roster image. A live identity with no avatar
+explicitly clears the saved avatar; an unavailable source leaves it intact and
+keeps sync incomplete.
 
 The poller checks only `GET /assistant`: it wakes a worker if no acknowledged
 identity exists or that saved identity changes. After acknowledgement it stays

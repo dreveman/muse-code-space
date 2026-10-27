@@ -41,7 +41,10 @@ Report which credentials verified before you start the install itself.
 artifacts are generated at install time in the staged snapshot only. Never
 read the installer script's source into the conversation; run it and work
 from its output. Verify the finished install at every layer (pilot health
-and session recovery, app actions resolving, web bundle current, GitHub
+and session recovery, app actions resolving, web bundle current, assistant
+identity including `user_name` set via `setAssistantIdentity` so the Welcome
+Card greets me by name, updated `hooks/code-space-watchdog.sh` and
+`hooks/code-space-watchdog-state.py` copied to `~/hooks/scripts/`, and GitHub
 setup state), not from pilot health alone. Do not push anything to GitHub.
 When you are done, report what is live, what versions are pinned, and
 anything left for me to decide.

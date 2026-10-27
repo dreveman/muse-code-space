@@ -40,6 +40,17 @@ def read_json(path, limit=MAX_PROFILE_BYTES * 2):
         raise WatchdogError("JSON file is missing, unreadable, or invalid.") from error
 
 
+def normalize_user_name(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise WatchdogError("Identity user_name must be a string or null.")
+    cleaned = value.strip()
+    if not cleaned:
+        raise WatchdogError("Identity user_name must not be blank (use null to clear).")
+    return cleaned
+
+
 def identity_fields(value):
     if not isinstance(value, dict) or not {"name", "color", "avatar_data_url"} <= value.keys():
         raise WatchdogError("Identity must contain name, color, and avatar_data_url.")
@@ -50,7 +61,10 @@ def identity_fields(value):
     avatar = value["avatar_data_url"]
     if avatar is not None and (not isinstance(avatar, str) or not avatar.startswith("data:image/")):
         raise WatchdogError("Identity avatar must be a raster data URL or null.")
-    return {"name": value["name"].strip(), "color": value["color"].lower(), "avatar_data_url": avatar}
+    result = {"name": value["name"].strip(), "color": value["color"].lower(), "avatar_data_url": avatar}
+    if "user_name" in value:
+        result["user_name"] = normalize_user_name(value["user_name"])
+    return result
 
 
 def profile_fields(path):
@@ -93,6 +107,8 @@ def profile_fields(path):
         "avatar_sha256": hashlib.sha256(avatar_bytes).hexdigest() if avatar_bytes is not None else None,
         "revision": data.get("revision"),
     }
+    if "user_name" in data:
+        source["user_name"] = normalize_user_name(data["user_name"])
     return source
 
 
@@ -110,11 +126,14 @@ def uploaded_source_fields(identity):
             raise WatchdogError("Uploaded avatar is not a base64 image data URL.") from error
         if not avatar_bytes or len(avatar_bytes) > MAX_PROFILE_BYTES:
             raise WatchdogError("Uploaded avatar must contain 1 byte to 8 MiB of image data.")
-    return {
+    result = {
         "name": identity["name"], "color": identity["color"],
         "avatar_sha256": hashlib.sha256(avatar_bytes).hexdigest() if avatar_bytes is not None else None,
         "revision": None,
     }
+    if "user_name" in identity:
+        result["user_name"] = identity["user_name"]
+    return result
 
 
 def pilot_get(base_url, route):
@@ -301,12 +320,21 @@ def acknowledge_identity(path, lease, expected_file):
             expected = identity_fields(read_json(expected_file))
             if expected["name"] != source["name"] or expected["color"] != source["color"]:
                 raise WatchdogError("Uploaded identity does not match the Muse profile name/color.")
+            if "user_name" in source and expected.get("user_name") != source["user_name"]:
+                raise WatchdogError("Uploaded identity does not match the Muse profile user_name.")
             avatar = expected["avatar_data_url"]
             if (source["avatar_sha256"] is None) != (avatar is None):
                 raise WatchdogError("The full profile avatar must be synchronized, including explicit removal.")
         current = identity_fields(pilot_get(state["pilot_url"], "/assistant"))
-        if current != expected:
-            raise WatchdogError("Saved identity does not match the uploaded name/color/avatar; sync is incomplete.")
+        # Compare user_name when included in the expected upload payload (or when
+        # the pilot returned user_name and expected also specified user_name).
+        comparable_current = dict(current)
+        if "user_name" not in expected:
+            comparable_current.pop("user_name", None)
+        elif "user_name" not in comparable_current:
+            comparable_current["user_name"] = None
+        if comparable_current != expected:
+            raise WatchdogError("Saved identity does not match the uploaded name/color/avatar/user_name; sync is incomplete.")
         state["identity"] = {"source_fingerprint": fingerprint(source), "target_fingerprint": fingerprint(current)}
         state["pending"].pop("identity", None)
         save_state(path, state)
