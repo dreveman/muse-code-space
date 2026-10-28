@@ -241,11 +241,25 @@ export function formatLocalActionUrl(cfg: CodeSpaceExtensionConfig): string {
   return `${scheme}://127.0.0.1:${cfg.webPort}/actions`;
 }
 
+function ensureLoopbackNoProxy(): void {
+  const existing = (process.env.NO_PROXY || process.env.no_proxy || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const host of ["localhost", "127.0.0.1", "::1", "[::1]"]) {
+    if (!existing.includes(host)) existing.push(host);
+  }
+  const value = existing.join(",");
+  process.env.NO_PROXY = value;
+  process.env.no_proxy = value;
+}
+
 export async function invokeCodeSpaceAction<T = unknown>(
   cfg: CodeSpaceExtensionConfig,
   action: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  ensureLoopbackNoProxy();
   const url = formatLocalActionUrl(cfg);
   const res = await fetch(url, {
     method: "POST",
@@ -894,6 +908,7 @@ async function ensureRepoDependencies(
 }
 
 async function isHttpReachable(url: string, headers?: Record<string, string>): Promise<boolean> {
+  ensureLoopbackNoProxy();
   try {
     const res = await fetch(url, {
       headers,
@@ -904,6 +919,26 @@ async function isHttpReachable(url: string, headers?: Record<string, string>): P
   } catch {
     return false;
   }
+}
+
+function writePidFile(stateDir: string, name: string, pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    fs.writeFileSync(path.join(stateDir, `${name}.pid`), `${pid}\n`, { mode: 0o600 });
+  } catch {}
+}
+
+function killPidFile(stateDir: string, name: string): void {
+  const pidFile = path.join(stateDir, `${name}.pid`);
+  try {
+    const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+    if (Number.isFinite(pid) && pid > 1) {
+      process.kill(pid, "SIGTERM");
+    }
+  } catch {}
+  try {
+    fs.unlinkSync(pidFile);
+  } catch {}
 }
 
 export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
@@ -962,6 +997,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
               fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
             } catch {}
           });
+          writePidFile(cfg.stateDir, "pilot", spawnedPilot.pid);
           spawnedPilot.unref();
           for (let i = 0; i < 40; i++) {
             await new Promise((r) => setTimeout(r, 300));
@@ -1011,6 +1047,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
                 fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
               } catch {}
             });
+            writePidFile(cfg.stateDir, "web", spawnedWeb.pid);
             spawnedWeb.unref();
             for (let i = 0; i < 20; i++) {
               await new Promise((r) => setTimeout(r, 350));
@@ -1654,13 +1691,23 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         return;
       }
 
+      const stopAllServices = () => {
+        spawnedWeb?.kill();
+        spawnedPilot?.kill();
+        killPidFile(cfg.stateDir, "web");
+        killPidFile(cfg.stateDir, "pilot");
+        try {
+          spawnSync("pkill", ["-f", path.join(cfg.repoRoot, "dev", "server.ts")], { stdio: "ignore" });
+          spawnSync("pkill", ["-f", path.join(cfg.repoRoot, "pilot", "pilot.mjs")], { stdio: "ignore" });
+        } catch {}
+      };
+
       if (sub === "stop") {
         if (pollTimer) {
           clearInterval(pollTimer);
           pollTimer = null;
         }
-        spawnedWeb?.kill();
-        spawnedPilot?.kill();
+        stopAllServices();
         ctx.ui.notify("Stopped Muse Code Space background polling and spawned services.", "info");
         return;
       }
@@ -1670,8 +1717,8 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
           updatePersistedPilotEnv(cfg.stateDir, updates);
         }
         if (sub === "restart" || Object.keys(updates).length > 0) {
-          spawnedWeb?.kill();
-          spawnedPilot?.kill();
+          stopAllServices();
+          await new Promise((r) => setTimeout(r, 300));
           identitySynced = false;
         }
         let finishedSync = false;
