@@ -409,6 +409,13 @@ function museServeEnv(source = process.env) {
 }
 
 async function spawnHost() {
+  const authPath = `${HOME}/.config/muse-code-space-pilot/muse/auth.json`;
+  if (!RELAY_ENABLED && HOME && !existsSync(authPath)) {
+    try {
+      mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+      writeFileSync(authPath, '{"OPENAI_API_KEY":"sentinel-not-used-by-relay"}\n', { mode: 0o600 });
+    } catch { /* ignore on read-only test fs */ }
+  }
   const env = museServeEnv();
   const handshake = spawnMspConnection({
     command: MUSE_BIN,
