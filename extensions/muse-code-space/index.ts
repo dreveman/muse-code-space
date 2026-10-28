@@ -259,7 +259,10 @@ export async function invokeCodeSpaceAction<T = unknown>(
       actionCallId: `pi-ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     }),
     signal: AbortSignal.timeout(15_000),
-  });
+    // Loopback requests to https://127.0.0.1:<port> use the host's certificate
+    // (whose SAN is the machine hostname rather than 127.0.0.1).
+    tls: { rejectUnauthorized: false },
+  } as RequestInit);
   const body = (await res.json()) as { data?: T; error?: unknown };
   if (!res.ok || body.error) {
     throw new Error(typeof body.error === "string" ? body.error : `Action ${action} failed (${res.status})`);
@@ -895,7 +898,8 @@ async function isHttpReachable(url: string, headers?: Record<string, string>): P
     const res = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(1200),
-    });
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
     return res.ok;
   } catch {
     return false;
