@@ -684,7 +684,7 @@ async function runBunInstall(
       cwd,
       env: cleanEnv as NodeJS.ProcessEnv,
       logFd,
-      timeoutMs: 25_000,
+      timeoutMs: 180_000,
     });
     if (code === 0) return;
   }
@@ -693,7 +693,7 @@ async function runBunInstall(
     cwd,
     env: cleanEnv as NodeJS.ProcessEnv,
     logFd,
-    timeoutMs: 20_000,
+    timeoutMs: 120_000,
   });
   if (directCode === 0) return;
 
@@ -701,14 +701,14 @@ async function runBunInstall(
     cwd,
     env: baseEnv as NodeJS.ProcessEnv,
     logFd,
-    timeoutMs: 20_000,
+    timeoutMs: 120_000,
   });
 }
 
 function buildFallbackSpaceSdkTarball(stateDir: string): string {
-  const tgzPath = path.join(stateDir, "space-sdk-fallback-v3.tgz");
+  const tgzPath = path.join(stateDir, "space-sdk-fallback-v4.tgz");
   if (fs.existsSync(tgzPath)) return tgzPath;
-  const tarBase = path.join(stateDir, "space-sdk-fallback-v3");
+  const tarBase = path.join(stateDir, "space-sdk-fallback-v4");
   const pkgRoot = path.join(tarBase, "package");
   const distDir = path.join(pkgRoot, "dist");
   fs.mkdirSync(distDir, { recursive: true, mode: 0o700 });
@@ -728,6 +728,13 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
         dependencies: {
           "bun-plugin-tailwind": "0.0.15",
           zod: "4.4.3",
+        },
+        peerDependencies: {
+          "@libsql/client": "^0.14",
+          "@tanstack/react-query": "^5",
+          "drizzle-orm": "^0.45",
+          react: "^18 || ^19",
+          typescript: "^5",
         },
       },
       null,
@@ -834,15 +841,15 @@ async function ensureRepoDependencies(
   bunRuntime: { command: string; env: Record<string, string> },
   customEnv: Record<string, string>,
   logFd: number,
-): Promise<void> {
+): Promise<boolean> {
   const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
   const reactModuleDir = path.join(repoRoot, "node_modules", "react");
   const tailwindPluginDir = path.join(repoRoot, "node_modules", "bun-plugin-tailwind");
-  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir)) return;
+  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir)) return true;
 
   const pkgJsonPath = path.join(repoRoot, "package.json");
   const bunLockPath = path.join(repoRoot, "bun.lock");
-  if (!fs.existsSync(pkgJsonPath)) return;
+  if (!fs.existsSync(pkgJsonPath)) return false;
 
   const origPkg = fs.readFileSync(pkgJsonPath, "utf8");
   const origLock = fs.existsSync(bunLockPath) ? fs.readFileSync(bunLockPath, "utf8") : null;
@@ -851,25 +858,25 @@ async function ensureRepoDependencies(
 
   try {
     if (needsFallbackSdk) {
+      try {
+        fs.rmSync(sdkModuleDir, { recursive: true, force: true });
+        fs.rmSync(path.join(repoRoot, ".bun-cache", "@hatch"), { recursive: true, force: true });
+      } catch {}
       const fallbackTgz = buildFallbackSpaceSdkTarball(stateDir);
-      const parsedPkg = JSON.parse(origPkg) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      if (parsedPkg.dependencies) {
-        parsedPkg.dependencies["@hatch/space-sdk"] = `file:${fallbackTgz}`;
-        parsedPkg.dependencies["bun-plugin-tailwind"] = "0.0.15";
-      }
-      fs.writeFileSync(pkgJsonPath, `${JSON.stringify(parsedPkg, null, 2)}\n`);
-      // Remove bun.lock (lockfileVersion 2) during fallback install so Bun 1.3
-      // (pi.real) does not reject lockfileVersion 2; restored in finally.
+      fs.writeFileSync(pkgJsonPath, origPkg.replaceAll(hatchTgz, fallbackTgz));
       if (origLock !== null) {
-        try {
-          fs.unlinkSync(bunLockPath);
-        } catch {}
+        const patchedLock = origLock
+          .replace('"lockfileVersion": 2', '"lockfileVersion": 1')
+          .replaceAll(hatchTgz, fallbackTgz)
+          .replace(/("@hatch\/space-sdk":\s*\[[^\]]*,\s*)"sha512-[^"]*"(\s*\])/, '$1""$2');
+        fs.writeFileSync(bunLockPath, patchedLock);
       }
     }
     await runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
+  } catch (err) {
+    try {
+      fs.writeSync(logFd, `dependency install error: ${err instanceof Error ? err.message : String(err)}\n`);
+    } catch {}
   } finally {
     if (needsFallbackSdk) {
       try {
@@ -880,6 +887,7 @@ async function ensureRepoDependencies(
       }
     }
   }
+  return fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir);
 }
 
 async function isHttpReachable(url: string, headers?: Record<string, string>): Promise<boolean> {
@@ -975,39 +983,41 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         fs.mkdirSync(webDir, { recursive: true, mode: 0o700 });
         const logPath = path.join(cfg.stateDir, "web.log");
         const logFd = fs.openSync(logPath, "w");
-        await ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv, logFd);
-        try {
-          spawnedWeb = spawn(bunRuntime.command, [serverScript], {
-            cwd: cfg.repoRoot,
-            env: buildCleanServiceEnv(process.env, customEnv, {
-              ...bunRuntime.env,
-              MUSE_CODE_SPACE_PILOT_URL: cfg.pilotUrl,
-              MUSE_CODE_SPACE_DEV_HOST: cfg.webHost,
-              MUSE_CODE_SPACE_DEV_PORT: String(cfg.webPort),
-              MUSE_CODE_SPACE_DEV_DIR: webDir,
-              MUSE_CODE_SPACE_DEV_DB: dbPath,
-              MUSE_CODE_SPACE_WEB_TOKEN: cfg.webToken,
-              ...(cfg.tlsCert ? { MUSE_CODE_SPACE_TLS_CERT: cfg.tlsCert } : {}),
-              ...(cfg.tlsKey ? { MUSE_CODE_SPACE_TLS_KEY: cfg.tlsKey } : {}),
-            }),
-            stdio: ["ignore", logFd, logFd],
-            detached: true,
-          });
-          spawnedWeb.on("error", (err) => {
-            try {
-              fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
-            } catch {}
-          });
-          spawnedWeb.unref();
-          for (let i = 0; i < 20; i++) {
-            await new Promise((r) => setTimeout(r, 350));
-            webUp = await isHttpReachable(webCheckUrl, authHeaders);
-            if (webUp) break;
-          }
-        } catch (err) {
+        const depsReady = await ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv, logFd);
+        if (depsReady) {
           try {
-            fs.appendFileSync(logPath, `spawn error: ${err instanceof Error ? err.message : String(err)}\n`);
-          } catch {}
+            spawnedWeb = spawn(bunRuntime.command, [serverScript], {
+              cwd: cfg.repoRoot,
+              env: buildCleanServiceEnv(process.env, customEnv, {
+                ...bunRuntime.env,
+                MUSE_CODE_SPACE_PILOT_URL: cfg.pilotUrl,
+                MUSE_CODE_SPACE_DEV_HOST: cfg.webHost,
+                MUSE_CODE_SPACE_DEV_PORT: String(cfg.webPort),
+                MUSE_CODE_SPACE_DEV_DIR: webDir,
+                MUSE_CODE_SPACE_DEV_DB: dbPath,
+                MUSE_CODE_SPACE_WEB_TOKEN: cfg.webToken,
+                ...(cfg.tlsCert ? { MUSE_CODE_SPACE_TLS_CERT: cfg.tlsCert } : {}),
+                ...(cfg.tlsKey ? { MUSE_CODE_SPACE_TLS_KEY: cfg.tlsKey } : {}),
+              }),
+              stdio: ["ignore", logFd, logFd],
+              detached: true,
+            });
+            spawnedWeb.on("error", (err) => {
+              try {
+                fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
+              } catch {}
+            });
+            spawnedWeb.unref();
+            for (let i = 0; i < 20; i++) {
+              await new Promise((r) => setTimeout(r, 350));
+              webUp = await isHttpReachable(webCheckUrl, authHeaders);
+              if (webUp) break;
+            }
+          } catch (err) {
+            try {
+              fs.appendFileSync(logPath, `spawn error: ${err instanceof Error ? err.message : String(err)}\n`);
+            } catch {}
+          }
         }
       }
     }
