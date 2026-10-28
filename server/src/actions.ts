@@ -511,6 +511,13 @@ function companionIsFreeCondition(taskId: string, name: string) {
 const companionBusyMessage = (name: string) => `${name} is assigned to another session. Assign an available agent to resume this session.`;
 const PILOT_START_LEASE_MS = 30_000; // pilotRequest times out in 10s
 const PILOT_START_RETRY_MS = 5_000;
+// Repo-picked starts clone before admission. The pilot lets a progressing
+// clone run up to a 60-minute ceiling (killed only after 5 minutes without
+// progress), so the admission request timeout and the retry lease must
+// outlast that ceiling — otherwise the app aborts and retries a clone the
+// pilot would have finished.
+const REPO_CLONE_START_TIMEOUT_MS = 65 * 60_000;
+const REPO_CLONE_START_LEASE_MS = REPO_CLONE_START_TIMEOUT_MS + 5 * 60_000;
 
 // Sessions normally store their explicit workspaceRoot. The fallback is only
 // for old rows that predate that column; it does not move any saved workspace.
@@ -861,8 +868,9 @@ async function startPilotAgent(baseUrl: string, row: PilotStartRow) {
       }),
     },
     pilotSessionResponseSchema,
-    // A clone can take far longer than the usual 10s admission budget.
-    row.repoSlug ? 120_000 : 10_000,
+    // A clone can take far longer than the usual 10s admission budget;
+    // REPO_CLONE_START_TIMEOUT_MS outlasts the pilot's clone ceiling.
+    row.repoSlug ? REPO_CLONE_START_TIMEOUT_MS : 10_000,
   );
 }
 
@@ -918,7 +926,7 @@ async function startOneQueuedAgent(ctx: Ctx, id?: string): Promise<{ started: nu
     .update(schema.sessions)
     // A repo clone can hold the start attempt well past the usual lease;
     // the pilot dedupes by workspaceName, so a longer lease is safe.
-    .set({ pilotRetryAt: new Date(Date.now() + (row.repoSlug ? 150_000 : PILOT_START_LEASE_MS)) })
+    .set({ pilotRetryAt: new Date(Date.now() + (row.repoSlug ? REPO_CLONE_START_LEASE_MS : PILOT_START_LEASE_MS)) })
     .where(and(eq(schema.sessions.id, row.id), eq(schema.sessions.status, "queued"),
       isNull(schema.sessions.pilotSessionId),
       or(isNull(schema.sessions.pilotRetryAt), lte(schema.sessions.pilotRetryAt, now))))
@@ -3173,7 +3181,7 @@ export const Actions = {
             gitAuthorName: args.git_author?.name ?? null,
             gitAuthorEmail: args.git_author?.email ?? null,
             status: "queued",
-            pilotRetryAt: new Date(Date.now() + (repoSlug ? 150_000 : PILOT_START_LEASE_MS)),
+            pilotRetryAt: new Date(Date.now() + (repoSlug ? REPO_CLONE_START_LEASE_MS : PILOT_START_LEASE_MS)),
             startedAt: now,
             updatedAt: now,
             archived: false,

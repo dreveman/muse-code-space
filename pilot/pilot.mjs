@@ -53,7 +53,7 @@ import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { runGithubAppSetup } from "./githubAppSetup.mjs";
-import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
+import { CLONE_MAX_DURATION_MS, CLONE_STALL_TIMEOUT_MS, cloneTimeoutReason, ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
 import { readGitVcsStatus } from "./vcsSmartlog.mjs";
 import {
   createPreviewWsManager,
@@ -1312,22 +1312,33 @@ function gitCloneRepo(cloneUrl, dir, onProgress) {
     });
     let stderrTail = "";
     let progressState = { phase: "Cloning", percent: null, transferred: null };
-    const timer = setTimeout(() => {
+    // No fixed short cap: a large clone that keeps producing progress runs
+    // until it finishes. It is killed only after CLONE_STALL_TIMEOUT_MS
+    // without any output, or at the CLONE_MAX_DURATION_MS ceiling.
+    const startedAt = Date.now();
+    let lastProgressAt = startedAt;
+    const watchdog = setInterval(() => {
+      const reason = cloneTimeoutReason({ startedAt, lastProgressAt, now: Date.now() });
+      if (!reason) return;
+      clearInterval(watchdog);
       child.kill("SIGTERM");
-      reject(new Error("git clone timed out after 120s"));
-    }, 120_000);
+      reject(new Error(reason === "stalled"
+        ? `git clone stalled: no progress for ${Math.round(CLONE_STALL_TIMEOUT_MS / 60_000)} minutes`
+        : `git clone timed out after ${Math.round(CLONE_MAX_DURATION_MS / 60_000)} minutes`));
+    }, 15_000);
     child.stderr.on("data", (chunk) => {
+      lastProgressAt = Date.now();
       const text = chunk.toString("utf8");
       stderrTail = (stderrTail + text).slice(-4000);
       progressState = parseGitCloneProgress(text, progressState);
       if (typeof onProgress === "function") onProgress(progressState);
     });
     child.on("error", (error) => {
-      clearTimeout(timer);
+      clearInterval(watchdog);
       reject(new Error(String(error?.message ?? error).slice(0, 240)));
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      clearInterval(watchdog);
       if (code === 0) {
         resolve();
         return;
@@ -2027,6 +2038,8 @@ async function createPilotSessionInner(body, appSessionId) {
           repo: repoPick,
           gitClone: gitCloneRepo,
           gitOrigin: (dir) => gitRead(dir, ["config", "--get", "remote.origin.url"]),
+          gitHead: (dir) => gitRead(dir, ["rev-parse", "--verify", "HEAD"]),
+          removeDir: (dir) => { rmSync(dir, { recursive: true, force: true }); },
           listDir: workspaceEntries,
           onProgress: (progress) => {
             activeClones.set(cloneKey, {
