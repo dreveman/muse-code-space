@@ -22,6 +22,12 @@ import { countsAsUnread } from "./transcriptVisibility";
 import { parseToolDetails, toolDetailsFromItem, type ToolDetails } from "./toolDetails";
 import { ownedArtifactPaths } from "./ownedArtifacts";
 import { ownedPullRequestsFromEvents } from "./ownedPullRequests";
+import {
+  applyPrMonitorSnapshot,
+  createdPullRequestFromToolEvent,
+  summarizeCompanionStatistics,
+  type TrackedPr,
+} from "./companionStatistics";
 import { validateAssistantAvatar } from "./assistantAvatar.mjs";
 import { pilotRequest, isPilotUnavailable, readPilotModels } from "./pilotRequest";
 import { parseRepoSlug } from "./repoSlug";
@@ -251,6 +257,7 @@ const pilotPollResponseSchema = z.object({
       title: z.string(), url: z.string(), status: z.string(),
       checks: z.object({ passed: z.number(), failed: z.number(), pending: z.number(), failing: z.array(z.string()) }),
       approvals: z.number(), comments: z.number(),
+      additions: z.number().nullable().optional(), deletions: z.number().nullable().optional(), filesChanged: z.number().nullable().optional(),
       changes: z.array(z.object({ at: z.string(), text: z.string() })),
       startedAt: z.string(), updatedAt: z.string(),
     }).optional(),
@@ -712,6 +719,105 @@ async function projectBriefingFor(db: CompanionDb, projectId: string | null | un
 async function assignableCompanionByName(db: CompanionDb, name: string): Promise<AssignableCompanion | undefined> {
   const key = companionNameKey(name);
   return (await assignableCompanions(db)).find((companion) => companionNameKey(companion.name) === key);
+}
+
+// --- Companion statistics -------------------------------------------------
+// Counters are incremented live as events are ingested (see syncPilotEvents,
+// sendInput, continueSession, createSession) and stored in their own tables.
+// Nothing here ever reads old transcripts, so pre-tracking work is never
+// counted. Statistics writes are best-effort: they must never fail the
+// session flow they ride along with.
+
+type CompanionStatisticsDelta = {
+  linesAdded?: number;
+  linesRemoved?: number;
+  filesChanged?: number;
+  toolCalls?: number;
+  userTurns?: number;
+  runtimeMs?: number;
+};
+
+async function guardCompanionStatistics(work: () => Promise<void>): Promise<void> {
+  try {
+    await work();
+  } catch { /* statistics are best-effort and never break a session */ }
+}
+
+async function bumpCompanionStatistics(db: CompanionDb, companionId: string, delta: CompanionStatisticsDelta, activeAt?: Date): Promise<void> {
+  const now = new Date();
+  await db.insert(schema.companionStatistics).values({ companionId, createdAt: now, updatedAt: now }).onConflictDoNothing();
+  await db.update(schema.companionStatistics).set({
+    linesAdded: sql`${schema.companionStatistics.linesAdded} + ${delta.linesAdded ?? 0}`,
+    linesRemoved: sql`${schema.companionStatistics.linesRemoved} + ${delta.linesRemoved ?? 0}`,
+    filesChanged: sql`${schema.companionStatistics.filesChanged} + ${delta.filesChanged ?? 0}`,
+    toolCalls: sql`${schema.companionStatistics.toolCalls} + ${delta.toolCalls ?? 0}`,
+    userTurns: sql`${schema.companionStatistics.userTurns} + ${delta.userTurns ?? 0}`,
+    runtimeMs: sql`${schema.companionStatistics.runtimeMs} + ${delta.runtimeMs ?? 0}`,
+    ...(activeAt ? { lastActiveAt: activeAt } : {}),
+    updatedAt: now,
+  }).where(eq(schema.companionStatistics.companionId, companionId));
+}
+
+async function recordCompanionUserTurn(db: CompanionDb, sessionTitle: string, at: Date): Promise<void> {
+  await guardCompanionStatistics(async () => {
+    const companion = await assignableCompanionByName(db, sessionTitle);
+    if (companion) await bumpCompanionStatistics(db, companion.id, { userTurns: 1 }, at);
+  });
+}
+
+async function recordTrackedPrCreation(db: CompanionDb, companionId: string, created: { repo: string; number: number }, at: Date): Promise<void> {
+  const now = new Date();
+  await db.insert(schema.companionTrackedPrs).values({
+    id: `${created.repo.toLowerCase()}#${created.number}`,
+    companionId,
+    repo: created.repo,
+    prNumber: created.number,
+    state: "open",
+    createdAt: at,
+    updatedAt: now,
+  }).onConflictDoNothing();
+}
+
+async function recordTrackedPrSnapshot(db: CompanionDb, monitor: {
+  owner: string; repo: string; number: number; status: string;
+  additions?: number | null; deletions?: number | null; filesChanged?: number | null;
+}, at: Date): Promise<void> {
+  const id = `${monitor.owner}/${monitor.repo}#${monitor.number}`.toLowerCase();
+  const rows = await db.select().from(schema.companionTrackedPrs).where(eq(schema.companionTrackedPrs.id, id)).limit(1);
+  const row = rows[0];
+  if (!row) return; // Created before tracking landed, or by an untracked path.
+  const tracked: TrackedPr = {
+    companionId: row.companionId,
+    repo: row.repo,
+    number: row.prNumber,
+    state: row.state,
+    linesCounted: row.linesCounted,
+    additions: row.additions,
+    deletions: row.deletions,
+    filesChanged: row.filesChanged,
+  };
+  const { tracked: next, linesDelta } = applyPrMonitorSnapshot(tracked, {
+    status: monitor.status,
+    additions: monitor.additions ?? null,
+    deletions: monitor.deletions ?? null,
+    filesChanged: monitor.filesChanged ?? null,
+  });
+  await db.update(schema.companionTrackedPrs).set({
+    state: next.state,
+    linesCounted: next.linesCounted,
+    additions: next.additions,
+    deletions: next.deletions,
+    filesChanged: next.filesChanged,
+    ...(next.state === "merged" && row.state !== "merged" ? { mergedAt: at } : {}),
+    updatedAt: new Date(),
+  }).where(eq(schema.companionTrackedPrs.id, id));
+  if (linesDelta) {
+    await bumpCompanionStatistics(db, row.companionId, {
+      linesAdded: linesDelta.additions,
+      linesRemoved: linesDelta.deletions,
+      filesChanged: linesDelta.filesChanged,
+    }, at);
+  }
 }
 
 async function resolveCompanionModel(ctx: Ctx, companion: AssignableCompanion,
@@ -2829,6 +2935,62 @@ export const Actions = {
     },
   }),
 
+  // Global lifetime statistics per companion, read only from the statistics
+  // tables (no transcript access). Companions with no tracked work yet
+  // report zeros.
+  getCompanionStatistics: defineAction({
+    request: z.object({}),
+    response: z.object({
+      statistics: z.array(z.object({
+        companion_id: z.string(),
+        prs_created: z.number().int().nonnegative(),
+        prs_merged: z.number().int().nonnegative(),
+        prs_closed: z.number().int().nonnegative(),
+        prs_open: z.number().int().nonnegative(),
+        merge_rate: z.number().min(0).max(1).nullable(),
+        lines_added: z.number().int().nonnegative(),
+        lines_removed: z.number().int().nonnegative(),
+        net_lines: z.number().int(),
+        files_changed: z.number().int().nonnegative(),
+        tool_calls: z.number().int().nonnegative(),
+        user_turns: z.number().int().nonnegative(),
+        runtime_ms: z.number().int().nonnegative(),
+        last_active_at: z.string().nullable(),
+      })),
+    }),
+    async handler(ctx) {
+      const db = ctx.db<typeof schema>();
+      const companions = await assignableCompanions(db);
+      const counterRows = await db.select().from(schema.companionStatistics);
+      const countersById = new Map(counterRows.map((row) => [row.companionId, row]));
+      const prRows = await db.select().from(schema.companionTrackedPrs);
+      const prsByCompanion = new Map<string, TrackedPr[]>();
+      for (const row of prRows) {
+        const tracked: TrackedPr = {
+          companionId: row.companionId, repo: row.repo, number: row.prNumber, state: row.state,
+          linesCounted: row.linesCounted, additions: row.additions, deletions: row.deletions, filesChanged: row.filesChanged,
+        };
+        const list = prsByCompanion.get(row.companionId) ?? [];
+        list.push(tracked);
+        prsByCompanion.set(row.companionId, list);
+      }
+      return {
+        statistics: companions.map((companion) => {
+          const counters = countersById.get(companion.id);
+          return summarizeCompanionStatistics(companion.id, counters ? {
+            linesAdded: counters.linesAdded,
+            linesRemoved: counters.linesRemoved,
+            filesChanged: counters.filesChanged,
+            toolCalls: counters.toolCalls,
+            userTurns: counters.userTurns,
+            runtimeMs: counters.runtimeMs,
+            lastActiveAt: counters.lastActiveAt?.toISOString() ?? null,
+          } : null, prsByCompanion.get(companion.id) ?? []);
+        }),
+      };
+    },
+  }),
+
   createCompanion: defineAction({
     request: z.object({
       companion_id: z.string().trim().min(1).max(200),
@@ -3046,6 +3208,9 @@ export const Actions = {
           content: prompt,
           toolDetails: serializeUserAttachments(args.attachments),
           createdAt: now,
+        });
+        await guardCompanionStatistics(async () => {
+          await bumpCompanionStatistics(db, agent.id, { userTurns: 1 }, now);
         });
 
         try {
@@ -3420,6 +3585,7 @@ export const Actions = {
       const rows = await db
         .select({
           id: schema.sessions.id,
+          title: schema.sessions.title,
           archived: schema.sessions.archived,
           status: schema.sessions.status,
           pilotSessionId: schema.sessions.pilotSessionId,
@@ -3477,6 +3643,7 @@ export const Actions = {
         .returning({ id: schema.outputEvents.id });
       const event = inserted[0];
       if (!event) return { ok: false, id: null, error: "Direction was not sent" };
+      await recordCompanionUserTurn(db, session.title, now);
 
       await db
         .update(schema.sessions)
@@ -3609,6 +3776,7 @@ export const Actions = {
               error: "Continuation was not saved",
             };
           }
+          await recordCompanionUserTurn(db, session.title, now);
           await db
             .update(schema.sessions)
             .set({
@@ -3651,6 +3819,7 @@ export const Actions = {
             error: "Continuation was not saved",
           };
         }
+        await recordCompanionUserTurn(db, session.title, now);
 
         await db
           .update(schema.sessions)
@@ -4010,11 +4179,13 @@ export const Actions = {
       const rows = await db
         .select({
           id: schema.sessions.id,
+          title: schema.sessions.title,
           status: schema.sessions.status,
           pilotSessionId: schema.sessions.pilotSessionId,
           pilotSeq: schema.sessions.pilotSeq,
           pilotBackendId: schema.sessions.pilotBackendId,
           updatedAt: schema.sessions.updatedAt,
+          startedAt: schema.sessions.startedAt,
           needsUserInput: schema.sessions.needsUserInput,
         })
         .from(schema.sessions)
@@ -4063,6 +4234,17 @@ export const Actions = {
       let activityAt: Date | null = null;
       const recordActivity = (at: Date) => {
         if (at > session.updatedAt && (!activityAt || at > activityAt)) activityAt = at;
+      };
+      // The companion this session is assigned to, resolved once per sync.
+      // Every non-archived session has one; undefined means the title matches
+      // no companion, in which case statistics simply record nothing.
+      let statsCompanionId: string | null | undefined;
+      const resolveStatsCompanionId = async (): Promise<string | null> => {
+        if (statsCompanionId === undefined) {
+          const companion = await assignableCompanionByName(db, session.title).catch(() => undefined);
+          statsCompanionId = companion?.id ?? null;
+        }
+        return statsCompanionId;
       };
 
       for (const event of newEvents) {
@@ -4177,6 +4359,17 @@ export const Actions = {
               });
             }
             if (!existing || existing.content !== toolContent || existing.toolDetails !== toolDetails || (!running && !existing.finishedAt)) outputChanges += 1;
+            // Statistics: count each tool call once, when it first reaches
+            // a terminal revision, and register any PR it created.
+            if (!running && (!existing || !existing.finishedAt)) {
+              await guardCompanionStatistics(async () => {
+                const companionId = await resolveStatsCompanionId();
+                if (!companionId) return;
+                await bumpCompanionStatistics(db, companionId, { toolCalls: 1 }, itemAt);
+                const created = createdPullRequestFromToolEvent({ kind: "tool", tool_details: parseToolDetails(toolDetails) });
+                if (created) await recordTrackedPrCreation(db, companionId, created, itemAt);
+              });
+            }
             added += 1;
             if (nextStatus === "queued") nextStatus = "running";
             continue;
@@ -4355,6 +4548,11 @@ export const Actions = {
             });
             outputChanges += 1;
           }
+          // Statistics: fold the snapshot into the tracked PR (a no-op for
+          // PRs created before tracking landed).
+          await guardCompanionStatistics(async () => {
+            await recordTrackedPrSnapshot(db, event.monitor!, itemAt);
+          });
           added += 1;
           continue;
         }
@@ -4420,6 +4618,24 @@ export const Actions = {
           ))
           .returning({ id: schema.outputEvents.id });
         if (finishedTools.length > 0) outputChanges += 1;
+      }
+
+      // Statistics: add this session's runtime the first time it reaches a
+      // terminal state. The marker row keeps a resumed session that ends
+      // again from being counted twice.
+      if (terminalAt) {
+        await guardCompanionStatistics(async () => {
+          const companionId = await resolveStatsCompanionId();
+          if (!companionId) return;
+          const inserted = await db.insert(schema.companionCountedSessions)
+            .values({ sessionId: session.id, companionId, countedAt: new Date() })
+            .onConflictDoNothing()
+            .returning({ sessionId: schema.companionCountedSessions.sessionId });
+          if (inserted.length > 0) {
+            const runtimeMs = Math.max(0, terminalAt.getTime() - session.startedAt.getTime());
+            await bumpCompanionStatistics(db, companionId, { runtimeMs }, terminalAt);
+          }
+        });
       }
 
       await db

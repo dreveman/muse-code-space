@@ -217,6 +217,17 @@ test("repeated poll failures stop the monitor with an error row and notice", asy
   assert.match(notifications.at(-1).changes[0], /monitoring stopped/);
 });
 
+test("snapshot carries the PR diff totals for companion statistics", () => {
+  const withTotals = prSnapshot(pr({ additions: 120, deletions: 30, changed_files: 4 }), [], [], [], []);
+  assert.equal(withTotals.additions, 120);
+  assert.equal(withTotals.deletions, 30);
+  assert.equal(withTotals.filesChanged, 4);
+  const without = prSnapshot(pr(), [], [], [], []);
+  assert.equal(without.additions, null);
+  assert.equal(without.deletions, null);
+  assert.equal(without.filesChanged, null);
+});
+
 test("snapshot and change helpers handle the terminal wording", () => {
   const open = prSnapshot(pr(), [run("a", "completed", "success")], [], [], []);
   const merged = prSnapshot(pr({ state: "closed", merged_at: "x" }), [], [], [], []);

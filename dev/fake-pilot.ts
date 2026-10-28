@@ -311,6 +311,11 @@ function startFakePrMonitor(session: Session, prNumbers: number[] = [6, 7]) {
     url: `https://github.com/${slug}/pull/${num}`,
     approvals: idx === 0 ? 0 : 1,
     comments: idx === 0 ? 1 : 0,
+    // Diff totals, mirroring pilot/prMonitor.mjs monitor rows, so companion
+    // statistics can count lines when the fake PR merges.
+    additions: 120 + idx * 45,
+    deletions: 30 + idx * 10,
+    filesChanged: 4 + idx * 2,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }));
