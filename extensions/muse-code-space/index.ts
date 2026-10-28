@@ -523,6 +523,42 @@ export function resolveBunRuntime(
   return { command: resolvedExec, env: { BUN_BE_BUN: "1" } };
 }
 
+function findExecutableInPath(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const pathDirs = (env.PATH ?? "").split(path.delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    const candidate = path.join(dir, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+  return null;
+}
+
+export function resolvePilotJsRuntime(
+  bunRuntime: { command: string; env: Record<string, string> },
+  env: NodeJS.ProcessEnv = process.env,
+): { command: string; env: Record<string, string> } {
+  const nodeBin = findExecutableInPath("node", env);
+  if (nodeBin) {
+    try {
+      const check = spawnSync(
+        nodeBin,
+        ["-e", "process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)"],
+        { timeout: 2000, stdio: "ignore" },
+      );
+      if (check.status === 0) {
+        return { command: nodeBin, env: {} };
+      }
+    } catch {
+      // fall back to bunRuntime
+    }
+  }
+  return bunRuntime;
+}
+
 function runBunInstall(
   cwd: string,
   bunRuntime: { command: string; env: Record<string, string> },
@@ -543,7 +579,7 @@ function runBunInstall(
 
   // If an outer launcher set a loopback-only HTTP(S)_PROXY that blocks package
   // registries (403) and the user did not explicitly set a proxy in customEnv,
-  // retry without the loopback proxy variables.
+  // retry without the loopback proxy variables (and via `with-proxy` if present).
   const proxyVal = baseEnv.HTTPS_PROXY || baseEnv.https_proxy || baseEnv.HTTP_PROXY || baseEnv.http_proxy || "";
   const hasCustomProxy = Boolean(
     customEnv.HTTPS_PROXY || customEnv.https_proxy || customEnv.HTTP_PROXY || customEnv.http_proxy,
@@ -552,6 +588,15 @@ function runBunInstall(
     const cleanEnv = { ...baseEnv };
     for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
       delete cleanEnv[k];
+    }
+    const withProxyBin = findExecutableInPath("with-proxy", process.env);
+    if (withProxyBin) {
+      const viaWrapper = spawnSync(withProxyBin, [bunRuntime.command, "install"], {
+        cwd,
+        env: cleanEnv as NodeJS.ProcessEnv,
+        stdio: ["ignore", logFd, logFd],
+      });
+      if (viaWrapper.status === 0) return;
     }
     spawnSync(bunRuntime.command, ["install"], {
       cwd,
@@ -562,9 +607,9 @@ function runBunInstall(
 }
 
 function buildFallbackSpaceSdkTarball(stateDir: string): string {
-  const tgzPath = path.join(stateDir, "space-sdk-fallback.tgz");
+  const tgzPath = path.join(stateDir, "space-sdk-fallback-v2.tgz");
   if (fs.existsSync(tgzPath)) return tgzPath;
-  const pkgRoot = path.join(stateDir, "space-sdk-fallback");
+  const pkgRoot = path.join(stateDir, "space-sdk-fallback-v2");
   const distDir = path.join(pkgRoot, "dist");
   fs.mkdirSync(distDir, { recursive: true, mode: 0o700 });
 
@@ -579,6 +624,10 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
           ".": "./dist/index.js",
           "./client": "./dist/client.js",
           "./styles.css": "./styles.css",
+        },
+        dependencies: {
+          "bun-plugin-tailwind": "0.0.15",
+          zod: "4.4.3",
         },
       },
       null,
@@ -688,7 +737,8 @@ function ensureRepoDependencies(
 ): void {
   const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
   const reactModuleDir = path.join(repoRoot, "node_modules", "react");
-  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir)) return;
+  const tailwindPluginDir = path.join(repoRoot, "node_modules", "bun-plugin-tailwind");
+  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir)) return;
 
   const pkgJsonPath = path.join(repoRoot, "package.json");
   const bunLockPath = path.join(repoRoot, "bun.lock");
@@ -702,8 +752,12 @@ function ensureRepoDependencies(
   try {
     if (needsFallbackSdk) {
       const fallbackTgz = buildFallbackSpaceSdkTarball(stateDir);
-      const patchedPkg = origPkg.replace(`file:${hatchTgz}`, `file:${fallbackTgz}`);
+      const patchedPkg = origPkg.replaceAll(`file:${hatchTgz}`, `file:${fallbackTgz}`);
       fs.writeFileSync(pkgJsonPath, patchedPkg);
+      if (origLock !== null) {
+        const patchedLock = origLock.replaceAll(`file:${hatchTgz}`, `file:${fallbackTgz}`);
+        fs.writeFileSync(bunLockPath, patchedLock);
+      }
     }
     runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
   } finally {
@@ -765,12 +819,14 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         if (!fs.existsSync(sdkDir)) {
           runBunInstall(pilotDir, bunRuntime, customEnv, logFd);
         }
+        const pilotRuntime = resolvePilotJsRuntime(bunRuntime, process.env);
         try {
-          spawnedPilot = spawn("node", [pilotScript], {
+          spawnedPilot = spawn(pilotRuntime.command, [pilotScript], {
             cwd: cfg.repoRoot,
             env: {
               ...process.env,
               ...customEnv,
+              ...pilotRuntime.env,
               MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
               MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
               MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,

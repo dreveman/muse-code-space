@@ -44,7 +44,7 @@ import { createServer } from "node:http";
 import { get as httpsGet, request as httpsRequest } from "node:https";
 import { execFile, spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync, rmSync } from "node:fs";
-import { createHash, getRandomValues } from "node:crypto";
+import { createHash, randomFillSync } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
@@ -1412,7 +1412,7 @@ const surfacedInputs = new Map();
 
 // UUIDv7 for the SS3.1.1 idempotency handle the answer/cancel verbs require.
 function uuidv7() {
-  const bytes = getRandomValues(new Uint8Array(16));
+  const bytes = randomFillSync(new Uint8Array(16));
   const ms = Date.now();
   bytes[0] = Math.floor(ms / 2 ** 40) & 0xff;
   bytes[1] = Math.floor(ms / 2 ** 32) & 0xff;
