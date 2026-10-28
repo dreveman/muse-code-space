@@ -1,6 +1,8 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "./api";
 import { agentNameHue } from "./agentColor";
-import { artworkForCompanionName, companions, type Companion } from "./Companions";
+import { artworkForCompanionName, CompanionAccomplishmentsRow, companions, type Companion } from "./Companions";
 import {
   isAnimationPreloaded,
   isIdleMotionAllowed,
@@ -273,6 +275,16 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
   const [mounted, setMounted] = useState(false);
   const [visibleOpen, setVisibleOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"activity" | "companion">("activity");
+  const [accomplishmentsOpen, setAccomplishmentsOpen] = useState(false);
+  const statisticsQuery = useQuery({
+    queryKey: ["companion-statistics"],
+    queryFn: () => api.getCompanionStatistics({}),
+    enabled: mounted,
+    staleTime: 5000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const statistics = statisticsQuery.data?.statistics.find((row) => row.companion_id === companion?.id) ?? null;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [soulOpen, setSoulOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -448,6 +460,9 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
             <div className="companion-card-access">
               <p className="companion-phone-description">{companion.description}</p>
             </div>
+
+            <CompanionAccomplishmentsRow statistics={statistics} expanded={accomplishmentsOpen}
+              onToggle={() => setAccomplishmentsOpen((value) => !value)} />
 
             <div className="transcript-companion-tabs filter-bar" role="tablist" aria-label="Companion view">
               <button

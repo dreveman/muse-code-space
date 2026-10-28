@@ -4,6 +4,7 @@ import { companionArtwork, type CompanionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
 import { companionModelAccess, computeCompanionStats, PAID_COMPANION_MODELS, type CompanionStats } from "../../server/src/companionModels";
+import { companionAccomplishments, type AccomplishmentIcon, type CompanionStatisticsSummary } from "../../server/src/companionStatistics";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
 import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
@@ -143,6 +144,91 @@ function CompanionRatings({ companion }: { companion: Companion }) {
   );
 }
 
+function formatCompactCount(value: number): string {
+  if (value < 1000) return `${value}`;
+  if (value < 1_000_000) {
+    const scaled = value / 1000;
+    return `${Number.isInteger(scaled) ? scaled : scaled.toFixed(1)}k`;
+  }
+  const scaled = value / 1_000_000;
+  return `${Number.isInteger(scaled) ? scaled : scaled.toFixed(1)}M`;
+}
+
+function AccomplishmentIcon({ kind }: { kind: AccomplishmentIcon }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {kind === "trophy" && <>
+        <path d="M8 21h8" /><path d="M12 16.5V21" /><path d="M9.5 21 10 16.5h4L14.5 21" />
+        <path d="M7 4h10v5.5a5 5 0 0 1-10 0V4Z" />
+        <path d="M7 5.5H3.8v1.2A4.3 4.3 0 0 0 7.2 11" /><path d="M17 5.5h3.2v1.2A4.3 4.3 0 0 1 16.8 11" />
+      </>}
+      {kind === "medal" && <>
+        <circle cx="12" cy="14.5" r="5" />
+        <path d="M9.2 10.3 6.5 3h4l1.5 4.2L13.5 3h4l-2.7 7.3" />
+      </>}
+      {kind === "badge" && <>
+        <circle cx="12" cy="9.5" r="5.5" />
+        <path d="m8.8 13.8-1.6 7 4.8-2.6 4.8 2.6-1.6-7" />
+      </>}
+    </svg>
+  );
+}
+
+const ACCOMPLISHMENT_TIER_NAMES: Record<AccomplishmentIcon, string> = {
+  badge: "Badge", medal: "Medal", trophy: "Trophy",
+};
+
+function AccomplishmentMilestones({ statistics }: { statistics: CompanionStatisticsSummary }) {
+  const items = companionAccomplishments(statistics);
+  return (
+    <ul className="companion-accomplishment-list">
+      {items.map((item) => (
+        <li key={item.id} className={`companion-accomplishment${item.earnedThreshold > 0 ? " is-earned" : ""}`}>
+          <span className="companion-accomplishment-icon"><AccomplishmentIcon kind={item.icon} /></span>
+          <span className="companion-accomplishment-label">{item.label}</span>
+          <span className="companion-accomplishment-progress">
+            {item.earnedThreshold > 0
+              ? `${ACCOMPLISHMENT_TIER_NAMES[item.icon]} · ${formatCompactCount(item.current)}${item.nextThreshold ? ` · next at ${formatCompactCount(item.nextThreshold)}` : " · highest tier"}`
+              : `Not yet · ${formatCompactCount(item.current)} / ${item.nextThreshold ? formatCompactCount(item.nextThreshold) : ""}`}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Compact single row of accomplishments (icons + numbers) that expands to
+// the milestone details. Used in the conversation companion card.
+export function CompanionAccomplishmentsRow({ statistics, expanded, onToggle }: {
+  statistics?: CompanionStatisticsSummary | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  if (!statistics) return null;
+  const items = companionAccomplishments(statistics);
+  const earned = items.filter((item) => item.earnedThreshold > 0).length;
+  const linesItem = items.find((item) => item.id === "lines-shipped");
+  return (
+    <div className="companion-accomplishments">
+      <button type="button" className="companion-accomplishments-row" aria-expanded={expanded} onClick={onToggle}
+        aria-label={`Accomplishments: ${statistics.prs_merged} PRs landed, ${statistics.lines_added} lines shipped, ${earned} of ${items.length} milestones earned. ${expanded ? "Hide" : "Show"} details.`}>
+        <span className="companion-accomplishments-item" title="PRs landed">
+          <AccomplishmentIcon kind="trophy" />{formatCompactCount(statistics.prs_merged)}
+        </span>
+        <span className="companion-accomplishments-item" title="Lines shipped">
+          <AccomplishmentIcon kind={linesItem?.icon ?? "badge"} />{formatCompactCount(statistics.lines_added)}
+        </span>
+        <span className="companion-accomplishments-item" title="Milestones earned">
+          <AccomplishmentIcon kind="badge" />{earned}/{items.length}
+        </span>
+        <span className="companion-accomplishments-label">Accomplishments</span>
+        <span className={`companion-accomplishments-chevron${expanded ? " is-open" : ""}`} aria-hidden="true">›</span>
+      </button>
+      {expanded && <AccomplishmentMilestones statistics={statistics} />}
+    </div>
+  );
+}
+
 let savedDetailsOpen = false;
 let savedSoulOpen = false;
 let savedSpacing: { skills?: string; details?: string } = {};
@@ -177,6 +263,7 @@ const CompanionCard = memo(function CompanionCard({
   companion,
   visible,
   models,
+  statistics,
   detailsOpen,
   onToggleDetails,
   soulOpen,
@@ -185,12 +272,14 @@ const CompanionCard = memo(function CompanionCard({
   companion: Companion;
   visible: boolean;
   models?: readonly { id: string }[];
+  statistics?: CompanionStatisticsSummary | null;
   detailsOpen: boolean;
   onToggleDetails: (next: boolean) => void;
   soulOpen: boolean;
   onToggleSoul: (next: boolean) => void;
 }) {
   const cardRef = useRef<HTMLElement>(null);
+  const [accomplishmentsOpen, setAccomplishmentsOpen] = useState(false);
   const [idleMotionAllowed, setIdleMotionAllowed] = useState(isIdleMotionAllowed);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const access = companionModelAccess(companion, models);
@@ -227,6 +316,8 @@ const CompanionCard = memo(function CompanionCard({
         <CompanionAccessNotice access={access} modelName={displayModelLabel(companion.model.preferredId)} compact />
         {(access.status === "ready" || detailsOpen) && <p className="companion-phone-description">{companion.description}</p>}
       </div>
+      <CompanionAccomplishmentsRow statistics={statistics} expanded={accomplishmentsOpen}
+        onToggle={() => setAccomplishmentsOpen((value) => !value)} />
       <CompanionRatings companion={companion} />
       <section className="companion-skills" aria-labelledby="companion-skills-heading">
         <h3 id="companion-skills-heading">Best at</h3>
@@ -288,10 +379,11 @@ export function CompanionContact({ companion, selected, disabled, models, onSele
   );
 }
 
-export function CompanionWelcome({ companion, visible, models, availableIds, onBrowse, browsingDisabled, composer, onBack, actions }: {
+export function CompanionWelcome({ companion, visible, models, statistics, availableIds, onBrowse, browsingDisabled, composer, onBack, actions }: {
   companion: Companion;
   visible: boolean;
   models?: readonly { id: string }[];
+  statistics?: CompanionStatisticsSummary | null;
   availableIds: string[];
   onBrowse: (id: string) => void;
   browsingDisabled?: boolean;
@@ -342,6 +434,7 @@ export function CompanionWelcome({ companion, visible, models, availableIds, onB
               companion={companion}
               visible={visible}
               models={models}
+              statistics={statistics}
               detailsOpen={detailsOpen}
               onToggleDetails={setDetailsOpen}
               soulOpen={soulOpen}

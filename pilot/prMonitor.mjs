@@ -89,6 +89,11 @@ export function prSnapshot(pr, checkRuns, reviews, issueComments, reviewComments
       : null,
     commentCount: comments.length,
     latestCommentUser: comments.length ? (comments.at(-1).user?.login ?? "someone") : null,
+    // Final diff totals from the PR payload; companion statistics count
+    // these once, when the PR merges.
+    additions: Number.isSafeInteger(pr.additions) && pr.additions >= 0 ? pr.additions : null,
+    deletions: Number.isSafeInteger(pr.deletions) && pr.deletions >= 0 ? pr.deletions : null,
+    filesChanged: Number.isSafeInteger(pr.changed_files) && pr.changed_files >= 0 ? pr.changed_files : null,
   };
 }
 
@@ -138,6 +143,9 @@ export function monitorRow(monitor) {
     checks: snap?.checks ?? { total: 0, passed: 0, failed: 0, pending: 0, failing: [] },
     approvals: snap?.approvals ?? 0,
     comments: snap?.commentCount ?? 0,
+    additions: snap?.additions ?? null,
+    deletions: snap?.deletions ?? null,
+    filesChanged: snap?.filesChanged ?? null,
     changes: monitor.changes.slice(-MAX_CHANGE_LOG),
     startedAt: monitor.startedAt,
     updatedAt: monitor.updatedAt,

@@ -125,6 +125,59 @@ export const codingModels = sqliteTable("coding_models", {
     .$defaultFn(() => new Date()),
 });
 
+// Global, lifetime statistics per companion, incremented as work happens
+// after tracking landed (never backfilled from transcripts). One row per
+// companion (catalog id or custom_companions id).
+export const companionStatistics = sqliteTable("companion_statistics", {
+  companionId: text("companion_id").primaryKey(),
+  linesAdded: integer("lines_added").notNull().default(0),
+  linesRemoved: integer("lines_removed").notNull().default(0),
+  filesChanged: integer("files_changed").notNull().default(0),
+  toolCalls: integer("tool_calls").notNull().default(0),
+  userTurns: integer("user_turns").notNull().default(0),
+  runtimeMs: integer("runtime_ms").notNull().default(0),
+  lastActiveAt: integer("last_active_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+// PRs created after statistics tracking landed. State and line counts are
+// folded in from PR monitor snapshots; linesCounted makes the merge-time
+// line increment happen exactly once.
+export const companionTrackedPrs = sqliteTable("companion_tracked_prs", {
+  // `${repo.toLowerCase()}#${number}`
+  id: text("id").primaryKey(),
+  companionId: text("companion_id").notNull(),
+  repo: text("repo").notNull(),
+  prNumber: integer("pr_number").notNull(),
+  state: text("state", { enum: ["open", "merged", "closed"] }).notNull().default("open"),
+  linesCounted: integer("lines_counted", { mode: "boolean" }).notNull().default(false),
+  additions: integer("additions"),
+  deletions: integer("deletions"),
+  filesChanged: integer("files_changed"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  mergedAt: integer("merged_at", { mode: "timestamp_ms" }),
+});
+
+// Sessions whose runtime has already been added to companion_statistics,
+// so a session that ends, resumes, and ends again is never counted twice.
+export const companionCountedSessions = sqliteTable("companion_counted_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  companionId: text("companion_id").notNull(),
+  countedAt: integer("counted_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const outputEvents = sqliteTable("output_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   sessionId: text("session_id")

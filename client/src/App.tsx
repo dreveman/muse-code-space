@@ -2133,6 +2133,17 @@ export function App() {
     () => (customCompanionsQuery.data?.companions ?? []).map(customCompanionToCompanion),
     [customCompanionsQuery.data],
   );
+  const companionStatisticsQuery = useQuery({
+    queryKey: ["companion-statistics"],
+    queryFn: () => api.getCompanionStatistics({}),
+    staleTime: 5000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const statisticsByCompanionId = useMemo(
+    () => new Map((companionStatisticsQuery.data?.statistics ?? []).map((row) => [row.companion_id, row])),
+    [companionStatisticsQuery.data],
+  );
   registerCustomCompanionArtwork(customCompanions);
   const allCompanions = useMemo<Companion[]>(() => [...companions, ...customCompanions], [customCompanions]);
   const projectsQuery = useQuery({
@@ -5065,6 +5076,7 @@ export function App() {
                   <div aria-hidden="true" style={{ visibility: "hidden" }}>{firstMessageComposer}</div>
                 </section>
               ) : selectedCompanion ? <CompanionWelcome companion={selectedCompanion} visible={!isNarrow || !mobileListOpen} models={accessibleModels}
+                statistics={statisticsByCompanionId.get(selectedCompanion.id) ?? null}
                 availableIds={availableCompanions.map((companion) => companion.id)} onBrowse={selectCompanion}
                 browsingDisabled={creating || queuedPrompt?.kind === "draft"}
                 composer={firstMessageComposer}

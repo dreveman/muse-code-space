@@ -187,6 +187,23 @@
 .companion-configuration dt { color: var(--dim); }
 .companion-configuration dd { margin: 0; text-transform: capitalize; text-align: right; overflow-wrap: anywhere; }
 .companion-ratings-note { margin-bottom: 1.5em; color: var(--dim); font-size: 11px; line-height: 1.5; }
+.companion-accomplishments { border-top: 1px solid var(--border); }
+.companion-accomplishments-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 9px 2px; border: 0; background: none; color: var(--text); font: 600 12px/1.2 var(--sans); cursor: pointer; text-align: left; }
+.companion-accomplishments-item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.companion-accomplishments-item svg { width: 15px; height: 15px; color: hsl(var(--companion-hue) 45% 42%); }
+:root[data-color-mode="dark"] .companion-accomplishments-item svg { color: hsl(var(--companion-hue) 55% 68%); }
+.companion-accomplishments-label { margin-left: auto; color: var(--dim); font-weight: 550; white-space: nowrap; }
+.companion-accomplishments-chevron { color: var(--dim); font-size: 16px; line-height: 1; transition: transform 160ms ease; }
+.companion-accomplishments-chevron.is-open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .companion-accomplishments-chevron { transition: none; } }
+.companion-accomplishment-list { display: grid; gap: 8px; list-style: none; margin: 0 0 14px; padding: 2px 2px 10px; }
+.companion-accomplishment { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 12px; }
+.companion-accomplishment-icon { display: inline-flex; flex: 0 0 auto; color: var(--dim); opacity: .55; }
+.companion-accomplishment-icon svg { width: 16px; height: 16px; }
+.companion-accomplishment.is-earned .companion-accomplishment-icon { color: hsl(var(--companion-hue) 45% 42%); opacity: 1; }
+:root[data-color-mode="dark"] .companion-accomplishment.is-earned .companion-accomplishment-icon { color: hsl(var(--companion-hue) 55% 68%); }
+.companion-accomplishment-label { flex: 0 0 auto; font-weight: 600; }
+.companion-accomplishment-progress { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
 .companion-soul pre { margin: 1.7em 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); font: 11px/1.7 var(--mono); }
 .companion-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Desktop uses a horizontal identity header + 2x2 ratings grid so the card
