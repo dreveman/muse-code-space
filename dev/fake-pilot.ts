@@ -144,6 +144,43 @@ let fakeGitIdentity: { name: string; email: string } | null =
 // with nothing done — including no global author, unless one was explicitly
 // provided with the FAKE_GIT_* env vars — so every step can be exercised.
 const githubSetup = { brokerDone: GITHUB_ENABLED, appDone: GITHUB_ENABLED, brokerRequested: false, appRequested: false, appHelpRequested: false };
+// Fake GitHub repos for the composer's repo picker. FAKE_BROKER_REPOS is
+// what GET /repos lists (the "installed" set, like an App installation);
+// FAKE_SEARCHABLE_REPOS is deliberately absent from that list and only
+// reachable through GET /repos/search — mirroring a public repo the user
+// contributes to but the App is not installed on (e.g. google/perfetto),
+// which is exactly the search-then-pin scenario. Offline-safe avatars.
+const fakeRepoAvatar = (label: string, bg: string) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="${bg}"/><text x="16" y="21" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">${label}</text></svg>`)}`;
+function fakeRepo(slug: string, description: string, opts: { private?: boolean; avatar?: string } = {}) {
+  const [owner = "", name = ""] = slug.split("/");
+  return {
+    slug, name, owner,
+    owner_avatar_url: opts.avatar ?? fakeRepoAvatar((owner[0] ?? "G").toUpperCase(), "#57606a"),
+    private: opts.private === true,
+    description,
+    default_branch: "main",
+    updated_at: new Date().toISOString(),
+    html_url: `https://github.com/${slug}`,
+  };
+}
+const octoAvatar = fakeRepoAvatar("O", "#2da44e");
+const acmeAvatar = fakeRepoAvatar("A", "#0969da");
+const googleAvatar = fakeRepoAvatar("G", "#4285f4");
+const FAKE_BROKER_REPOS = [
+  fakeRepo("octocat/hello-world", "Sample fake repository for local UI work", { avatar: octoAvatar }),
+  fakeRepo("octocat/spoon-knife", "Forking and pull request test repository", { avatar: octoAvatar }),
+  fakeRepo("acme/code-space", "Simulated workspace UI and pilot daemon", { avatar: acmeAvatar }),
+  fakeRepo("acme/design-tokens", "Shared color and typography tokens", { avatar: acmeAvatar }),
+  fakeRepo("acme/trace-viewer", "Offline trace visualization components", { avatar: acmeAvatar }),
+  fakeRepo("acme/sample-private", "Private sample repository (simulated)", { private: true, avatar: acmeAvatar }),
+  fakeRepo("acme/fail-clone", "Picking this simulates a failed clone", { avatar: acmeAvatar }),
+];
+const FAKE_SEARCHABLE_REPOS = [
+  fakeRepo("google/perfetto", "Searchable only (simulated): tracing and performance tooling — pin me", { avatar: googleAvatar }),
+  fakeRepo("acme/perfetto-samples", "Searchable only (simulated): sample traces and configs", { avatar: acmeAvatar }),
+  fakeRepo("acme/external-trace-sdk", "Searchable only (simulated): external tracing SDK", { avatar: acmeAvatar }),
+];
 if (!GITHUB_ENABLED && process.env.MUSE_CODE_SPACE_FAKE_GIT_NAME === undefined && process.env.MUSE_CODE_SPACE_FAKE_GIT_EMAIL === undefined) {
   fakeGitIdentity = null;
 }
@@ -1766,27 +1803,28 @@ Bun.serve({
         ? { active: true, repo: progress.repo, phase: progress.phase, percent: progress.percent, transferred: progress.transferred }
         : { active: false, repo: null, phase: null, percent: null, transferred: null });
     }
+    if (path === "/repos/search" && req.method === "GET") {
+      if (!githubSetup.brokerDone) {
+        return json(200, { enabled: false, repos: [] });
+      }
+      // Mirror pilot/repoSetup.mjs searchGitHubRepos: an exact owner/repo
+      // resolves directly, anything else substring-searches slug and
+      // description. Searchable-only repos rank first so `perfetto`
+      // surfaces google/perfetto, which /repos never lists.
+      const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+      if (!q) return json(200, { enabled: true, repos: [] });
+      const all = [...FAKE_SEARCHABLE_REPOS, ...FAKE_BROKER_REPOS];
+      const repos = q.includes("/")
+        ? all.filter((repo) => repo.slug.toLowerCase() === q)
+        : all.filter((repo) => repo.slug.toLowerCase().includes(q) || (repo.description ?? "").toLowerCase().includes(q));
+      return json(200, { enabled: true, repos: repos.slice(0, 20) });
+    }
     if (path === "/repos" && req.method === "GET") {
       if (!githubSetup.brokerDone) {
         return json(200, { enabled: false, repos: [] });
       }
-      const fakeAvatar = (label: string, bg: string) =>
-        `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="${bg}"/><text x="16" y="21" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="15" font-weight="600">${label}</text></svg>`)}`;
-      const octoAvatar = fakeAvatar("O", "#2da44e");
-      const acmeAvatar = fakeAvatar("A", "#0969da");
       // Offline-safe sample list so the composer's repo picker can be exercised without network.
-      return json(200, {
-        enabled: true,
-        repos: [
-          { slug: "octocat/hello-world", name: "hello-world", owner: "octocat", owner_avatar_url: octoAvatar, private: false, description: "Sample fake repository for local UI work", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/octocat/hello-world" },
-          { slug: "octocat/spoon-knife", name: "spoon-knife", owner: "octocat", owner_avatar_url: octoAvatar, private: false, description: "Forking and pull request test repository", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/octocat/spoon-knife" },
-          { slug: "acme/code-space", name: "code-space", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Simulated workspace UI and pilot daemon", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/code-space" },
-          { slug: "acme/design-tokens", name: "design-tokens", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Shared color and typography tokens", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/design-tokens" },
-          { slug: "acme/trace-viewer", name: "trace-viewer", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Offline trace visualization components", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/trace-viewer" },
-          { slug: "acme/sample-private", name: "sample-private", owner: "acme", owner_avatar_url: acmeAvatar, private: true, description: "Private sample repository (simulated)", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/sample-private" },
-          { slug: "acme/fail-clone", name: "fail-clone", owner: "acme", owner_avatar_url: acmeAvatar, private: false, description: "Picking this simulates a failed clone", default_branch: "main", updated_at: new Date().toISOString(), html_url: "https://github.com/acme/fail-clone" },
-        ],
-      });
+      return json(200, { enabled: true, repos: FAKE_BROKER_REPOS });
     }
     if (path === "/sessions" && req.method === "GET") {
       return json(200, [...sessions.values()].map((s) => ({ sessionId: s.id, title: s.title, name: s.name ?? null, modelId: s.modelId, status: s.openTurn ? "running" : "idle" })));

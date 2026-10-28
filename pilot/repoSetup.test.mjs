@@ -1,7 +1,7 @@
 // Run: node --test pilot/repoSetup.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureRepoCloned, listGitHubRepos, originSlug, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
+import { ensureRepoCloned, listGitHubRepos, originSlug, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
 
 test("parseRepoInput accepts owner/repo and github.com URLs", () => {
   const expected = {
@@ -112,6 +112,32 @@ test("listGitHubRepos reports disabled and broker failures", async () => {
   );
   const { brokerRequest } = fakeBroker({});
   await assert.rejects(listGitHubRepos({ enabled: () => true, brokerRequest }), /HTTP 404/);
+});
+
+test("searchGitHubRepos finds google/perfetto by search and by exact slug", async () => {
+  // Perfetto is not in the broker-visible list here (App-mode lists only
+  // reach installed repos); search/exact lookup must still find it.
+  const perfetto = { full_name: "google/perfetto", private: false, updated_at: "2026-03-01T00:00:00Z", default_branch: "main" };
+  const { brokerRequest, calls } = fakeBroker({
+    "/search/repositories?q=perfetto&per_page=20": { status: 200, json: { total_count: 1, items: [perfetto] } },
+    "/repos/google/perfetto": { status: 200, json: perfetto },
+  });
+  const byTerm = await searchGitHubRepos({ enabled: () => true, brokerRequest, query: "perfetto" });
+  assert.deepEqual(byTerm.repos.map((r) => r.slug), ["google/perfetto"]);
+  const bySlug = await searchGitHubRepos({ enabled: () => true, brokerRequest, query: "google/perfetto" });
+  assert.deepEqual(bySlug.repos.map((r) => r.slug), ["google/perfetto"]);
+  assert.deepEqual(calls, ["GET /search/repositories?q=perfetto&per_page=20", "GET /repos/google/perfetto"]);
+});
+
+test("searchGitHubRepos answers empty for disabled, blank, and failed lookups", async () => {
+  assert.deepEqual(
+    await searchGitHubRepos({ enabled: () => false, brokerRequest: async () => { throw new Error("must not be called"); }, query: "perfetto" }),
+    { enabled: false, repos: [] },
+  );
+  const { brokerRequest } = fakeBroker({});
+  assert.deepEqual(await searchGitHubRepos({ enabled: () => true, brokerRequest, query: "  " }), { enabled: true, repos: [] });
+  assert.deepEqual(await searchGitHubRepos({ enabled: () => true, brokerRequest, query: "google/nope-nope" }), { enabled: true, repos: [] });
+  assert.deepEqual(await searchGitHubRepos({ enabled: () => true, brokerRequest, query: "nope-nope" }), { enabled: true, repos: [] });
 });
 
 test("ensureRepoCloned clones into a missing or empty directory", async () => {

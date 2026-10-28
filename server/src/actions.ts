@@ -1800,6 +1800,50 @@ export const Actions = {
     },
   }),
 
+  // GitHub-side search for the repo picker: the listRepos list is bounded
+  // by the broker credential (an App installation only enumerates installed
+  // repos), so repos the user contributes to elsewhere — public ones like
+  // google/perfetto — are only findable by asking GitHub directly.
+  searchRepos: defineAction({
+    request: z.object({ q: z.string().trim().min(1).max(200) }),
+    response: z.object({
+      github_enabled: z.boolean(),
+      repos: z.array(z.object({
+        slug: z.string(),
+        name: z.string(),
+        owner: z.string(),
+        owner_avatar_url: z.string().nullable().optional(),
+        private: z.boolean(),
+        description: z.string().nullable(),
+        default_branch: z.string().nullable(),
+        updated_at: z.string().nullable(),
+        html_url: z.string(),
+      })),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, input) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        return await pilotRequest(baseUrl, `/repos/search?q=${encodeURIComponent(input.q)}`, { method: "GET" }, z.object({
+          enabled: z.boolean(),
+          repos: z.array(z.object({
+            slug: z.string(),
+            name: z.string(),
+            owner: z.string(),
+            owner_avatar_url: z.string().nullable().optional(),
+            private: z.boolean(),
+            description: z.string().nullable(),
+            default_branch: z.string().nullable(),
+            updated_at: z.string().nullable(),
+            html_url: z.string(),
+          })),
+        }).transform((value) => ({ github_enabled: value.enabled, repos: value.repos })), 20_000);
+      } catch {
+        return { github_enabled: false, repos: [] };
+      }
+    },
+  }),
+
   setPreviewPort: defineAction({
     request: z.object({
       session_id: z.string().min(1).max(200),

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { TOP_REPO_LIMIT, filterRepos, repoStatusText, repoTriggerLabel, visibleTopRepos } from "./repoOptions.ts";
+import { PINNED_REPOS_STORAGE_KEY, TOP_REPO_LIMIT, applyPinnedRepos, filterRepos, mergeRepoOptions, orderPinnedFirst, parsePinnedRepos, repoStatusText, repoTriggerLabel, togglePinnedRepo, visibleTopRepos } from "./repoOptions.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(path.join(root, "App.tsx"), "utf8");
@@ -38,6 +38,80 @@ test("visibleTopRepos defaults to the top 5 and expands with Show more or a filt
   const filtered = visibleTopRepos(many, "repo-7", false);
   assert.deepEqual(filtered.shown.map((r) => r.slug), ["dreveman/repo-7"]);
   assert.equal(filtered.hasMore, false);
+});
+
+test("mergeRepoOptions appends GitHub search hits without duplicating the local list", () => {
+  const perfetto = { slug: "google/perfetto", name: "perfetto", owner: "google", private: false, description: null, default_branch: "main", updated_at: null, html_url: "https://github.com/google/perfetto" };
+  assert.deepEqual(mergeRepoOptions(REPOS, [perfetto]).map((r) => r.slug), [...REPOS.map((r) => r.slug), "google/perfetto"]);
+  assert.deepEqual(
+    mergeRepoOptions(REPOS, [{ ...REPOS[0], slug: "Dreveman/Muse-Code-Space" }]).map((r) => r.slug),
+    REPOS.map((r) => r.slug),
+  );
+});
+
+const PERFETTO = { slug: "google/perfetto", name: "perfetto", owner: "google", private: false, description: null, default_branch: "main", updated_at: null, html_url: "https://github.com/google/perfetto" };
+
+test("a pinned repo shows at the top even when the broker list cannot see it", () => {
+  // google/perfetto is absent from REPOS (the App-mode list); its stored
+  // pin snapshot alone must put it first, ahead of the collapsed top 5.
+  const ordered = applyPinnedRepos(REPOS, [PERFETTO]);
+  assert.deepEqual(ordered.map((r) => r.slug), ["google/perfetto", ...REPOS.map((r) => r.slug)]);
+  assert.equal(visibleTopRepos(ordered, "", false).shown[0].slug, "google/perfetto");
+  // When the repo is in the list, the fresher list entry wins over the snapshot.
+  const fresher = { ...PERFETTO, slug: "dreveman/muse-code-space", description: "fresh" };
+  assert.equal(applyPinnedRepos([fresher], [{ ...PERFETTO, slug: "dreveman/muse-code-space", description: "stale" }])[0].description, "fresh");
+  // Filtering never injects a pinned repo that does not match.
+  assert.deepEqual(orderPinnedFirst(REPOS, [PERFETTO]).map((r) => r.slug), REPOS.map((r) => r.slug));
+  assert.deepEqual(
+    orderPinnedFirst([PERFETTO, ...REPOS], [PERFETTO]).map((r) => r.slug),
+    ["google/perfetto", ...REPOS.map((r) => r.slug)],
+  );
+});
+
+test("togglePinnedRepo pins newest-first, unpins, and caps the list", () => {
+  assert.deepEqual(togglePinnedRepo([], PERFETTO).map((r) => r.slug), ["google/perfetto"]);
+  assert.deepEqual(togglePinnedRepo([PERFETTO], PERFETTO), []);
+  const two = togglePinnedRepo([PERFETTO], REPOS[0]);
+  assert.deepEqual(two.map((r) => r.slug), ["dreveman/muse-code-space", "google/perfetto"]);
+  const many = Array.from({ length: 20 }, (_, i) => ({ ...PERFETTO, slug: `o/r-${i}` }));
+  assert.equal(togglePinnedRepo(many, PERFETTO).length, 20);
+  assert.equal(togglePinnedRepo(many, PERFETTO)[0].slug, "google/perfetto");
+});
+
+test("parsePinnedRepos validates stored pins and survives junk", () => {
+  assert.equal(PINNED_REPOS_STORAGE_KEY, "muse-code-space:pinned-repos");
+  assert.deepEqual(parsePinnedRepos(null), []);
+  assert.deepEqual(parsePinnedRepos("not json"), []);
+  assert.deepEqual(parsePinnedRepos('{"slug":"google/perfetto"}'), []);
+  const parsed = parsePinnedRepos(JSON.stringify([PERFETTO, { slug: "bad" }, PERFETTO, null, { slug: "o/r" }]));
+  assert.deepEqual(parsed.map((r) => r.slug), ["google/perfetto", "o/r"]);
+  assert.equal(parsed[1].html_url, "https://github.com/o/r");
+  assert.equal(parsed[1].owner, "o");
+});
+
+test("the picker renders a pin toggle per repo and persists pins", () => {
+  const picker = readFileSync(path.join(root, "RepoPicker.tsx"), "utf8");
+  assert.ok(picker.includes("repo-menu-pin"), "pin button is rendered");
+  assert.ok(picker.includes("aria-pressed={pinned}"), "pin button exposes its state");
+  assert.ok(picker.includes("Pin ${repo.slug} to the top"), "pin button is labelled");
+  assert.ok(picker.includes("PINNED_REPOS_STORAGE_KEY"), "pins persist in localStorage");
+  assert.ok(picker.includes("applyPinnedRepos(repos, pinnedRepos)"), "pins order the list");
+  assert.ok(css.includes(".repo-menu-pin"), "pin styles exist");
+  assert.ok(css.includes(".repo-menu-pin.pinned"), "pinned state styles exist");
+});
+
+test("the picker search box asks GitHub, not just the local list", () => {
+  const picker = readFileSync(path.join(root, "RepoPicker.tsx"), "utf8");
+  assert.ok(picker.includes("onSearchRepos"), "picker accepts a GitHub search callback");
+  assert.ok(picker.includes("Searching GitHub"), "picker shows search progress");
+  assert.ok(app.includes("api.searchRepos({ q })"), "App wires the searchRepos action");
+  assert.ok(actions.includes("searchRepos: defineAction"), "server exposes repo search");
+  assert.ok(actions.includes("/repos/search?q="), "server forwards search to the pilot");
+  const pilot = readFileSync(path.join(root, "../../pilot/pilot.mjs"), "utf8");
+  assert.ok(pilot.includes('path === "/repos/search"'), "pilot serves repo search");
+  const setup = readFileSync(path.join(root, "../../pilot/repoSetup.mjs"), "utf8");
+  assert.ok(setup.includes("searchGitHubRepos"), "pilot searches GitHub repositories");
+  assert.ok(setup.includes("/search/repositories?q="), "search uses the GitHub search API");
 });
 
 test("the row status says what happens on start", () => {

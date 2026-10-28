@@ -2151,6 +2151,13 @@ export function App() {
     staleTime: 60_000,
     retry: false,
   });
+  // The list above is bounded by the broker credential (an App installation
+  // only lists installed repos); the picker's search box asks GitHub
+  // directly so contributed-to public repos are findable too.
+  const searchRepos = useCallback(
+    async (q: string) => (await api.searchRepos({ q })).repos,
+    [],
+  );
   // Global commit identity, used to prefill the repo picker's Commit-as
   // fields (blank per-checkout fields mean this identity applies).
   const gitIdentityQuery = useQuery({
@@ -4411,6 +4418,7 @@ export function App() {
         workspacePath={startingDraft?.draft.id === selectedId ? shortenHomePaths(startingDraft.workspacePath) : null}
         phase={queuedPrompt?.kind === "draft" && queuedPrompt.draft.id === draft?.id ? "queued" : creating || startingDraft?.draft.id === selectedId ? "starting" : "idle"}
         onChoose={chooseDraftRepo}
+        onSearchRepos={searchRepos}
         globalGitIdentity={globalGitIdentity}
         githubSetup={githubSetup}
         onPerformGithubSetupStep={performGithubSetupStep}

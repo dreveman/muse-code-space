@@ -417,9 +417,15 @@ How it maps to the real host:
 **Fake pilot** (`dev/fake-pilot.ts`) implements the parts of the pilot API
 the actions call:
 - `/health`, `/models`, `/sessions`, `/turns`, `/turns/interrupt`, `/poll`,
-  `/recover`, `/sessions/:id/tools/output`, `/user-inputs*`, `/repos` and
-  `/debug/wire`.
-- `/repos` serves three sample repos for the composer's repo picker. Set
+  `/recover`, `/sessions/:id/tools/output`, `/user-inputs*`, `/repos`,
+  `/repos/search` and `/debug/wire`.
+- `/repos` serves seven sample repos for the composer's repo picker, and
+  `/repos/search?q=...` searches a wider fake catalog: `google/perfetto`
+  (plus two `acme/*` repos) is deliberately searchable-only — absent from
+  `/repos`, like a public repo the GitHub App is not installed on — so the
+  picker's GitHub search and pin-to-top flow can be exercised end to end
+  (search `perfetto`, pin it, reload: it stays at the top; picking it
+  simulates a clone like any other slug). Set
   `MUSE_CODE_SPACE_FAKE_PILOT_GITHUB=disconnected` to return
   `{ enabled: false, repos: [] }` and exercise the
   `Connect GitHub · Work on your repos` button state. A
