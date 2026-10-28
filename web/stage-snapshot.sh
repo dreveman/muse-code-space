@@ -134,4 +134,34 @@ if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then
   exit 1
 fi
 
+
+# Pin the staged bun.lock's @hatch/space-sdk integrity to the SDK tarball the
+# staged package.json points at. Upstream ships that lockfile slot empty (the
+# Pi extension's fallback install blanks it, because its fallback tarball is
+# not the platform build), and the artifact builder cannot install a file:
+# dependency with an empty integrity. Hashing whatever tarball is present at
+# staging time keeps this correct across platform SDK re-spins; only the
+# staged snapshot is modified, never the checkout.
+_sdk_ref="$(grep -o '"@hatch/space-sdk": "file:[^"]*"' "$dest/package.json" | head -1 | sed 's/.*file://; s/"$//')"
+if [ -z "$_sdk_ref" ] || [ ! -f "$_sdk_ref" ]; then
+  echo "stage-snapshot: cannot locate the @hatch/space-sdk tarball referenced by $dest/package.json" >&2
+  exit 1
+fi
+_sdk_integrity="sha512-$(openssl dgst -sha512 -binary "$_sdk_ref" | openssl base64 -A)"
+SDK_INTEGRITY="$_sdk_integrity" python3 - "$dest/bun.lock" <<'PYEOF2'
+import os, re, sys
+path = sys.argv[1]
+integrity = os.environ["SDK_INTEGRITY"]
+lines = open(path).read().splitlines(True)
+for i, line in enumerate(lines):
+    if '"@hatch/space-sdk": [' in line:
+        lines[i], n = re.subn(r', "[^"]*"\],(\s*)$', ', "%s"],\\1' % integrity, line)
+        if n:
+            break
+else:
+    sys.exit("stage-snapshot: @hatch/space-sdk entry not found in " + path)
+open(path, "w").write("".join(lines))
+PYEOF2
+grep -qF ""$_sdk_integrity"" "$dest/bun.lock" || { echo "stage-snapshot: failed to pin @hatch/space-sdk integrity in $dest/bun.lock" >&2; exit 1; }
+echo "stage-snapshot: pinned @hatch/space-sdk integrity to $_sdk_integrity"
 echo "staged snapshot for slug \"$slug\" at $dest ($(find "$dest" -type f | wc -l) files)"
