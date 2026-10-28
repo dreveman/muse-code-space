@@ -4,7 +4,14 @@ import { PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { SmartLogIcon } from "./SmartLogPanel";
 import type { OwnedPullRequest } from "./ownedPullRequests";
 import {
+  PINNED_REPOS_STORAGE_KEY,
+  applyPinnedRepos,
+  filterRepos,
   formatCloneProgressLabel,
+  mergeRepoOptions,
+  orderPinnedFirst,
+  parsePinnedRepos,
+  togglePinnedRepo,
   repoOwnerAvatarUrl,
   repoOwnerFallbackAvatar,
   repoStatusText,
@@ -17,6 +24,15 @@ import { formatRelativeTime } from "./sessionList";
 import { formatGitAuthor, parseGitAuthorText } from "./gitAuthor";
 import { copyTextToClipboard } from "./clipboard";
 import { smartlogCheckoutLabel, type SessionVcsStatus } from "./smartlogLayout";
+
+function PinIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 4h6l-1 6.5 2.5 2.5v2h-9v-2L10 10.5 9 4z" />
+      <path d="M12 15v6" />
+    </svg>
+  );
+}
 
 function UncommittedDraftRingIcon() {
   return (
@@ -96,6 +112,7 @@ export const RepoPicker = memo(function RepoPicker({
   githubSetup = null,
   onPerformGithubSetupStep,
   onSaveGlobalGitAuthor,
+  onSearchRepos = null,
   leadingControl = null,
 }: {
   repos: readonly RepoOption[];
@@ -118,6 +135,8 @@ export const RepoPicker = memo(function RepoPicker({
   githubSetup?: { brokerDone: boolean; appDone: boolean; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean } | null;
   onPerformGithubSetupStep?: (step: "broker" | "app" | "app-help", payload?: { appId: string; installationId: string; privateKey: string }) => Promise<{ ok: boolean; error: string | null; brokerRequested?: boolean; appRequested?: boolean; appHelpRequested?: boolean }>;
   onSaveGlobalGitAuthor?: (identity: { name: string; email: string }) => Promise<boolean>;
+  /** GitHub-side search for queries the local repo list cannot answer. */
+  onSearchRepos?: ((query: string) => Promise<readonly RepoOption[]>) | null;
   /** Extra control rendered at the start of the picker row (e.g. ProjectPicker). */
   leadingControl?: ReactNode;
 }) {
@@ -224,6 +243,44 @@ export const RepoPicker = memo(function RepoPicker({
   };
   const [copiedField, setCopiedField] = useState<"url" | "path" | "pr-url" | null>(null);
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<readonly RepoOption[]>([]);
+  const [searching, setSearching] = useState(false);
+  // Pinned repos persist as snapshots in localStorage (like other view
+  // prefs), so a repo the broker credential cannot list — e.g. a public
+  // repo found through search — still shows at the top next time.
+  const [pinnedRepos, setPinnedRepos] = useState<readonly RepoOption[]>(() => {
+    try { return parsePinnedRepos(window.localStorage.getItem(PINNED_REPOS_STORAGE_KEY)); } catch { return []; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(PINNED_REPOS_STORAGE_KEY, JSON.stringify(pinnedRepos)); } catch { /* storage can be unavailable in an embedded webview */ }
+  }, [pinnedRepos]);
+  const pinnedSlugs = useMemo(
+    () => new Set(pinnedRepos.map((repo) => repo.slug.toLowerCase())),
+    [pinnedRepos],
+  );
+  const togglePin = (repo: RepoOption) => {
+    setPinnedRepos((current) => togglePinnedRepo(current, repo));
+  };
+  // The local list is bounded by the broker credential (an App installation
+  // only lists installed repos), so a query also asks GitHub directly —
+  // debounced, and stale answers are dropped when the query moves on.
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!onSearchRepos || trimmed.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void onSearchRepos(trimmed).then(
+        (results) => { if (!cancelled) { setSearchResults(results); setSearching(false); } },
+        () => { if (!cancelled) { setSearchResults([]); setSearching(false); } },
+      );
+    }, 300);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [query, onSearchRepos]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const prWrapRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -231,10 +288,17 @@ export const RepoPicker = memo(function RepoPicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const id = useId();
   const prMenuId = useId();
-  const { shown: visible, hasMore } = useMemo(
-    () => visibleTopRepos(repos, query, moreExpanded),
-    [repos, query, moreExpanded],
-  );
+  const { shown: visible, hasMore } = useMemo(() => {
+    if (!query.trim()) return visibleTopRepos(applyPinnedRepos(repos, pinnedRepos), query, moreExpanded);
+    // GitHub search hits count as matches even when the query is not a
+    // substring of the slug (e.g. a description term). A pinned snapshot
+    // matching the query shows instantly, before search answers.
+    const candidates = mergeRepoOptions(
+      filterRepos(applyPinnedRepos(repos, pinnedRepos), query),
+      searchResults,
+    );
+    return { shown: orderPinnedFirst(candidates, pinnedRepos), hasMore: false };
+  }, [repos, query, moreExpanded, searchResults, pinnedRepos]);
   const showConnectPrompt = mode === "pick" && (!githubEnabled || showGithubSetup) && selected === null;
   const cloning = Boolean(selected && (phase === "starting" || cloneProgress?.active));
 
@@ -619,28 +683,42 @@ export const RepoPicker = memo(function RepoPicker({
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
             <div id={`${id}-repos`} className="repo-menu-list" role="listbox" aria-label="Repositories">
-              {visible.map((repo) => (
-                <button type="button" key={repo.slug}
+              {visible.map((repo) => {
+                const pinned = pinnedSlugs.has(repo.slug.toLowerCase());
+                return (
+                <div key={repo.slug}
                   className={`repo-menu-option${selected === repo.slug ? " selected" : ""}`}
-                  aria-selected={selected === repo.slug} onClick={() => choose(repo.slug)}>
-                  <img className="repo-menu-avatar" src={repoOwnerAvatarUrl(repo)} width={20} height={20} alt="" loading="lazy"
-                    onError={(event) => {
-                      const fallback = repoOwnerFallbackAvatar(repo.owner);
-                      if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
-                    }} />
-                  <span className="repo-menu-identity"><strong>{repo.slug}</strong>
-                    <small>{repo.private ? "Private" : "Public"}{repo.description ? ` · ${repo.description}` : ""}</small></span>
-                </button>
-              ))}
+                  role="option" aria-selected={selected === repo.slug}>
+                  <button type="button" className="repo-menu-option-main" onClick={() => choose(repo.slug)}>
+                    <img className="repo-menu-avatar" src={repoOwnerAvatarUrl(repo)} width={20} height={20} alt="" loading="lazy"
+                      onError={(event) => {
+                        const fallback = repoOwnerFallbackAvatar(repo.owner);
+                        if (event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                      }} />
+                    <span className="repo-menu-identity"><strong>{repo.slug}</strong>
+                      <small>{repo.private ? "Private" : "Public"}{repo.description ? ` · ${repo.description}` : ""}</small></span>
+                  </button>
+                  <button type="button"
+                    className={`repo-menu-pin${pinned ? " pinned" : ""}`}
+                    aria-pressed={pinned}
+                    aria-label={pinned ? `Unpin ${repo.slug}` : `Pin ${repo.slug}`}
+                    title={pinned ? `Unpin ${repo.slug}` : `Pin ${repo.slug} to the top`}
+                    onClick={() => togglePin(repo)}>
+                    <PinIcon filled={pinned} />
+                  </button>
+                </div>
+                );
+              })}
               {loading && <p className="repo-menu-note">Loading repositories…</p>}
-              {!loading && repos.length === 0 && (
+              {!loading && searching && <p className="repo-menu-note">Searching GitHub…</p>}
+              {!loading && !searching && visible.length === 0 && repos.length === 0 && pinnedRepos.length === 0 && (
                 <p className="repo-menu-note">
                   {githubEnabled
                     ? "No repositories found for the GitHub credential."
                     : "GitHub isn't set up for Code Space, so no list to pick from."}
                 </p>
               )}
-              {!loading && repos.length > 0 && visible.length === 0 && (
+              {!loading && !searching && (repos.length > 0 || pinnedRepos.length > 0) && visible.length === 0 && (
                 <p className="repo-menu-note">No repositories match “{query.trim()}”.</p>
               )}
             </div>

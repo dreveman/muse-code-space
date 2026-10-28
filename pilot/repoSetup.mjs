@@ -147,6 +147,38 @@ export async function listGitHubRepos({ enabled, brokerRequest }) {
 }
 
 /**
+ * Find repos beyond the broker-visible list above. That list is bounded by
+ * the credential: a GitHub App installation token only enumerates repos the
+ * App is installed on (and `viewer`/`/user/repos` reject it), so a public
+ * repo the user contributes to elsewhere — e.g. google/perfetto — can never
+ * appear in it. GitHub still lets any token read/search public repos, so an
+ * exact `owner/repo` is looked up directly and anything else goes through
+ * repository search. Failures answer empty: the picker just shows no match.
+ */
+export async function searchGitHubRepos({ enabled, brokerRequest, query }) {
+  if (!enabled()) return { enabled: false, repos: [] };
+  const trimmed = typeof query === "string" ? query.trim() : "";
+  if (!trimmed) return { enabled: true, repos: [] };
+  const exact = parseRepoInput(trimmed);
+  const result = exact
+    ? await brokerRequest("GET", `/repos/${exact.owner}/${exact.repo}`)
+    : await brokerRequest("GET", `/search/repositories?q=${encodeURIComponent(trimmed)}&per_page=20`);
+  if (result.status < 200 || result.status >= 300) return { enabled: true, repos: [] };
+  const raw = exact
+    ? (result.json && typeof result.json === "object" ? [result.json] : [])
+    : (Array.isArray(result.json?.items) ? result.json.items : []);
+  const seen = new Set();
+  const repos = [];
+  for (const item of raw) {
+    const repo = mapRepo(item);
+    if (!repo || seen.has(repo.slug.toLowerCase())) continue;
+    seen.add(repo.slug.toLowerCase());
+    repos.push(repo);
+  }
+  return { enabled: true, repos };
+}
+
+/**
  * Parse a chunk of `git clone --progress` stderr output into the latest
  * `{ phase, percent, transferred }` snapshot.
  */

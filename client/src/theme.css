@@ -1409,6 +1409,12 @@ details p { margin: 10px 0 0; max-width: 760px; white-space: pre-wrap; line-heig
 .repo-menu-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 7px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .repo-menu-option:hover { background: color-mix(in srgb, var(--terminal-text) 7%, transparent); }
 .repo-menu-option.selected { background: color-mix(in srgb, var(--terminal-text) 10%, transparent); }
+.repo-menu-option-main { display: flex; align-items: center; gap: 10px; flex: 1 1 0; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.repo-menu-pin { display: grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--terminal-dim); cursor: pointer; opacity: 0; }
+.repo-menu-option:hover .repo-menu-pin, .repo-menu-option:focus-within .repo-menu-pin { opacity: .75; }
+.repo-menu-pin:hover { background: color-mix(in srgb, var(--terminal-text) 10%, transparent); opacity: 1; }
+.repo-menu-pin.pinned { color: var(--terminal-accent); opacity: 1; }
+@media (hover: none) { .repo-menu-pin { opacity: .55; } .repo-menu-pin.pinned { opacity: 1; } }
 .repo-menu-avatar { width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%; object-fit: cover; background: var(--terminal-faint); }
 .repo-menu-identity { display: grid; gap: 2px; min-width: 0; flex: 1 1 0; }
 .repo-menu-identity strong { font: 600 12px/1.3 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

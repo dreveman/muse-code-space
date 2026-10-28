@@ -23,6 +23,7 @@ for (const v of ["LOCAL_SESSION_MESSAGING", "EXTERNAL_AGENT_INGRESS"]) {
 //   GET  /health                      -> { ok, sessions }
 //   GET  /models                      -> live MSP model/list catalog
 //   GET  /repos                        -> { enabled, repos: [{ slug, name, owner, private, ... }] } (GitHub repos the broker can see)
+//   GET  /repos/search?q=...           -> { enabled, repos: [...] } (GitHub search/exact lookup beyond that list)
 //   POST /sessions                     { title?, name?, prompt?, modelId?, reasoningEffort?, workspaceName?, workspaceRoot?, repo? } -> { sessionId, turnId, modelId, name }
 
 //                                      (modelId omitted -> the serve host catalog's default model)
@@ -52,7 +53,7 @@ import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { runGithubAppSetup } from "./githubAppSetup.mjs";
-import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput } from "./repoSetup.mjs";
+import { ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
 import { readGitVcsStatus } from "./vcsSmartlog.mjs";
 import {
   createPreviewWsManager,
@@ -2215,6 +2216,21 @@ const server = createServer(async (req, res) => {
             transferred: progress.transferred,
           }
         : { active: false, repo: null, phase: null, percent: null, transferred: null });
+    }
+
+    if (req.method === "GET" && path === "/repos/search") {
+      try {
+        if (useDirectGhCli() && ghCliReadyCache === null) {
+          await checkGhCliReady();
+        }
+        return json(res, 200, await searchGitHubRepos({
+          enabled: isGitHubEnabled,
+          brokerRequest: githubBrokerRequest,
+          query: url.searchParams.get("q") ?? "",
+        }));
+      } catch (error) {
+        return json(res, 502, { error: String(error?.message ?? error).slice(0, 300), code: "repo_search_failed" });
+      }
     }
 
     if (req.method === "GET" && path === "/repos") {
