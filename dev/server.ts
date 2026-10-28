@@ -156,10 +156,26 @@ function broadcast(event: "reload" | "invalidate", payload: Record<string, unkno
 
 // Same-origin postMessage is what the SDK's query-invalidation listener
 // accepts when the page is top-level (not framed by the Hatch host).
-const DEV_CLIENT_SCRIPT = `<script>
+function buildDevClientScript(webToken: string): string {
+  return `<script>
 (() => {
+  const tok = new URLSearchParams(location.search).get("token") || ${JSON.stringify(webToken)} || "";
+  window.__MUSE_CODE_SPACE_TOKEN__ = tok;
+  if (tok && typeof window.fetch === "function") {
+    const origFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      try {
+        const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+        if (!headers.has("authorization")) headers.set("authorization", "Bearer " + tok);
+        return origFetch(input, { ...init, headers });
+      } catch {
+        return origFetch(input, init);
+      }
+    };
+  }
   if (typeof EventSource === "undefined") return;
-  const es = new EventSource("/__dev/events");
+  const esUrl = tok ? "/__dev/events?token=" + encodeURIComponent(tok) : "/__dev/events";
+  const es = new EventSource(esUrl);
   es.addEventListener("reload", () => location.reload());
   es.addEventListener("invalidate", (e) => {
     let payload = { queryKeys: [] };
@@ -171,6 +187,7 @@ const DEV_CLIENT_SCRIPT = `<script>
   });
 })();
 </script>`;
+}
 
 // ---- client build ----
 let building: Promise<boolean> | null = null;
@@ -298,6 +315,9 @@ async function handleAction(req: Request): Promise<Response> {
     const ctx = makeCtx(actionCallId, action.privileged) as unknown as Parameters<typeof action.handler>[0];
     const result = await action.handler(ctx, parsed.data);
     const data = action.response.parse(result);
+    if (data && typeof data === "object" && "ok" in data && (data as { ok?: unknown }).ok === false) {
+      console.warn(`[dev] action ${name} returned ok:false:`, (data as { error?: unknown }).error);
+    }
     if (process.env.MUSE_CODE_SPACE_DEV_LOG_ACTIONS === "1") {
       console.log(`[dev] ${name} ${Math.round(performance.now() - started)}ms`);
     }
@@ -404,23 +424,43 @@ async function handlePreviewRoute(
 }
 
 // ---- static files ----
+function mimeTypeFor(rel: string): string {
+  const lower = rel.toLowerCase();
+  if (lower.endsWith(".js") || lower.endsWith(".mjs")) return "text/javascript; charset=utf-8";
+  if (lower.endsWith(".css")) return "text/css; charset=utf-8";
+  if (lower.endsWith(".html")) return "text/html; charset=utf-8";
+  if (lower.endsWith(".json") || lower.endsWith(".map")) return "application/json; charset=utf-8";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "application/octet-stream";
+}
+
+function isStaticBuildAssetPathname(pathname: string): boolean {
+  return /\.(?:js|mjs|css|map|png|webp|svg|jpg|jpeg|gif|ico|woff2?)$/i.test(pathname);
+}
+
 async function serveStatic(pathname: string): Promise<Response> {
   const rel = pathname === "/" ? "index.html" : normalize(decodeURIComponent(pathname)).replace(/^\/+/, "");
   const path = join(OUT_DIR, rel);
   if (!path.startsWith(OUT_DIR)) return new Response("forbidden", { status: 403 });
-  const file = Bun.file(path);
-  if (!(await file.exists())) {
+  if (!existsSync(path)) {
     // SPA fallback: anything without an extension gets the app shell.
     if (/\.[a-z0-9]+$/i.test(rel)) return new Response("not found", { status: 404 });
     return serveStatic("/");
   }
   if (rel === "index.html") {
-    const html = (await file.text()).replace("</body>", `${DEV_CLIENT_SCRIPT}</body>`);
+    const html = readFileSync(path, "utf8").replace("</body>", `${buildDevClientScript(WEB_TOKEN)}</body>`);
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   const isHashedAsset = /-[a-z0-9]{8}\.(?:png|webp|js|css)$/i.test(rel);
-  return new Response(file, {
+  const bytes = readFileSync(path);
+  return new Response(bytes, {
     headers: {
+      "content-type": mimeTypeFor(rel),
+      "content-length": String(bytes.byteLength),
       "cache-control": isHashedAsset ? "public, max-age=31536000, immutable" : "no-store",
     },
   });
@@ -449,6 +489,9 @@ function isLoopbackHostHeader(req: Request): boolean {
 
 function checkWebTokenAuth(req: Request, url: URL): { authorized: boolean; setCookie?: string } {
   if (!WEB_TOKEN || isLoopbackHostHeader(req)) return { authorized: true };
+  if ((req.method === "GET" || req.method === "HEAD") && isStaticBuildAssetPathname(url.pathname)) {
+    return { authorized: true };
+  }
   const queryToken = url.searchParams.get("token");
   if (queryToken === WEB_TOKEN) {
     const secure = TLS_CERT ? "; Secure" : "";
@@ -461,54 +504,73 @@ function checkWebTokenAuth(req: Request, url: URL): { authorized: boolean; setCo
   if (authHeader === `Bearer ${WEB_TOKEN}`) return { authorized: true };
   const cookieToken = parseCookieValue(req.headers.get("cookie"), AUTH_COOKIE);
   if (cookieToken === WEB_TOKEN) return { authorized: true };
+  const referer = req.headers.get("referer");
+  if (referer) {
+    try {
+      if (new URL(referer).searchParams.get("token") === WEB_TOKEN) return { authorized: true };
+    } catch {}
+  }
   return { authorized: false };
 }
 
+process.on("uncaughtException", (err) => {
+  console.error("[dev] uncaughtException:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[dev] unhandledRejection:", reason);
+});
+
 const tlsConfig =
   TLS_CERT && TLS_KEY && existsSync(TLS_CERT) && existsSync(TLS_KEY)
-    ? { cert: Bun.file(TLS_CERT), key: Bun.file(TLS_KEY) }
+    ? { cert: readFileSync(TLS_CERT), key: readFileSync(TLS_KEY) }
     : undefined;
 
 const server = Bun.serve({
   hostname: HOST,
   port: PORT,
-  idleTimeout: 0,
+  idleTimeout: 255,
   ...(tlsConfig ? { tls: tlsConfig } : {}),
   async fetch(req) {
-    const url = new URL(req.url);
-    const auth = checkWebTokenAuth(req, url);
-    if (!auth.authorized) {
-      return new Response("Unauthorized — provide a valid ?token= parameter.", { status: 401 });
+    try {
+      const url = new URL(req.url);
+      const auth = checkWebTokenAuth(req, url);
+      if (!auth.authorized) {
+        console.warn(`[dev] 401 unauthorized: ${req.method} ${url.pathname}`);
+        return new Response("Unauthorized — provide a valid ?token= parameter.", { status: 401 });
+      }
+      const attachAuthCookie = (res: Response): Response => {
+        if (!auth.setCookie) return res;
+        const headers = new Headers(res.headers);
+        headers.append("set-cookie", auth.setCookie);
+        return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+      };
+      if (url.pathname.endsWith("/actions") && req.method === "POST") {
+        return attachAuthCookie(await handleAction(req));
+      }
+      const previewTarget = parseDevPreviewTarget(req, url);
+      if (previewTarget) return attachAuthCookie(await handlePreviewRoute(req, url, previewTarget));
+      if (url.pathname === "/__dev/events") {
+        let ctl: ReadableStreamDefaultController<string>;
+        const stream = new ReadableStream<string>({
+          start(controller) {
+            ctl = controller;
+            listeners.add(controller);
+            controller.enqueue(": connected\n\n");
+          },
+          cancel() {
+            listeners.delete(ctl);
+          },
+        });
+        return attachAuthCookie(new Response(stream, {
+          headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" },
+        }));
+      }
+      if (req.method !== "GET" && req.method !== "HEAD") return new Response("method not allowed", { status: 405 });
+      return attachAuthCookie(await serveStatic(url.pathname));
+    } catch (err) {
+      console.error("[dev] request handler error:", err);
+      return new Response("Internal Server Error", { status: 500 });
     }
-    const attachAuthCookie = (res: Response): Response => {
-      if (!auth.setCookie) return res;
-      const headers = new Headers(res.headers);
-      headers.append("set-cookie", auth.setCookie);
-      return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
-    };
-    if (url.pathname.endsWith("/actions") && req.method === "POST") {
-      return attachAuthCookie(await handleAction(req));
-    }
-    const previewTarget = parseDevPreviewTarget(req, url);
-    if (previewTarget) return attachAuthCookie(await handlePreviewRoute(req, url, previewTarget));
-    if (url.pathname === "/__dev/events") {
-      let ctl: ReadableStreamDefaultController<string>;
-      const stream = new ReadableStream<string>({
-        start(controller) {
-          ctl = controller;
-          listeners.add(controller);
-          controller.enqueue(": connected\n\n");
-        },
-        cancel() {
-          listeners.delete(ctl);
-        },
-      });
-      return attachAuthCookie(new Response(stream, {
-        headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" },
-      }));
-    }
-    if (req.method !== "GET" && req.method !== "HEAD") return new Response("method not allowed", { status: 405 });
-    return attachAuthCookie(await serveStatic(url.pathname));
   },
 });
 

@@ -9,8 +9,10 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
 export interface PiToolResult {
@@ -111,16 +113,18 @@ export function resolveExtensionConfig(env: NodeJS.ProcessEnv = process.env): Co
   const repoRoot = env.MUSE_CODE_SPACE_ROOT?.trim() || path.resolve(extDir, "../..");
   const homeDir = env.HOME?.trim() || os.homedir();
   const stateDir = chooseWritableStateDir(env, homeDir, repoRoot);
+  const persisted = loadPersistedPilotEnv(stateDir);
+  const mergedEnv: NodeJS.ProcessEnv = { ...persisted, ...env };
 
-  const pilotPort = Number(env.MUSE_CODE_SPACE_PILOT_PORT ?? 18791);
-  const pilotUrl = (env.MUSE_CODE_SPACE_PILOT_URL?.trim() || `http://127.0.0.1:${pilotPort}`).replace(/\/+$/, "");
-  const webPort = Number(env.MUSE_CODE_SPACE_PORT ?? env.MUSE_CODE_SPACE_DEV_PORT ?? 4173);
-  const webHost = env.MUSE_CODE_SPACE_HOST?.trim() || env.MUSE_CODE_SPACE_DEV_HOST?.trim() || "::";
-  const publicHost = env.MUSE_CODE_SPACE_PUBLIC_HOST?.trim() || os.hostname() || "127.0.0.1";
+  const pilotPort = Number(mergedEnv.MUSE_CODE_SPACE_PILOT_PORT ?? 18791);
+  const pilotUrl = (mergedEnv.MUSE_CODE_SPACE_PILOT_URL?.trim() || `http://127.0.0.1:${pilotPort}`).replace(/\/+$/, "");
+  const webPort = Number(mergedEnv.MUSE_CODE_SPACE_PORT ?? mergedEnv.MUSE_CODE_SPACE_DEV_PORT ?? 4173);
+  const webHost = mergedEnv.MUSE_CODE_SPACE_HOST?.trim() || mergedEnv.MUSE_CODE_SPACE_DEV_HOST?.trim() || "::";
+  const publicHost = mergedEnv.MUSE_CODE_SPACE_PUBLIC_HOST?.trim() || os.hostname() || "127.0.0.1";
 
-  const tlsPem = env.MUSE_CODE_SPACE_TLS_PEM?.trim() || null;
-  const tlsCert = env.MUSE_CODE_SPACE_TLS_CERT?.trim() || tlsPem;
-  const tlsKey = env.MUSE_CODE_SPACE_TLS_KEY?.trim() || tlsPem;
+  const tlsPem = mergedEnv.MUSE_CODE_SPACE_TLS_PEM?.trim() || null;
+  const tlsCert = mergedEnv.MUSE_CODE_SPACE_TLS_CERT?.trim() || tlsPem;
+  const tlsKey = mergedEnv.MUSE_CODE_SPACE_TLS_KEY?.trim() || tlsPem;
 
   const tokenFile = path.join(stateDir, "web-token");
   let webToken = "";
@@ -254,6 +258,86 @@ function ensureLoopbackNoProxy(): void {
   process.env.no_proxy = value;
 }
 
+function rawLoopbackHttpRequest(
+  urlStr: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+  } = {},
+): Promise<{ status: number; ok: boolean; body: string }> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try {
+      u = new URL(urlStr);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const isHttps = u.protocol === "https:";
+    const port = Number(u.port || (isHttps ? 443 : 80));
+    const host = u.hostname.replace(/^\[|\]$/g, "");
+    const bodyBuf = options.body ? Buffer.from(options.body, "utf8") : null;
+    const headers: Record<string, string> = {
+      host: u.host,
+      connection: "close",
+      ...(bodyBuf ? { "content-length": String(bodyBuf.length) } : {}),
+      ...(options.headers ?? {}),
+    };
+    const reqLines = [`${options.method ?? "GET"} ${u.pathname}${u.search} HTTP/1.1`];
+    for (const [k, v] of Object.entries(headers)) {
+      if (v !== undefined) reqLines.push(`${k}: ${v}`);
+    }
+    reqLines.push("", "");
+    const headBuf = Buffer.from(reqLines.join("\r\n"), "utf8");
+
+    let settled = false;
+    const finish = (err: Error | null, res?: { status: number; ok: boolean; body: string }) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve(res!);
+    };
+
+    const onConnect = (sock: net.Socket) => {
+      sock.write(headBuf);
+      if (bodyBuf) sock.write(bodyBuf);
+    };
+    const sock = isHttps
+      ? tls.connect({ host, port, rejectUnauthorized: false }, () => onConnect(sock))
+      : net.connect({ host, port }, () => onConnect(sock));
+    sock.setTimeout(options.timeoutMs ?? 2000, () => {
+      sock.destroy(new Error("timeout"));
+    });
+    const chunks: Buffer[] = [];
+    sock.on("data", (c) => chunks.push(Buffer.from(c)));
+    sock.on("error", (err) => finish(err));
+    sock.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      const sep = raw.indexOf("\r\n\r\n");
+      const head = sep >= 0 ? raw.slice(0, sep) : raw;
+      let body = sep >= 0 ? raw.slice(sep + 4) : "";
+      if (/transfer-encoding:\s*chunked/i.test(head)) {
+        const decoded: string[] = [];
+        let idx = 0;
+        while (idx < body.length) {
+          const lineEnd = body.indexOf("\r\n", idx);
+          if (lineEnd < 0) break;
+          const len = Number.parseInt(body.slice(idx, lineEnd).trim(), 16);
+          if (!Number.isFinite(len) || len <= 0) break;
+          decoded.push(body.slice(lineEnd + 2, lineEnd + 2 + len));
+          idx = lineEnd + 2 + len + 2;
+        }
+        body = decoded.join("");
+      }
+      const statusMatch = head.match(/^HTTP\/1\.[01]\s+(\d+)/);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      finish(null, { status, ok: status >= 200 && status < 300, body });
+    });
+  });
+}
+
 export async function invokeCodeSpaceAction<T = unknown>(
   cfg: CodeSpaceExtensionConfig,
   action: string,
@@ -261,7 +345,7 @@ export async function invokeCodeSpaceAction<T = unknown>(
 ): Promise<T> {
   ensureLoopbackNoProxy();
   const url = formatLocalActionUrl(cfg);
-  const res = await fetch(url, {
+  const res = await rawLoopbackHttpRequest(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -272,12 +356,9 @@ export async function invokeCodeSpaceAction<T = unknown>(
       args,
       actionCallId: `pi-ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     }),
-    signal: AbortSignal.timeout(15_000),
-    // Loopback requests to https://127.0.0.1:<port> use the host's certificate
-    // (whose SAN is the machine hostname rather than 127.0.0.1).
-    tls: { rejectUnauthorized: false },
-  } as RequestInit);
-  const body = (await res.json()) as { data?: T; error?: unknown };
+    timeoutMs: 15_000,
+  });
+  const body = JSON.parse(res.body) as { data?: T; error?: unknown };
   if (!res.ok || body.error) {
     throw new Error(typeof body.error === "string" ? body.error : `Action ${action} failed (${res.status})`);
   }
@@ -722,11 +803,7 @@ async function runBunInstall(
   });
 }
 
-function buildFallbackSpaceSdkTarball(stateDir: string): string {
-  const tgzPath = path.join(stateDir, "space-sdk-fallback-v4.tgz");
-  if (fs.existsSync(tgzPath)) return tgzPath;
-  const tarBase = path.join(stateDir, "space-sdk-fallback-v4");
-  const pkgRoot = path.join(tarBase, "package");
+function writeFallbackSpaceSdkFiles(pkgRoot: string): void {
   const distDir = path.join(pkgRoot, "dist");
   fs.mkdirSync(distDir, { recursive: true, mode: 0o700 });
 
@@ -804,8 +881,15 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
       "  return { format: PRIVILEGED_HANDLERS_FORMAT, entries };",
       "}",
       'export function isPrivilegedHandlers(v) { return Boolean(v && typeof v === "object" && v.format === PRIVILEGED_HANDLERS_FORMAT); }',
-      "export function createPrivilegedExecutor(transport) {",
-      "  return { executePrivileged(contract, args) { return transport(contract, args); } };",
+      "export function createPrivilegedExecutor(declared, transport) {",
+      '  const fn = typeof transport === "function" ? transport : declared;',
+      "  return {",
+      "    async executePrivileged(contract, args) {",
+      "      const parsedArgs = contract?.request?.parse ? contract.request.parse(args) : args;",
+      "      const result = await fn(contract, parsedArgs);",
+      "      return contract?.response?.parse ? contract.response.parse(result) : result;",
+      "    },",
+      "  };",
       "}",
     ].join("\n"),
   );
@@ -817,6 +901,18 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
       'import { createElement } from "react";',
       'import { QueryClient } from "@tanstack/react-query";',
       "export const spaceQueryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } });",
+      'if (typeof window !== "undefined" && typeof window.addEventListener === "function") {',
+      '  window.addEventListener("message", (event) => {',
+      "    const data = event?.data;",
+      '    if (!data || typeof data !== "object" || data.type !== "hatch:space:query-invalidated") return;',
+      "    const keys = data.payload?.queryKeys;",
+      "    if (Array.isArray(keys) && keys.length > 0) {",
+      "      for (const queryKey of keys) spaceQueryClient.invalidateQueries({ queryKey });",
+      "    } else {",
+      "      spaceQueryClient.invalidateQueries();",
+      "    }",
+      "  });",
+      "}",
       "export function SafeAreaTopScrim({ variant = 'gradient', backgroundColor = 'var(--bg)', zIndex = 40, className, style, ...props }) {",
       "  return createElement('div', { ...props, 'aria-hidden': true, className, style: { ...style, position: 'fixed', top: 0, left: 0, right: 0, zIndex, pointerEvents: 'none', height: 'var(--twsa-safe-area-inset-top)', backgroundColor } });",
       "}",
@@ -837,7 +933,9 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
       "    get(_t, name) {",
       "      if (typeof name !== 'string' || name === 'then' || name === 'catch' || name === 'finally') return undefined;",
       "      return async (args) => {",
-      "        const res = await fetchImpl(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: name, args: args ?? {} }) });",
+      "        const tok = (typeof window !== 'undefined' && (new URLSearchParams(window.location?.search || '').get('token') || window.__MUSE_CODE_SPACE_TOKEN__)) || '';",
+      "        const headers = { 'content-type': 'application/json', ...(tok ? { authorization: 'Bearer ' + tok } : {}) };",
+      "        const res = await fetchImpl(endpoint, { method: 'POST', headers, body: JSON.stringify({ action: name, args: args ?? {} }) });",
       "        const body = await res.json();",
       "        if (!res.ok || (body && body.error)) throw new Error(String(body?.error ?? res.status));",
       "        return body.data;",
@@ -847,8 +945,16 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
       "}",
     ].join("\n"),
   );
+}
 
-  spawnSync("tar", ["-czf", tgzPath, "-C", tarBase, "package"], { stdio: "ignore" });
+function buildFallbackSpaceSdkTarball(stateDir: string): string {
+  const tgzPath = path.join(stateDir, "space-sdk-fallback-v5.tgz");
+  const tarBase = path.join(stateDir, "space-sdk-fallback-v5");
+  const pkgRoot = path.join(tarBase, "package");
+  writeFallbackSpaceSdkFiles(pkgRoot);
+  if (!fs.existsSync(tgzPath)) {
+    spawnSync("tar", ["-czf", tgzPath, "-C", tarBase, "package"], { stdio: "ignore" });
+  }
   return tgzPath;
 }
 
@@ -862,7 +968,17 @@ async function ensureRepoDependencies(
   const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
   const reactModuleDir = path.join(repoRoot, "node_modules", "react");
   const tailwindPluginDir = path.join(repoRoot, "node_modules", "bun-plugin-tailwind");
-  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir)) return true;
+  const hatchTgz = "/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz";
+  const needsFallbackSdk = !fs.existsSync(hatchTgz);
+
+  if (fs.existsSync(sdkModuleDir) && fs.existsSync(reactModuleDir) && fs.existsSync(tailwindPluginDir)) {
+    if (needsFallbackSdk) {
+      try {
+        writeFallbackSpaceSdkFiles(sdkModuleDir);
+      } catch {}
+    }
+    return true;
+  }
 
   const pkgJsonPath = path.join(repoRoot, "package.json");
   const bunLockPath = path.join(repoRoot, "bun.lock");
@@ -870,8 +986,6 @@ async function ensureRepoDependencies(
 
   const origPkg = fs.readFileSync(pkgJsonPath, "utf8");
   const origLock = fs.existsSync(bunLockPath) ? fs.readFileSync(bunLockPath, "utf8") : null;
-  const hatchTgz = "/opt/hatch/skills/spaces/ts-runtime/dist/space-sdk.tgz";
-  const needsFallbackSdk = !fs.existsSync(hatchTgz);
 
   try {
     if (needsFallbackSdk) {
@@ -910,15 +1024,24 @@ async function ensureRepoDependencies(
 async function isHttpReachable(url: string, headers?: Record<string, string>): Promise<boolean> {
   ensureLoopbackNoProxy();
   try {
-    const res = await fetch(url, {
+    const res = await rawLoopbackHttpRequest(url, {
       headers,
-      signal: AbortSignal.timeout(1200),
-      tls: { rejectUnauthorized: false },
-    } as RequestInit);
+      timeoutMs: 1200,
+    });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+async function isWebServerReachable(cfg: CodeSpaceExtensionConfig): Promise<boolean> {
+  const authHeaders = cfg.webToken ? { authorization: `Bearer ${cfg.webToken}` } : undefined;
+  const primaryUrl = formatLocalActionUrl(cfg).replace(/\/actions$/, "/");
+  if (await isHttpReachable(primaryUrl, authHeaders)) return true;
+  const altScheme = primaryUrl.startsWith("https:") ? "http" : "https";
+  if (await isHttpReachable(`${altScheme}://127.0.0.1:${cfg.webPort}/`, authHeaders)) return true;
+  if (await isHttpReachable(`${altScheme === "https" ? "http" : "https"}://[::1]:${cfg.webPort}/`, authHeaders)) return true;
+  return isHttpReachable(`${altScheme}://[::1]:${cfg.webPort}/`, authHeaders);
 }
 
 function writePidFile(stateDir: string, name: string, pid: number | undefined): void {
@@ -953,9 +1076,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
 
   const checkServicesRunning = async (): Promise<{ pilotUp: boolean; webUp: boolean }> => {
     const pilotUp = await isHttpReachable(`${cfg.pilotUrl}/health`);
-    const webCheckUrl = formatLocalActionUrl(cfg).replace(/\/actions$/, "/");
-    const authHeaders = cfg.webToken ? { authorization: `Bearer ${cfg.webToken}` } : undefined;
-    const webUp = await isHttpReachable(webCheckUrl, authHeaders);
+    const webUp = await isWebServerReachable(cfg);
     return { pilotUp, webUp };
   };
 
@@ -997,6 +1118,11 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
               fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
             } catch {}
           });
+          spawnedPilot.on("exit", (code, sig) => {
+            try {
+              fs.appendFileSync(logPath, `[pilot] exited code=${code ?? "null"} signal=${sig ?? "null"}\n`);
+            } catch {}
+          });
           writePidFile(cfg.stateDir, "pilot", spawnedPilot.pid);
           spawnedPilot.unref();
           for (let i = 0; i < 40; i++) {
@@ -1012,9 +1138,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       }
     }
 
-    const webCheckUrl = formatLocalActionUrl(cfg).replace(/\/actions$/, "/");
-    const authHeaders = cfg.webToken ? { authorization: `Bearer ${cfg.webToken}` } : undefined;
-    let webUp = await isHttpReachable(webCheckUrl, authHeaders);
+    let webUp = await isWebServerReachable(cfg);
     if (!webUp && shouldStart) {
       const serverScript = path.join(cfg.repoRoot, "dev", "server.ts");
       if (fs.existsSync(serverScript)) {
@@ -1047,11 +1171,16 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
                 fs.appendFileSync(logPath, `spawn error: ${err.message}\n`);
               } catch {}
             });
+            spawnedWeb.on("exit", (code, sig) => {
+              try {
+                fs.appendFileSync(logPath, `[web] exited code=${code ?? "null"} signal=${sig ?? "null"}\n`);
+              } catch {}
+            });
             writePidFile(cfg.stateDir, "web", spawnedWeb.pid);
             spawnedWeb.unref();
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < 60; i++) {
               await new Promise((r) => setTimeout(r, 350));
-              webUp = await isHttpReachable(webCheckUrl, authHeaders);
+              webUp = await isWebServerReachable(cfg);
               if (webUp) break;
             }
           } catch (err) {
