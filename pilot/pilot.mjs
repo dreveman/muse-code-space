@@ -410,10 +410,21 @@ function museServeEnv(source = process.env) {
 
 async function spawnHost() {
   const authPath = `${HOME}/.config/muse-code-space-pilot/muse/auth.json`;
-  if (!RELAY_ENABLED && HOME && !existsSync(authPath)) {
+  if (!RELAY_ENABLED && HOME) {
     try {
-      mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
-      writeFileSync(authPath, '{"OPENAI_API_KEY":"sentinel-not-used-by-relay"}\n', { mode: 0o600 });
+      let validAuth = false;
+      if (existsSync(authPath)) {
+        const parsed = JSON.parse(readFileSync(authPath, "utf8"));
+        validAuth = Boolean(parsed && typeof parsed === "object" && typeof parsed.schema_version === "number");
+      }
+      if (!validAuth) {
+        mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+        writeFileSync(
+          authPath,
+          '{"schema_version": 1, "providers": {"meta": {"api_key": "relay-provided-sentinel"}}}\n',
+          { mode: 0o600 },
+        );
+      }
     } catch { /* ignore on read-only test fs */ }
   }
   const env = museServeEnv();
