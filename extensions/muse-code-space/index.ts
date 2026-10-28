@@ -559,51 +559,96 @@ export function resolvePilotJsRuntime(
   return bunRuntime;
 }
 
-function runBunInstall(
+function runSpawnAsync(
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; logFd: number; timeoutMs?: number },
+): Promise<number> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (code: number) => {
+      if (settled) return;
+      settled = true;
+      resolve(code);
+    };
+    try {
+      const child = spawn(command, [...args], {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: ["ignore", options.logFd, options.logFd],
+      });
+      const timer = options.timeoutMs
+        ? setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {}
+            finish(124);
+          }, options.timeoutMs)
+        : null;
+      child.on("error", () => {
+        if (timer) clearTimeout(timer);
+        finish(1);
+      });
+      child.on("close", (code) => {
+        if (timer) clearTimeout(timer);
+        finish(code ?? 1);
+      });
+    } catch {
+      finish(1);
+    }
+  });
+}
+
+async function runBunInstall(
   cwd: string,
   bunRuntime: { command: string; env: Record<string, string> },
   customEnv: Record<string, string>,
   logFd: number,
-): void {
+): Promise<void> {
   const baseEnv: Record<string, string | undefined> = {
     ...process.env,
     ...customEnv,
     ...bunRuntime.env,
   };
-  const first = spawnSync(bunRuntime.command, ["install"], {
-    cwd,
-    env: baseEnv as NodeJS.ProcessEnv,
-    stdio: ["ignore", logFd, logFd],
-  });
-  if (first.status === 0) return;
-
-  // If an outer launcher set a loopback-only HTTP(S)_PROXY that blocks package
-  // registries (403) and the user did not explicitly set a proxy in customEnv,
-  // retry without the loopback proxy variables (and via `with-proxy` if present).
   const proxyVal = baseEnv.HTTPS_PROXY || baseEnv.https_proxy || baseEnv.HTTP_PROXY || baseEnv.http_proxy || "";
   const hasCustomProxy = Boolean(
     customEnv.HTTPS_PROXY || customEnv.https_proxy || customEnv.HTTP_PROXY || customEnv.http_proxy,
   );
-  if (!hasCustomProxy && /(?:localhost|127\.0\.0\.1)/i.test(proxyVal)) {
+  const isLoopbackProxy = !hasCustomProxy && /(?:localhost|127\.0\.0\.1)/i.test(proxyVal);
+
+  // If an outer launcher set a loopback-only HTTP(S)_PROXY (which blocks
+  // package registries with 403), strip it first and prefer `with-proxy` when
+  // available in $PATH so the first install attempt succeeds immediately.
+  if (isLoopbackProxy) {
     const cleanEnv = { ...baseEnv };
     for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
       delete cleanEnv[k];
     }
     const withProxyBin = findExecutableInPath("with-proxy", process.env);
     if (withProxyBin) {
-      const viaWrapper = spawnSync(withProxyBin, [bunRuntime.command, "install"], {
+      const code = await runSpawnAsync(withProxyBin, [bunRuntime.command, "install"], {
         cwd,
         env: cleanEnv as NodeJS.ProcessEnv,
-        stdio: ["ignore", logFd, logFd],
+        logFd,
+        timeoutMs: 25_000,
       });
-      if (viaWrapper.status === 0) return;
+      if (code === 0) return;
     }
-    spawnSync(bunRuntime.command, ["install"], {
+    const directCode = await runSpawnAsync(bunRuntime.command, ["install"], {
       cwd,
       env: cleanEnv as NodeJS.ProcessEnv,
-      stdio: ["ignore", logFd, logFd],
+      logFd,
+      timeoutMs: 20_000,
     });
+    if (directCode === 0) return;
   }
+
+  await runSpawnAsync(bunRuntime.command, ["install"], {
+    cwd,
+    env: baseEnv as NodeJS.ProcessEnv,
+    logFd,
+    timeoutMs: 20_000,
+  });
 }
 
 function buildFallbackSpaceSdkTarball(stateDir: string): string {
@@ -728,13 +773,13 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
   return tgzPath;
 }
 
-function ensureRepoDependencies(
+async function ensureRepoDependencies(
   repoRoot: string,
   stateDir: string,
   bunRuntime: { command: string; env: Record<string, string> },
   customEnv: Record<string, string>,
   logFd: number,
-): void {
+): Promise<void> {
   const sdkModuleDir = path.join(repoRoot, "node_modules", "@hatch", "space-sdk");
   const reactModuleDir = path.join(repoRoot, "node_modules", "react");
   const tailwindPluginDir = path.join(repoRoot, "node_modules", "bun-plugin-tailwind");
@@ -759,7 +804,7 @@ function ensureRepoDependencies(
         fs.writeFileSync(bunLockPath, patchedLock);
       }
     }
-    runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
+    await runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
   } finally {
     if (needsFallbackSdk) {
       try {
@@ -817,7 +862,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         const logFd = fs.openSync(logPath, "w");
         const sdkDir = path.join(pilotDir, "node_modules", "@muse-code", "sdk");
         if (!fs.existsSync(sdkDir)) {
-          runBunInstall(pilotDir, bunRuntime, customEnv, logFd);
+          await runBunInstall(pilotDir, bunRuntime, customEnv, logFd);
         }
         const pilotRuntime = resolvePilotJsRuntime(bunRuntime, process.env);
         try {
@@ -865,7 +910,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         fs.mkdirSync(webDir, { recursive: true, mode: 0o700 });
         const logPath = path.join(cfg.stateDir, "web.log");
         const logFd = fs.openSync(logPath, "w");
-        ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv, logFd);
+        await ensureRepoDependencies(cfg.repoRoot, cfg.stateDir, bunRuntime, customEnv, logFd);
         try {
           spawnedWeb = spawn(bunRuntime.command, [serverScript], {
             cwd: cfg.repoRoot,
@@ -1552,22 +1597,42 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
           spawnedPilot?.kill();
           identitySynced = false;
         }
-        const { pilotUp, webUp } = await ensureServicesRunning(true);
-        if (pilotUp && webUp) {
-          await syncModelsFromPilot();
-          startPolling();
-          void syncIdentityAndPollInbox();
+        let finishedSync = false;
+        const startTask = (async () => {
+          const { pilotUp, webUp } = await ensureServicesRunning(true);
+          if (pilotUp && webUp) {
+            await syncModelsFromPilot();
+            startPolling();
+            void syncIdentityAndPollInbox();
+          }
+          const notice = formatStartupNotice({
+            pilotUp,
+            webUp,
+            webUrl: formatPublicWebUrl(cfg),
+            pilotUrl: cfg.pilotUrl,
+            stateDir: cfg.stateDir,
+            pilotError: pilotUp ? null : readLastLogError(path.join(cfg.stateDir, "pilot.log")),
+            webError: webUp ? null : readLastLogError(path.join(cfg.stateDir, "web.log")),
+          });
+          if (finishedSync) {
+            ctx.ui.notify(notice.message, notice.level);
+          }
+          return notice;
+        })();
+
+        const raced = await Promise.race([
+          startTask,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+        ]);
+        if (raced) {
+          ctx.ui.notify(raced.message, raced.level);
+        } else {
+          finishedSync = true;
+          ctx.ui.notify(
+            `Starting Muse Code Space in the background (installing packages & booting pilot)… Web UI URL: ${formatPublicWebUrl(cfg)} (run /code-space to check progress)`,
+            "info",
+          );
         }
-        const notice = formatStartupNotice({
-          pilotUp,
-          webUp,
-          webUrl: formatPublicWebUrl(cfg),
-          pilotUrl: cfg.pilotUrl,
-          stateDir: cfg.stateDir,
-          pilotError: pilotUp ? null : readLastLogError(path.join(cfg.stateDir, "pilot.log")),
-          webError: webUp ? null : readLastLogError(path.join(cfg.stateDir, "web.log")),
-        });
-        ctx.ui.notify(notice.message, notice.level);
         return;
       }
 
