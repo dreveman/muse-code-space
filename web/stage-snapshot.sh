@@ -142,11 +142,15 @@ fi
 # dependency with an empty integrity. Hashing whatever tarball is present at
 # staging time keeps this correct across platform SDK re-spins; only the
 # staged snapshot is modified, never the checkout.
-_sdk_ref="$(grep -o '"@hatch/space-sdk": "file:[^"]*"' "$dest/package.json" | head -1 | sed 's/.*file://; s/"$//')"
-if [ -z "$_sdk_ref" ] || [ ! -f "$_sdk_ref" ]; then
+_sdk_ref="$(grep -o '"@hatch/space-sdk": "file:[^"]*"' "$dest/package.json" | head -1 | sed 's/.*file://; s/"$//' || true)"
+if [ -z "$_sdk_ref" ]; then
+  # No @hatch/space-sdk file: dependency (a minimal fixture, or a tree that
+  # does not use the SDK) — there is nothing to pin.
+  echo "stage-snapshot: no @hatch/space-sdk file: dependency in $dest/package.json - nothing to pin"
+elif [ ! -f "$_sdk_ref" ]; then
   echo "stage-snapshot: cannot locate the @hatch/space-sdk tarball referenced by $dest/package.json" >&2
   exit 1
-fi
+else
 _sdk_integrity="sha512-$(openssl dgst -sha512 -binary "$_sdk_ref" | openssl base64 -A)"
 SDK_INTEGRITY="$_sdk_integrity" python3 - "$dest/bun.lock" <<'PYEOF2'
 import os, re, sys
@@ -164,4 +168,5 @@ open(path, "w").write("".join(lines))
 PYEOF2
 grep -qF ""$_sdk_integrity"" "$dest/bun.lock" || { echo "stage-snapshot: failed to pin @hatch/space-sdk integrity in $dest/bun.lock" >&2; exit 1; }
 echo "stage-snapshot: pinned @hatch/space-sdk integrity to $_sdk_integrity"
+fi
 echo "staged snapshot for slug \"$slug\" at $dest ($(find "$dest" -type f | wc -l) files)"
