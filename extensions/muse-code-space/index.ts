@@ -599,6 +599,34 @@ function runSpawnAsync(
   });
 }
 
+function buildCleanServiceEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  customEnv: Record<string, string>,
+  extraEnv: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const merged: Record<string, string | undefined> = {
+    ...baseEnv,
+    ...customEnv,
+    ...extraEnv,
+  };
+  if (merged.MUSE_CODE_SPACE_KEEP_PROXY !== "1") {
+    for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
+      delete merged[k];
+    }
+  }
+  const existingNoProxy = (merged.NO_PROXY || merged.no_proxy || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const host of ["localhost", "127.0.0.1", "::1"]) {
+    if (!existingNoProxy.includes(host)) existingNoProxy.push(host);
+  }
+  const noProxyValue = existingNoProxy.join(",");
+  merged.NO_PROXY = noProxyValue;
+  merged.no_proxy = noProxyValue;
+  return merged as NodeJS.ProcessEnv;
+}
+
 async function runBunInstall(
   cwd: string,
   bunRuntime: { command: string; env: Record<string, string> },
@@ -610,38 +638,32 @@ async function runBunInstall(
     ...customEnv,
     ...bunRuntime.env,
   };
-  const proxyVal = baseEnv.HTTPS_PROXY || baseEnv.https_proxy || baseEnv.HTTP_PROXY || baseEnv.http_proxy || "";
-  const hasCustomProxy = Boolean(
-    customEnv.HTTPS_PROXY || customEnv.https_proxy || customEnv.HTTP_PROXY || customEnv.http_proxy,
-  );
-  const isLoopbackProxy = !hasCustomProxy && /(?:localhost|127\.0\.0\.1)/i.test(proxyVal);
+  const cleanEnv = { ...baseEnv };
+  for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
+    delete cleanEnv[k];
+  }
 
-  // If an outer launcher set a loopback-only HTTP(S)_PROXY (which blocks
-  // package registries with 403), strip it first and prefer `with-proxy` when
-  // available in $PATH so the first install attempt succeeds immediately.
-  if (isLoopbackProxy) {
-    const cleanEnv = { ...baseEnv };
-    for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
-      delete cleanEnv[k];
-    }
-    const withProxyBin = findExecutableInPath("with-proxy", process.env);
-    if (withProxyBin) {
-      const code = await runSpawnAsync(withProxyBin, [bunRuntime.command, "install"], {
-        cwd,
-        env: cleanEnv as NodeJS.ProcessEnv,
-        logFd,
-        timeoutMs: 25_000,
-      });
-      if (code === 0) return;
-    }
-    const directCode = await runSpawnAsync(bunRuntime.command, ["install"], {
+  // When `with-proxy` is available in $PATH, use it first with a clean proxy
+  // environment so it configures outbound proxy, NO_PROXY, and CA certificates
+  // for package registry downloads.
+  const withProxyBin = findExecutableInPath("with-proxy", process.env);
+  if (withProxyBin) {
+    const code = await runSpawnAsync(withProxyBin, [bunRuntime.command, "install"], {
       cwd,
       env: cleanEnv as NodeJS.ProcessEnv,
       logFd,
-      timeoutMs: 20_000,
+      timeoutMs: 25_000,
     });
-    if (directCode === 0) return;
+    if (code === 0) return;
   }
+
+  const directCode = await runSpawnAsync(bunRuntime.command, ["install"], {
+    cwd,
+    env: cleanEnv as NodeJS.ProcessEnv,
+    logFd,
+    timeoutMs: 20_000,
+  });
+  if (directCode === 0) return;
 
   await runSpawnAsync(bunRuntime.command, ["install"], {
     cwd,
@@ -868,15 +890,13 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         try {
           spawnedPilot = spawn(pilotRuntime.command, [pilotScript], {
             cwd: cfg.repoRoot,
-            env: {
-              ...process.env,
-              ...customEnv,
+            env: buildCleanServiceEnv(process.env, customEnv, {
               ...pilotRuntime.env,
               MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
               MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
               MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
               ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
-            },
+            }),
             stdio: ["ignore", logFd, logFd],
             detached: true,
           });
@@ -914,9 +934,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         try {
           spawnedWeb = spawn(bunRuntime.command, [serverScript], {
             cwd: cfg.repoRoot,
-            env: {
-              ...process.env,
-              ...customEnv,
+            env: buildCleanServiceEnv(process.env, customEnv, {
               ...bunRuntime.env,
               MUSE_CODE_SPACE_PILOT_URL: cfg.pilotUrl,
               MUSE_CODE_SPACE_DEV_HOST: cfg.webHost,
@@ -926,7 +944,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
               MUSE_CODE_SPACE_WEB_TOKEN: cfg.webToken,
               ...(cfg.tlsCert ? { MUSE_CODE_SPACE_TLS_CERT: cfg.tlsCert } : {}),
               ...(cfg.tlsKey ? { MUSE_CODE_SPACE_TLS_KEY: cfg.tlsKey } : {}),
-            },
+            }),
             stdio: ["ignore", logFd, logFd],
             detached: true,
           });
@@ -1637,7 +1655,9 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
       }
 
       const { pilotUp, webUp } = await checkServicesRunning();
-      if (!pilotUp && !webUp) {
+      const pilotLogErr = pilotUp ? null : readLastLogError(path.join(cfg.stateDir, "pilot.log"));
+      const webLogErr = webUp ? null : readLastLogError(path.join(cfg.stateDir, "web.log"));
+      if (!pilotUp && !webUp && !pilotLogErr && !webLogErr) {
         ctx.ui.notify("Muse Code Space is stopped. Run `/code-space start` to launch the pilot and web UI.", "info");
         return;
       }
@@ -1651,8 +1671,8 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
         webUrl: formatPublicWebUrl(cfg),
         pilotUrl: cfg.pilotUrl,
         stateDir: cfg.stateDir,
-        pilotError: pilotUp ? null : readLastLogError(path.join(cfg.stateDir, "pilot.log")),
-        webError: webUp ? null : readLastLogError(path.join(cfg.stateDir, "web.log")),
+        pilotError: pilotLogErr,
+        webError: webLogErr,
       });
       ctx.ui.notify(notice.message, notice.level);
     },
