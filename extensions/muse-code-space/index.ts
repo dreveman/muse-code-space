@@ -706,9 +706,10 @@ async function runBunInstall(
 }
 
 function buildFallbackSpaceSdkTarball(stateDir: string): string {
-  const tgzPath = path.join(stateDir, "space-sdk-fallback-v2.tgz");
+  const tgzPath = path.join(stateDir, "space-sdk-fallback-v3.tgz");
   if (fs.existsSync(tgzPath)) return tgzPath;
-  const pkgRoot = path.join(stateDir, "space-sdk-fallback-v2");
+  const tarBase = path.join(stateDir, "space-sdk-fallback-v3");
+  const pkgRoot = path.join(tarBase, "package");
   const distDir = path.join(pkgRoot, "dist");
   fs.mkdirSync(distDir, { recursive: true, mode: 0o700 });
 
@@ -823,7 +824,7 @@ function buildFallbackSpaceSdkTarball(stateDir: string): string {
     ].join("\n"),
   );
 
-  spawnSync("tar", ["-czf", tgzPath, "-C", pkgRoot, "."], { stdio: "ignore" });
+  spawnSync("tar", ["-czf", tgzPath, "-C", tarBase, "package"], { stdio: "ignore" });
   return tgzPath;
 }
 
@@ -851,13 +852,21 @@ async function ensureRepoDependencies(
   try {
     if (needsFallbackSdk) {
       const fallbackTgz = buildFallbackSpaceSdkTarball(stateDir);
-      const patchedPkg = origPkg.replaceAll(hatchTgz, fallbackTgz);
-      fs.writeFileSync(pkgJsonPath, patchedPkg);
+      const parsedPkg = JSON.parse(origPkg) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      if (parsedPkg.dependencies) {
+        parsedPkg.dependencies["@hatch/space-sdk"] = `file:${fallbackTgz}`;
+        parsedPkg.dependencies["bun-plugin-tailwind"] = "0.0.15";
+      }
+      fs.writeFileSync(pkgJsonPath, `${JSON.stringify(parsedPkg, null, 2)}\n`);
+      // Remove bun.lock (lockfileVersion 2) during fallback install so Bun 1.3
+      // (pi.real) does not reject lockfileVersion 2; restored in finally.
       if (origLock !== null) {
-        const patchedLock = origLock
-          .replaceAll(hatchTgz, fallbackTgz)
-          .replace(/("@hatch\/space-sdk":\s*\[[^\]]*,\s*)"sha512-[^"]*"(\s*\])/, '$1""$2');
-        fs.writeFileSync(bunLockPath, patchedLock);
+        try {
+          fs.unlinkSync(bunLockPath);
+        } catch {}
       }
     }
     await runBunInstall(repoRoot, bunRuntime, customEnv, logFd);
