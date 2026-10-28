@@ -415,15 +415,21 @@ export function readLastLogError(logPath: string): string | null {
     const text = fs.readFileSync(logPath, "utf8");
     const lines = text
       .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith("at "));
+      .map((l) => l.trim().replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, ""))
+      .filter((l) => l.length > 0 && !l.startsWith("at ") && !l.startsWith("line:"));
+    const stderrLines = lines
+      .filter((l) => l.includes("serve stderr:") && !l.includes("https://") && !l.includes("Using AI Gateway"))
+      .slice(-2);
     for (let i = lines.length - 1; i >= Math.max(0, lines.length - 15); i--) {
       const line = lines[i]!;
       if (/error|failed|not permitted|refused|exception/i.test(line)) {
-        return line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s*/, "").slice(0, 180);
+        const combined = stderrLines.length > 0 && !stderrLines.includes(line)
+          ? `${stderrLines.join(" | ")} -> ${line}`
+          : line;
+        return combined.slice(0, 240);
       }
     }
-    return lines.at(-1)?.slice(0, 180) ?? null;
+    return lines.at(-1)?.slice(0, 240) ?? null;
   } catch {
     return null;
   }
@@ -599,21 +605,47 @@ function runSpawnAsync(
   });
 }
 
+export function resolveMuseBin(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.MUSE_CODE_SPACE_MUSE_BIN?.trim()) {
+    return env.MUSE_CODE_SPACE_MUSE_BIN.trim();
+  }
+  const museInPath = findExecutableInPath("muse", env);
+  if (!museInPath) return null;
+  const resolved = (() => {
+    try {
+      return fs.realpathSync(museInPath);
+    } catch {
+      return museInPath;
+    }
+  })();
+  // When `muse` in $PATH is a launcher wrapper alongside `muse.real`, prefer
+  // `muse.real` so nested OS sandboxes (sandbox-exec / bwrap) are not invoked
+  // inside an already-sandboxed Pi session.
+  const realCandidate = `${resolved}.real`;
+  try {
+    fs.accessSync(realCandidate, fs.constants.X_OK);
+    return realCandidate;
+  } catch {
+    return resolved;
+  }
+}
+
 function buildCleanServiceEnv(
   baseEnv: NodeJS.ProcessEnv,
   customEnv: Record<string, string>,
   extraEnv: Record<string, string>,
 ): NodeJS.ProcessEnv {
-  const merged: Record<string, string | undefined> = {
-    ...baseEnv,
-    ...customEnv,
-    ...extraEnv,
-  };
-  if (merged.MUSE_CODE_SPACE_KEEP_PROXY !== "1") {
+  const sanitizedCustom = { ...customEnv };
+  if (sanitizedCustom.MUSE_CODE_SPACE_KEEP_PROXY !== "1") {
     for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) {
-      delete merged[k];
+      delete sanitizedCustom[k];
     }
   }
+  const merged: Record<string, string | undefined> = {
+    ...baseEnv,
+    ...sanitizedCustom,
+    ...extraEnv,
+  };
   const existingNoProxy = (merged.NO_PROXY || merged.no_proxy || "")
     .split(",")
     .map((s) => s.trim())
@@ -819,10 +851,12 @@ async function ensureRepoDependencies(
   try {
     if (needsFallbackSdk) {
       const fallbackTgz = buildFallbackSpaceSdkTarball(stateDir);
-      const patchedPkg = origPkg.replaceAll(`file:${hatchTgz}`, `file:${fallbackTgz}`);
+      const patchedPkg = origPkg.replaceAll(hatchTgz, fallbackTgz);
       fs.writeFileSync(pkgJsonPath, patchedPkg);
       if (origLock !== null) {
-        const patchedLock = origLock.replaceAll(`file:${hatchTgz}`, `file:${fallbackTgz}`);
+        const patchedLock = origLock
+          .replaceAll(hatchTgz, fallbackTgz)
+          .replace(/("@hatch\/space-sdk":\s*\[[^\]]*,\s*)"sha512-[^"]*"(\s*\])/, '$1""$2');
         fs.writeFileSync(bunLockPath, patchedLock);
       }
     }
@@ -887,6 +921,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
           await runBunInstall(pilotDir, bunRuntime, customEnv, logFd);
         }
         const pilotRuntime = resolvePilotJsRuntime(bunRuntime, process.env);
+        const museBin = resolveMuseBin(process.env);
         try {
           spawnedPilot = spawn(pilotRuntime.command, [pilotScript], {
             cwd: cfg.repoRoot,
@@ -895,6 +930,7 @@ export default function museCodeSpaceExtension(pi: PiExtensionAPI) {
               MUSE_CODE_SPACE_PILOT_PORT: String(cfg.pilotPort),
               MUSE_CODE_SPACE_RELAY_URL: customEnv.MUSE_CODE_SPACE_RELAY_URL ?? process.env.MUSE_CODE_SPACE_RELAY_URL ?? "none",
               MUSE_CODE_SPACE_PILOT_STATE_DIR: pilotStateDir,
+              ...(museBin ? { MUSE_CODE_SPACE_MUSE_BIN: museBin } : {}),
               ...(cfg.userName ? { MUSE_CODE_SPACE_USER_NAME: cfg.userName } : {}),
             }),
             stdio: ["ignore", logFd, logFd],
