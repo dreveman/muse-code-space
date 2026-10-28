@@ -1,7 +1,7 @@
 // Run: node --test pilot/repoSetup.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureRepoCloned, listGitHubRepos, originSlug, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
+import { cloneTimeoutReason, ensureRepoCloned, listGitHubRepos, originSlug, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
 
 test("parseRepoInput accepts owner/repo and github.com URLs", () => {
   const expected = {
@@ -155,12 +155,23 @@ test("ensureRepoCloned clones into a missing or empty directory", async () => {
   }
 });
 
+test("cloneTimeoutReason kills stalled and over-long clones but lets slow progress run", () => {
+  const start = 1_000_000;
+  // Progress within the stall window: alive well past the old fixed 120s cap.
+  assert.equal(cloneTimeoutReason({ startedAt: start, lastProgressAt: start + 20 * 60_000, now: start + 20 * 60_000 + 1_000 }), null);
+  // No progress for the full stall window.
+  assert.equal(cloneTimeoutReason({ startedAt: start, lastProgressAt: start, now: start + 5 * 60_000 }), "stalled");
+  // Absolute ceiling wins even with fresh progress.
+  assert.equal(cloneTimeoutReason({ startedAt: start, lastProgressAt: start + 60 * 60_000, now: start + 60 * 60_000 }), "timed-out");
+});
+
 test("ensureRepoCloned reuses the same repo on retry and refuses any other content", async () => {
   const repo = parseRepoInput("o/r");
   const reused = await ensureRepoCloned({
     dir: "/w/x", repo,
     gitClone: async () => { throw new Error("must not clone"); },
     gitOrigin: async () => "git@github.com:o/r.git",
+    gitHead: async () => "abc123",
     listDir: () => [".git", "README.md"],
   });
   assert.deepEqual(reused, { cloned: false, reused: true });
@@ -178,6 +189,32 @@ test("ensureRepoCloned reuses the same repo on retry and refuses any other conte
     gitOrigin: async () => null,
     listDir: () => ["notes.txt"],
   }), /not empty/);
+});
+
+test("ensureRepoCloned re-clones a partial clone instead of reusing it", async () => {
+  const repo = parseRepoInput("o/r");
+  const removed = [];
+  const clones = [];
+  const result = await ensureRepoCloned({
+    dir: "/w/x", repo,
+    gitClone: async (url, dir) => { clones.push([url, dir]); },
+    gitOrigin: async () => "git@github.com:o/r.git",
+    gitHead: async () => null, // interrupted clone: origin written, no HEAD yet
+    removeDir: async (dir) => { removed.push(dir); },
+    listDir: () => [".git"],
+  });
+  assert.deepEqual(result, { cloned: true, reused: false });
+  assert.deepEqual(removed, ["/w/x"]);
+  assert.deepEqual(clones, [["https://github.com/o/r.git", "/w/x"]]);
+
+  // Without a way to clear the partial directory, refuse rather than reuse it.
+  await assert.rejects(ensureRepoCloned({
+    dir: "/w/x", repo,
+    gitClone: async () => {},
+    gitOrigin: async () => "git@github.com:o/r.git",
+    gitHead: async () => null,
+    listDir: () => [".git"],
+  }), /partial clone/);
 });
 
 test("parseGitCloneProgress extracts phase, percentage, and transfer size from git stderr", () => {

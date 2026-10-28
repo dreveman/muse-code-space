@@ -203,19 +203,50 @@ export function parseGitCloneProgress(chunk, previous = null) {
   return state;
 }
 
+// A clone is killed only when it stops making progress (no output for the
+// stall window) or when it exceeds the absolute ceiling. Large repos on
+// slow connections legitimately run far past any fixed short cap, so the
+// old 120s kill made them impossible; progress is the health signal.
+export const CLONE_STALL_TIMEOUT_MS = 5 * 60_000;
+export const CLONE_MAX_DURATION_MS = 60 * 60_000;
+
+/**
+ * Why a running clone should be killed at `now`, or null to let it run.
+ * `startedAt`/`lastProgressAt` are epoch milliseconds.
+ */
+export function cloneTimeoutReason({
+  startedAt, lastProgressAt, now,
+  stallTimeoutMs = CLONE_STALL_TIMEOUT_MS,
+  maxDurationMs = CLONE_MAX_DURATION_MS,
+}) {
+  if (now - startedAt >= maxDurationMs) return "timed-out";
+  if (now - lastProgressAt >= stallTimeoutMs) return "stalled";
+  return null;
+}
+
 /**
  * Clone `repo` into `dir`, or reuse `dir` when a retry finds the same repo
- * already cloned there. Any other content is a hard error: a generated
- * workspace must never absorb an unrelated checkout.
+ * already cloned there. A same-repo directory with no HEAD is a partial
+ * clone left by an interrupted attempt: clear it (when `removeDir` is
+ * available) and clone fresh rather than starting in a broken checkout.
+ * Any other content is a hard error: a generated workspace must never
+ * absorb an unrelated checkout.
  */
-export async function ensureRepoCloned({ dir, repo, gitClone, gitOrigin, listDir, onProgress }) {
+export async function ensureRepoCloned({ dir, repo, gitClone, gitOrigin, gitHead, removeDir, listDir, onProgress }) {
   const entries = listDir(dir);
   if (entries && entries.includes(".git")) {
     const existing = originSlug(await gitOrigin(dir));
-    if (existing && existing === repo.slug.toLowerCase()) return { cloned: false, reused: true };
-    throw new Error("This companion's working directory already contains a different repository. Start a new companion.");
-  }
-  if (entries && entries.length > 0) {
+    if (existing && existing === repo.slug.toLowerCase()) {
+      const head = typeof gitHead === "function" ? await gitHead(dir) : "unverified";
+      if (head) return { cloned: false, reused: true };
+      if (typeof removeDir !== "function") {
+        throw new Error("This companion's working directory contains a partial clone of the picked repository. Start a new companion.");
+      }
+      await removeDir(dir);
+    } else {
+      throw new Error("This companion's working directory already contains a different repository. Start a new companion.");
+    }
+  } else if (entries && entries.length > 0) {
     throw new Error("This companion's working directory is not empty and is not the picked repository. Start a new companion.");
   }
   await gitClone(repo.cloneUrl, dir, onProgress);
