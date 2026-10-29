@@ -296,6 +296,7 @@ function CompanionConfiguration({
     <dl className="companion-configuration">
       <div><dt>Preferred model</dt><dd>{displayModelLabel(companion.model.preferredId)}</dd></div>
       <div><dt>Effort</dt><dd>{companion.effort === "xhigh" ? "Extra high" : companion.effort}</dd></div>
+      <CompanionMusicSection companion={companion} />
     </dl>
     <p className="companion-ratings-note">Ratings reflect relative strengths, model, and working style.</p>
     <details
@@ -405,7 +406,6 @@ const CompanionCard = memo(function CompanionCard({
         </ExpandButton>
         {detailsOpen && (
           <div id="companion-details-content">
-            <CompanionMusicSection companion={companion} />
             <CompanionConfiguration companion={companion} soulOpen={soulOpen} onToggleSoul={onToggleSoul} />
           </div>
         )}

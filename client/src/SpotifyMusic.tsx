@@ -161,8 +161,20 @@ export function SpotifySetupDialog({ onClose }: { onClose: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// Companion card "Music taste" section.
+// Companion card "Music taste" row: a single line in the card's
+// configuration list (after Effort). Disconnected shows a Connect Spotify
+// button on the right; connected shows just the Spotify icon (which is
+// the Tune in button when the companion has a playlist).
 // ---------------------------------------------------------------------------
+
+export function SpotifyIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512" aria-hidden="true" className="spotify-icon">
+      <path fill="#1ed760" d="M248 8C111.1 8 0 119.1 0 256s111.1 248 248 248 248-111.1 248-248S384.9 8 248 8Z" />
+      <path d="M406.6 231.1c-5.2 0-8.4-1.3-12.9-3.9-71.2-42.5-198.5-52.7-280.9-29.7-3.6 1-8.1 2.6-12.9 2.6-13.2 0-23.3-10.3-23.3-23.6 0-13.6 8.4-21.3 17.4-23.9 35.2-10.3 74.6-15.2 117.5-15.2 73 0 149.5 15.2 205.4 47.8 7.8 4.5 12.9 10.7 12.9 22.6 0 13.6-11 23.3-23.2 23.3zm-31 76.2c-5.2 0-8.7-2.3-12.3-4.2-62.5-37-155.7-51.9-238.6-29.4-4.8 1.3-7.4 2.6-11.9 2.6-10.7 0-19.4-8.7-19.4-19.4s5.2-17.8 15.5-20.7c27.8-7.8 56.2-13.6 97.8-13.6 64.9 0 127.6 16.1 177 45.5 8.1 4.8 11.3 11 11.3 19.7-.1 10.8-8.5 19.5-19.4 19.5zm-26.9 65.6c-4.2 0-6.8-1.3-10.7-3.6-62.4-37.6-135-39.2-206.7-24.5-3.9 1-9 2.6-11.9 2.6-9.7 0-15.8-7.7-15.8-15.8 0-10.3 6.1-15.2 13.6-16.8 81.9-18.1 165.6-16.5 237 26.2 6.1 3.9 9.7 7.4 9.7 16.5s-7.1 15.4-15.2 15.4z" />
+    </svg>
+  );
+}
 
 export function CompanionMusicSection({ companion }: { companion: MusicCompanion }) {
   const queryClient = useQueryClient();
@@ -189,32 +201,30 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     }
   };
 
+  const taste = [music.genre, ...music.tags, ...(music.playlist ? [music.playlist.name] : [])].join(" · ");
   return (
-    <section className="companion-music" aria-labelledby="companion-music-heading">
-      <h3 id="companion-music-heading">Music taste</h3>
-      <p className="companion-music-genre">{music.genre}</p>
-      <ul className="companion-music-tags">
-        {music.tags.map((tag) => <li key={tag}>{tag}</li>)}
-      </ul>
-      {music.playlist && <p className="companion-music-playlist">{music.playlist.name}</p>}
-      <div className="companion-music-actions">
-        {music.playlist && connected && (
-          <button type="button" className="companion-music-button" onClick={() => void tuneIn()} disabled={busy}>
-            {busy ? "Tuning in…" : "Tune in"}
+    <div className="companion-music-row">
+      <dt>Music taste</dt>
+      <dd>
+        <span className="companion-music-line" title={taste}>{taste}</span>
+        {connected ? (
+          music.playlist ? (
+            <button type="button" className="companion-music-icon-button" onClick={() => void tuneIn()} disabled={busy}
+              aria-label={`Tune in to ${music.playlist.name} on Spotify`} title={`Tune in: ${music.playlist.name}`}>
+              <SpotifyIcon />
+            </button>
+          ) : (
+            <span className="companion-music-icon" title="Spotify connected" aria-label="Spotify connected"><SpotifyIcon /></span>
+          )
+        ) : (
+          <button type="button" className="companion-music-connect" onClick={() => setDialogOpen(true)}>
+            <SpotifyIcon /> Connect Spotify
           </button>
         )}
-        {!connected && (
-          <button type="button" className="companion-music-button" onClick={() => setDialogOpen(true)}>
-            Connect Spotify
-          </button>
-        )}
-        {connected && statusQuery.data?.account_name && (
-          <span className="companion-music-account">Connected as {statusQuery.data.account_name}</span>
-        )}
-      </div>
-      {error && <p className="companion-music-error" role="alert">{error}</p>}
+        {error && <span className="companion-music-error" role="alert">{error}</span>}
+      </dd>
       {dialogOpen && <SpotifySetupDialog onClose={() => setDialogOpen(false)} />}
-    </section>
+    </div>
   );
 }
 
@@ -273,7 +283,7 @@ export function SpotifyMusicControl() {
     return (
       <div className="spotify-music-control">
         <button type="button" className="spotify-connect-button" onClick={() => setDialogOpen(true)}>
-          Connect Spotify
+          <SpotifyIcon /> Connect Spotify
         </button>
         {statusQuery.data.error && <span className="spotify-music-error">{statusQuery.data.error}</span>}
         {dialogOpen && <SpotifySetupDialog onClose={() => setDialogOpen(false)} />}
