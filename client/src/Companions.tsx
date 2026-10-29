@@ -11,6 +11,8 @@ import {
   type AccomplishmentNotice,
   type CompanionStatisticsSummary,
 } from "../../server/src/companionStatistics";
+import { companionMusicOf, type CompanionMusic } from "../../server/src/companionMusic";
+import { CompanionMusicSection } from "./SpotifyMusic";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
 import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
@@ -25,6 +27,7 @@ export type Companion = {
   description: string;
   skills: string[];
   tradeOff: string;
+  music: CompanionMusic | null;
   stats: CompanionStats;
   model: { preferredId: string; ifUnavailable: string };
   effort: string;
@@ -44,6 +47,7 @@ function toCompanion(definition: (typeof companionDefinitions)[number]): Compani
     description: definition.description,
     skills: [...definition.skills],
     tradeOff: definition.tradeOff,
+    music: companionMusicOf(definition),
     stats: computeCompanionStats(definition.model.preferredId, definition.effort),
     model: definition.model,
     effort: definition.effort,
@@ -104,6 +108,7 @@ export function customCompanionToCompanion(record: CustomCompanionRecord): Compa
     description: record.description,
     skills: [...record.skills],
     tradeOff: record.trade_off,
+    music: null,
     stats: computeCompanionStats(record.model_id, record.effort),
     model: {
       preferredId: record.model_id,
@@ -400,6 +405,7 @@ const CompanionCard = memo(function CompanionCard({
         </ExpandButton>
         {detailsOpen && (
           <div id="companion-details-content">
+            <CompanionMusicSection companion={companion} />
             <CompanionConfiguration companion={companion} soulOpen={soulOpen} onToggleSoul={onToggleSoul} />
           </div>
         )}

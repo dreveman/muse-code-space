@@ -552,6 +552,32 @@
 }
 .companion-icon-trigger:hover .companion-icon-blank { border-color: var(--dim); }
 .companion-icon-upload { display: grid; place-items: center; width: 56px; height: 56px; border-style: dashed; border-color: var(--border); }
+/* Spotify companion music (card section, setup dialog, session control). */
+.companion-music { margin: 16px 0 20px; }
+.companion-music-genre { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.companion-music-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0 0 10px; }
+.companion-music-tags li { padding: 5px 9px; border-radius: 6px; background: color-mix(in srgb, hsl(var(--companion-hue, 210) 45% 55%) 11%, var(--surface)); font-size: 11px; line-height: 1.4; }
+.companion-music-playlist { margin: 0 0 10px; color: var(--dim); font-size: 12px; }
+.companion-music-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.companion-music-button, .spotify-connect-button { min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--text); color: var(--bg); font: 600 12px var(--sans); cursor: pointer; }
+.companion-music-button:disabled { cursor: wait; opacity: .6; }
+.companion-music-account { color: var(--dim); font-size: 11px; }
+.companion-music-error, .spotify-music-error { color: var(--error); font-size: 11px; line-height: 1.45; }
+.spotify-setup-steps { margin: 0 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.spotify-setup-steps li { margin-bottom: 6px; }
+.spotify-redirect-uri { overflow-wrap: anywhere; }
+.spotify-music-control { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--terminal-bg, var(--bg)) 88%, transparent); color: var(--terminal-text, var(--text)); font: 12px var(--sans); }
+.spotify-track { min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.spotify-track-artist { color: var(--dim); font-weight: 400; }
+.spotify-controls { display: inline-flex; gap: 2px; }
+.spotify-controls button { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: inherit; cursor: pointer; }
+.spotify-controls button:hover:not(:disabled) { background: color-mix(in srgb, currentColor 10%, transparent); }
+.spotify-controls button:disabled { cursor: default; opacity: .45; }
+.spotify-controls svg { width: 15px; height: 15px; }
+.spotify-device-picker { max-width: 140px; min-height: 26px; border: 0; border-radius: 6px; background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; font: 11px var(--sans); }
+.spotify-volume { width: 70px; accent-color: currentColor; }
+@media (max-width: 779px) { .spotify-track { max-width: 120px; } .spotify-volume { display: none; } }
+
 .companion-icon-upload-plus { font-size: 22px; color: var(--dim); line-height: 1; }
 .companion-icon-upload { grid-column: 4; width: 52px; height: 52px; }
 .companion-create-card input:focus, .companion-create-card input:focus-visible,
