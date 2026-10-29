@@ -205,6 +205,112 @@
 :root[data-color-mode="dark"] .companion-accomplishment.is-earned .companion-accomplishment-icon { color: hsl(var(--companion-hue) 55% 68%); }
 .companion-accomplishment-label { flex: 0 0 auto; font-weight: 600; }
 .companion-accomplishment-progress { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.output-event.accomplishment-event { margin: 6px 0; padding: 0; border: 0; background: none; }
+.accomplishment-celebration {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 11px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, hsl(var(--companion-hue) 50% 48%) 34%, var(--border));
+  border-radius: 12px;
+  background: linear-gradient(
+    110deg,
+    color-mix(in srgb, hsl(var(--companion-hue) 60% 52%) 11%, var(--surface)) 0%,
+    color-mix(in srgb, hsl(var(--companion-hue) 55% 58%) 5%, var(--surface)) 60%,
+    color-mix(in srgb, hsl(var(--companion-hue) 60% 52%) 12%, var(--surface)) 100%
+  );
+  color: var(--text);
+  font: 500 12px/1.35 var(--sans);
+  animation: accomplishment-pop-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.accomplishment-celebration::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    color-mix(in srgb, hsl(var(--companion-hue) 80% 72%) 22%, transparent) 50%,
+    transparent 80%
+  );
+  transform: translateX(-120%);
+  animation: accomplishment-shimmer 1.8s ease-out 180ms 1 forwards;
+}
+.accomplishment-celebration-emblem {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: color-mix(in srgb, hsl(var(--companion-hue) 60% 50%) 16%, var(--bg));
+  color: hsl(var(--companion-hue) 50% 38%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, hsl(var(--companion-hue) 50% 48%) 28%, transparent);
+  animation: accomplishment-emblem-pop 640ms cubic-bezier(0.34, 1.56, 0.64, 1) 90ms both;
+}
+:root[data-color-mode="dark"] .accomplishment-celebration-emblem {
+  color: hsl(var(--companion-hue) 62% 72%);
+}
+.accomplishment-celebration-emblem svg { width: 17px; height: 17px; }
+.accomplishment-sparkle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: hsl(var(--companion-hue) 65% 55%);
+  opacity: 0;
+  animation: accomplishment-sparkle-twinkle 1.1s ease-out 220ms 1 forwards;
+}
+.accomplishment-sparkle.s1 { top: -2px; right: -1px; }
+.accomplishment-sparkle.s2 { bottom: -1px; left: -2px; animation-delay: 340ms; }
+.accomplishment-sparkle.s3 { top: 4px; left: -3px; width: 3px; height: 3px; animation-delay: 460ms; }
+.accomplishment-celebration-body { min-width: 0; flex: 1 1 auto; }
+.accomplishment-celebration-title { color: var(--text); }
+.accomplishment-celebration-title strong { font-weight: 650; }
+.accomplishment-celebration-pill {
+  flex: 0 1 auto;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, hsl(var(--companion-hue) 55% 50%) 14%, var(--bg));
+  color: hsl(var(--companion-hue) 48% 36%);
+  font: 600 11px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+:root[data-color-mode="dark"] .accomplishment-celebration-pill {
+  color: hsl(var(--companion-hue) 60% 74%);
+}
+@keyframes accomplishment-pop-in {
+  0% { opacity: 0; transform: translateY(4px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes accomplishment-emblem-pop {
+  0% { transform: scale(0.6) rotate(-12deg); }
+  65% { transform: scale(1.1) rotate(4deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@keyframes accomplishment-shimmer {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+@keyframes accomplishment-sparkle-twinkle {
+  0% { opacity: 0; transform: scale(0.3); }
+  45% { opacity: 0.95; transform: scale(1.25); }
+  100% { opacity: 0; transform: scale(0.6); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .accomplishment-celebration,
+  .accomplishment-celebration::after,
+  .accomplishment-celebration-emblem,
+  .accomplishment-sparkle {
+    animation: none;
+  }
+}
 .companion-soul pre { margin: 1.7em 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); font: 11px/1.7 var(--mono); }
 .companion-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Desktop uses a horizontal identity header + 2x2 ratings grid so the card

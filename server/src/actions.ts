@@ -25,6 +25,9 @@ import { ownedPullRequestsFromEvents } from "./ownedPullRequests";
 import {
   applyPrMonitorSnapshot,
   createdPullRequestFromToolEvent,
+  formatAccomplishmentNotice,
+  newlyEarnedAccomplishments,
+  parseAccomplishmentNotice,
   summarizeCompanionStatistics,
   type TrackedPr,
 } from "./companionStatistics";
@@ -615,6 +618,11 @@ function previewText(row: { content: string; kind: string } | undefined): string
       return null;
     }
   }
+  if (row.kind === "system") {
+    const notice = parseAccomplishmentNotice(row.content);
+    if (notice) return `${notice.companionName} ${notice.summaryText} · ${notice.milestones.join(" · ")}`;
+    return row.content;
+  }
   if (row.kind !== "agents") return row.content;
   try {
     const parsed = JSON.parse(row.content) as { kind?: string; title?: string; message?: string | null };
@@ -820,21 +828,26 @@ async function recordTrackedPrCreation(
             additions: parsed.additions ?? null,
             deletions: parsed.deletions ?? null,
             filesChanged: parsed.filesChanged ?? null,
-          }, at);
+          }, at, sessionId);
         }
       } catch { /* ignore malformed monitor content */ }
     }
   }
 }
 
-async function recordTrackedPrSnapshot(db: CompanionDb, monitor: {
-  owner: string; repo: string; number: number; status: string;
-  additions?: number | null; deletions?: number | null; filesChanged?: number | null;
-}, at: Date): Promise<void> {
+async function recordTrackedPrSnapshot(
+  db: CompanionDb,
+  monitor: {
+    owner: string; repo: string; number: number; status: string;
+    additions?: number | null; deletions?: number | null; filesChanged?: number | null;
+  },
+  at: Date,
+  sessionId?: string,
+): Promise<number> {
   const id = `${monitor.owner}/${monitor.repo}#${monitor.number}`.toLowerCase();
   const rows = await db.select().from(schema.companionTrackedPrs).where(eq(schema.companionTrackedPrs.id, id)).limit(1);
   const row = rows[0];
-  if (!row) return; // Created before tracking landed, or by an untracked path.
+  if (!row) return 0; // Created before tracking landed, or by an untracked path.
   const tracked: TrackedPr = {
     companionId: row.companionId,
     repo: row.repo,
@@ -851,13 +864,36 @@ async function recordTrackedPrSnapshot(db: CompanionDb, monitor: {
     deletions: monitor.deletions ?? null,
     filesChanged: monitor.filesChanged ?? null,
   });
+
+  const mergedTransition = next.state === "merged" && row.state !== "merged";
+  let beforeStats: { prs_merged: number; lines_added: number; files_changed: number } | null = null;
+  if (mergedTransition || linesDelta) {
+    const mergedCountRows = await db
+      .select({ value: count() })
+      .from(schema.companionTrackedPrs)
+      .where(and(eq(schema.companionTrackedPrs.companionId, row.companionId), eq(schema.companionTrackedPrs.state, "merged")));
+    const counterRows = await db
+      .select({
+        linesAdded: schema.companionStatistics.linesAdded,
+        filesChanged: schema.companionStatistics.filesChanged,
+      })
+      .from(schema.companionStatistics)
+      .where(eq(schema.companionStatistics.companionId, row.companionId))
+      .limit(1);
+    beforeStats = {
+      prs_merged: mergedCountRows[0]?.value ?? 0,
+      lines_added: counterRows[0]?.linesAdded ?? 0,
+      files_changed: counterRows[0]?.filesChanged ?? 0,
+    };
+  }
+
   await db.update(schema.companionTrackedPrs).set({
     state: next.state,
     linesCounted: next.linesCounted,
     additions: next.additions,
     deletions: next.deletions,
     filesChanged: next.filesChanged,
-    ...(next.state === "merged" && row.state !== "merged" ? { mergedAt: at } : {}),
+    ...(mergedTransition ? { mergedAt: at } : {}),
     updatedAt: new Date(),
   }).where(eq(schema.companionTrackedPrs.id, id));
   if (linesDelta) {
@@ -867,6 +903,43 @@ async function recordTrackedPrSnapshot(db: CompanionDb, monitor: {
       filesChanged: linesDelta.filesChanged,
     }, at);
   }
+
+  if (!beforeStats || !sessionId) return 0;
+  const afterStats = {
+    prs_merged: beforeStats.prs_merged + (mergedTransition ? 1 : 0),
+    lines_added: beforeStats.lines_added + (linesDelta?.additions ?? 0),
+    files_changed: beforeStats.files_changed + (linesDelta?.filesChanged ?? 0),
+  };
+  const unlocked = newlyEarnedAccomplishments(beforeStats, afterStats);
+  if (unlocked.length === 0) return 0;
+
+  const companion = (await assignableCompanions(db)).find((c) => c.id === row.companionId);
+  const companionName = companion?.name ?? row.companionId;
+  const existingEvents = await db
+    .select({ itemId: schema.outputEvents.itemId })
+    .from(schema.outputEvents)
+    .where(and(eq(schema.outputEvents.sessionId, sessionId), eq(schema.outputEvents.kind, "system")));
+  const seenKeys = new Set<string>();
+  for (const ev of existingEvents) {
+    if (!ev.itemId?.startsWith(`accomplishment:${row.companionId}:`)) continue;
+    const suffix = ev.itemId.slice(`accomplishment:${row.companionId}:`.length);
+    for (const part of suffix.split("+")) seenKeys.add(part);
+  }
+  const freshItems = unlocked.filter((item) => !seenKeys.has(`${item.id}:${item.threshold}`));
+  if (freshItems.length === 0) return 0;
+
+  const combinedKey = freshItems.map((item) => `${item.id}:${item.threshold}`).join("+");
+  await db.insert(schema.outputEvents).values({
+    sessionId,
+    kind: "system",
+    itemId: `accomplishment:${row.companionId}:${combinedKey}`,
+    content: formatAccomplishmentNotice({
+      companionName,
+      items: freshItems.map((item) => ({ icon: item.icon, milestoneText: item.milestoneText })),
+    }),
+    createdAt: at,
+  });
+  return 1;
 }
 
 async function resolveCompanionModel(ctx: Ctx, companion: AssignableCompanion,
@@ -4601,7 +4674,11 @@ export const Actions = {
           // Statistics: fold the snapshot into the tracked PR (a no-op for
           // PRs created before tracking landed).
           await guardCompanionStatistics(async () => {
-            await recordTrackedPrSnapshot(db, event.monitor!, itemAt);
+            const emitted = await recordTrackedPrSnapshot(db, event.monitor!, itemAt, session.id);
+            if (emitted > 0) {
+              added += emitted;
+              outputChanges += emitted;
+            }
           });
           added += 1;
           continue;

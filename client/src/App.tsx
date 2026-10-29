@@ -5,7 +5,8 @@ import { api, type ApiResponse } from "./api";
 import { getWorkingLabel } from "./workingLabel";
 import { shouldSnapToBottom, shouldFollowTranscript } from "./scrollSnap";
 import { agentVisualStatus, transcriptAtBottom, type AgentVisualStatus } from "./agentStatus";
-import { artworkForCompanionName, CompanionContact, CompanionWelcome, companions, customCompanionToCompanion, registerCustomCompanionArtwork, type Companion } from "./Companions";
+import { AccomplishmentCelebrationEvent, artworkForCompanionName, CompanionContact, CompanionWelcome, companions, customCompanionToCompanion, registerCustomCompanionArtwork, type Companion } from "./Companions";
+import { parseAccomplishmentNotice } from "../../server/src/companionStatistics";
 import { CreateCompanionCard, type CreateCompanionInput } from "./CreateCompanionCard";
 import { HomeWelcomeCard } from "./HomeWelcomeCard";
 import { CUSTOM_COMPANION_LIMIT } from "./companionCustom";
@@ -1474,12 +1475,15 @@ const TranscriptEventRow = memo(function TranscriptEventRow({
   openFileTabForDetail: (path: string) => void;
 }) {
   const reasoning = event.kind === "thinking" ? reasoningDisplay(event.content) : null;
+  const accomplishment = event.kind === "system" ? parseAccomplishmentNotice(event.content) : null;
   const content = displayOutput(reasoning?.summary ?? event.content);
   if (event.kind === "thinking" && !content.trim()) return null;
   const time = event.kind === "stdout" ? formatMessageTime(event.created_at, nowMs) : "";
   return (
-    <article className={`output-event ${event.kind}${event.system_is_error ? " system-error" : ""}`}>
-      {event.kind === "user" ? (
+    <article className={`output-event ${event.kind}${event.system_is_error ? " system-error" : ""}${accomplishment ? " accomplishment-event" : ""}`}>
+      {accomplishment ? (
+        <AccomplishmentCelebrationEvent notice={accomplishment} />
+      ) : event.kind === "user" ? (
         <>
           <MessageAttachments attachments={event.attachments} />
           {visibleUserPromptText(event.content, Boolean(event.attachments?.length)) && (
