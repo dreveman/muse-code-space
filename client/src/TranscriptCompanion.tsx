@@ -433,6 +433,17 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
             className={`companion-card transcript-companion-card${detailsOpen && activeTab === "companion" ? " companion-card-expanded" : ""}`}
             style={cardStyle}
           >
+            <button
+              type="button"
+              className="transcript-companion-close-btn"
+              aria-label={`Close ${companion.name} card`}
+              title="Close"
+              onClick={() => setOpen(false)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M17.5 6.5 6.5 17.5M6.5 6.5l11 11" />
+              </svg>
+            </button>
             <div className="companion-card-identity">
               <button
                 type="button"

@@ -3,7 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { applyColorMode, loadColorMode } from "./colorMode";
+import { applyColorMode, applyUiTheme, loadColorMode, loadUiTheme } from "./colorMode";
 import { installPreviewServiceWorker, isServiceWorkerContext } from "./previewServiceWorker";
 import "./theme.css";
 
@@ -12,6 +12,7 @@ if (isServiceWorkerContext()) {
 } else {
   // Resolve the saved palette before React renders the first frame.
   applyColorMode(loadColorMode());
+  applyUiTheme(loadUiTheme());
   document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][media="print"]').forEach((link) => {
     link.media = "all";
   });
