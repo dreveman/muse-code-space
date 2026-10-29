@@ -156,19 +156,24 @@ function formatCompactCount(value: number): string {
 
 function AccomplishmentIcon({ kind }: { kind: AccomplishmentIcon }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {kind === "trophy" && <>
-        <path d="M8 21h8" /><path d="M12 16.5V21" /><path d="M9.5 21 10 16.5h4L14.5 21" />
-        <path d="M7 4h10v5.5a5 5 0 0 1-10 0V4Z" />
-        <path d="M7 5.5H3.8v1.2A4.3 4.3 0 0 0 7.2 11" /><path d="M17 5.5h3.2v1.2A4.3 4.3 0 0 1 16.8 11" />
+        <path d="M6.5 3.5h11v5a5.5 5.5 0 0 1-11 0v-5Z" fill="currentColor" fillOpacity="0.14" />
+        <path d="M6.5 5.5H4.2a1.7 1.7 0 0 0-1.7 1.7v.5a3.8 3.8 0 0 0 3.8 3.8h.5" />
+        <path d="M17.5 5.5h2.3a1.7 1.7 0 0 1 1.7 1.7v.5a3.8 3.8 0 0 1-3.8 3.8h-.5" />
+        <path d="M12 14v3.5" />
+        <path d="M9 17.5h6" />
+        <path d="M7.5 20.5h9" />
       </>}
       {kind === "medal" && <>
-        <circle cx="12" cy="14.5" r="5" />
-        <path d="M9.2 10.3 6.5 3h4l1.5 4.2L13.5 3h4l-2.7 7.3" />
+        <path d="M8.5 9.8 5.8 3h4.3L12 7.2 13.9 3h4.3l-2.7 6.8" />
+        <circle cx="12" cy="15" r="5.5" fill="currentColor" fillOpacity="0.14" />
+        <path d="m12 11.9.95 1.92 2.12.31-1.53 1.5.36 2.11L12 16.74l-1.9 1 .36-2.11-1.53-1.5 2.12-.31L12 11.9Z" fill="currentColor" stroke="none" />
       </>}
       {kind === "badge" && <>
-        <circle cx="12" cy="9.5" r="5.5" />
-        <path d="m8.8 13.8-1.6 7 4.8-2.6 4.8 2.6-1.6-7" />
+        <path d="m8.8 14.1-1.6 6.7 4.8-2.5 4.8 2.5-1.6-6.7" />
+        <circle cx="12" cy="9.5" r="5.5" fill="currentColor" fillOpacity="0.14" />
+        <path d="m9.6 9.6 1.65 1.65 3.35-3.35" />
       </>}
     </svg>
   );
@@ -197,8 +202,8 @@ function AccomplishmentMilestones({ statistics }: { statistics: CompanionStatist
   );
 }
 
-// Compact single row of accomplishments (icons + numbers) that expands to
-// the milestone details. Used in the conversation companion card.
+// Compact single row of accomplishments (title on the left, icons + numbers
+// and expand chevron on the right) that expands to the milestone details.
 export function CompanionAccomplishmentsRow({ statistics, expanded, onToggle }: {
   statistics?: CompanionStatisticsSummary | null;
   expanded: boolean;
@@ -208,21 +213,27 @@ export function CompanionAccomplishmentsRow({ statistics, expanded, onToggle }: 
   const items = companionAccomplishments(statistics);
   const earned = items.filter((item) => item.earnedThreshold > 0).length;
   const linesItem = items.find((item) => item.id === "lines-shipped");
+  const linesIcon: AccomplishmentIcon = linesItem && linesItem.earnedThreshold > 0 ? linesItem.icon : "medal";
   return (
     <div className="companion-accomplishments">
-      <button type="button" className="companion-accomplishments-row" aria-expanded={expanded} onClick={onToggle}
+      <button type="button" className="more-companions-button companion-accomplishments-row" aria-expanded={expanded} onClick={onToggle}
         aria-label={`Accomplishments: ${statistics.prs_merged} PRs landed, ${statistics.lines_added} lines shipped, ${earned} of ${items.length} milestones earned. ${expanded ? "Hide" : "Show"} details.`}>
-        <span className="companion-accomplishments-item" title="PRs landed">
-          <AccomplishmentIcon kind="trophy" />{formatCompactCount(statistics.prs_merged)}
-        </span>
-        <span className="companion-accomplishments-item" title="Lines shipped">
-          <AccomplishmentIcon kind={linesItem?.icon ?? "badge"} />{formatCompactCount(statistics.lines_added)}
-        </span>
-        <span className="companion-accomplishments-item" title="Milestones earned">
-          <AccomplishmentIcon kind="badge" />{earned}/{items.length}
-        </span>
         <span className="companion-accomplishments-label">Accomplishments</span>
-        <span className={`companion-accomplishments-chevron${expanded ? " is-open" : ""}`} aria-hidden="true">›</span>
+        <span className="companion-accomplishments-items">
+          <span className={`companion-accomplishments-item${statistics.prs_merged > 0 ? " is-earned" : ""}`} title="PRs landed">
+            <AccomplishmentIcon kind="trophy" />{formatCompactCount(statistics.prs_merged)}
+          </span>
+          <span className={`companion-accomplishments-item${statistics.lines_added > 0 ? " is-earned" : ""}`} title="Lines shipped">
+            <AccomplishmentIcon kind={linesIcon} />{formatCompactCount(statistics.lines_added)}
+          </span>
+          <span className={`companion-accomplishments-item${earned > 0 ? " is-earned" : ""}`} title="Milestones earned">
+            <AccomplishmentIcon kind="badge" />{earned}/{items.length}
+          </span>
+        </span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
       </button>
       {expanded && <AccomplishmentMilestones statistics={statistics} />}
     </div>
@@ -297,8 +308,23 @@ const CompanionCard = memo(function CompanionCard({
     ...(savedSpacing.skills ? { "--companion-skills-spacing": savedSpacing.skills } : {}),
     ...(savedSpacing.details ? { "--companion-details-spacing": savedSpacing.details } : {}),
   } as CSSProperties;
+  const isExpanded = detailsOpen || accomplishmentsOpen;
+  const captureCardSpacing = () => {
+    if (!isExpanded && cardRef.current) {
+      // Preserve the space distributed by the fixed-height card when
+      // its additional content makes the expanded card grow.
+      for (const section of ["skills", "details"] as const) {
+        const element = cardRef.current.querySelector<HTMLElement>(`.companion-${section}`);
+        if (element) {
+          const val = section === "skills" ? getComputedStyle(element).marginBottom : getComputedStyle(element).marginTop;
+          savedSpacing[section] = val;
+          cardRef.current.style.setProperty(`--companion-${section}-spacing`, val);
+        }
+      }
+    }
+  };
   return (
-    <article ref={cardRef} className={`companion-card${locked ? " companion-card-locked" : ""}${detailsOpen ? " companion-card-expanded" : ""}`} aria-labelledby="companion-card-name"
+    <article ref={cardRef} className={`companion-card${locked ? " companion-card-locked" : ""}${isExpanded ? " companion-card-expanded" : ""}`} aria-labelledby="companion-card-name"
       style={spacingStyle}>
       <div className="companion-card-identity">
         <div className="companion-card-portrait">
@@ -314,10 +340,13 @@ const CompanionCard = memo(function CompanionCard({
       </div>
       <div className="companion-card-access">
         <CompanionAccessNotice access={access} modelName={displayModelLabel(companion.model.preferredId)} compact />
-        {(access.status === "ready" || detailsOpen) && <p className="companion-phone-description">{companion.description}</p>}
+        {(access.status === "ready" || isExpanded) && <p className="companion-phone-description">{companion.description}</p>}
       </div>
       <CompanionAccomplishmentsRow statistics={statistics} expanded={accomplishmentsOpen}
-        onToggle={() => setAccomplishmentsOpen((value) => !value)} />
+        onToggle={() => {
+          captureCardSpacing();
+          setAccomplishmentsOpen((value) => !value);
+        }} />
       <CompanionRatings companion={companion} />
       <section className="companion-skills" aria-labelledby="companion-skills-heading">
         <h3 id="companion-skills-heading">Best at</h3>
@@ -330,18 +359,7 @@ const CompanionCard = memo(function CompanionCard({
       <section className="companion-details">
         <ExpandButton expanded={detailsOpen} controls="companion-details-content"
           className="companion-more-button" onToggle={() => {
-            if (!detailsOpen && cardRef.current) {
-              // Preserve the space distributed by the fixed-height card when
-              // its additional content makes the expanded card grow.
-              for (const section of ["skills", "details"] as const) {
-                const element = cardRef.current.querySelector<HTMLElement>(`.companion-${section}`);
-                if (element) {
-                  const val = section === "skills" ? getComputedStyle(element).marginBottom : getComputedStyle(element).marginTop;
-                  savedSpacing[section] = val;
-                  cardRef.current.style.setProperty(`--companion-${section}-spacing`, val);
-                }
-              }
-            }
+            captureCardSpacing();
             onToggleDetails(!detailsOpen);
           }}>
           More about {companion.name}

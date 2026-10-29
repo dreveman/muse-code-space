@@ -225,7 +225,43 @@ export function createPrMonitorRegistry({
   };
 
   const poll = async (monitor) => {
-    if (!monitor.active) return;
+    if (!monitor.active) {
+      // A monitor whose active notification phase ended while the PR was still
+      // open (e.g. a CI-scoped monitor after checks finished) still checks for
+      // final merge/close so the transcript row and companion statistics record
+      // the landed PR without sending another agent notification turn.
+      if (
+        monitor.snapshot?.state === "open" &&
+        monitor.status !== "merged" &&
+        monitor.status !== "closed" &&
+        monitor.status !== "error"
+      ) {
+        try {
+          const base = `/repos/${monitor.owner}/${monitor.repo}`;
+          const pr = await brokerRequest("GET", `${base}/pulls/${monitor.number}`);
+          if (pr.status === 200 && pr.json) {
+            const state = pr.json.merged_at ? "merged" : pr.json.state;
+            if (state === "merged" || state === "closed") {
+              const prev = monitor.snapshot;
+              const additions = Number.isSafeInteger(pr.json.additions) && pr.json.additions >= 0 ? pr.json.additions : prev.additions ?? null;
+              const deletions = Number.isSafeInteger(pr.json.deletions) && pr.json.deletions >= 0 ? pr.json.deletions : prev.deletions ?? null;
+              const filesChanged = Number.isSafeInteger(pr.json.changed_files) && pr.json.changed_files >= 0 ? pr.json.changed_files : prev.filesChanged ?? null;
+              monitor.snapshot = { ...prev, state, additions, deletions, filesChanged };
+              monitor.status = state;
+              monitor.updatedAt = now();
+              const text = state === "merged" ? "PR was merged" : "PR was closed without merging";
+              monitor.changes.push({ at: now(), text });
+              monitor.changes = monitor.changes.slice(-MAX_CHANGE_LOG);
+              persist();
+              emit(monitor);
+            }
+          }
+        } catch {
+          // Best-effort post-CI merge/close check; ignore transient errors.
+        }
+      }
+      return;
+    }
     let next;
     try {
       next = await fetchSnapshot(monitor);

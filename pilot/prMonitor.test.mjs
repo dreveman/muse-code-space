@@ -103,7 +103,7 @@ test("a CI monitor ignores reviews and interim failures, then ends at the termin
 });
 
 test("a CI monitor reports the terminal pass exactly once and then stops polling", async () => {
-  const { state, registry, notifications } = harness();
+  const { state, registry, broadcasts, notifications } = harness();
   await registry.start({ logId: "s1", owner: "o", repo: "r", number: 3 });
   state.runs = [run("fast", "completed", "success"), run("typecheck", "completed", "success")];
   await registry.pollNow();
@@ -113,6 +113,17 @@ test("a CI monitor reports the terminal pass exactly once and then stops polling
   assert.deepEqual(notifications.at(-1).changes, ["All checks passed (2 checks) — monitoring ended"]);
   await registry.pollNow();
   assert.equal(notifications.length, 1, "terminal CI monitors stop polling");
+
+  // When the PR later merges on GitHub, the row updates to merged with final
+  // line counts for companion statistics without waking the agent again.
+  state.pr = pr({ state: "closed", merged_at: "2026-10-16T02:00:00Z", additions: 48, deletions: 12, changed_files: 3 });
+  await registry.pollNow();
+  assert.equal(registry.list()[0].status, "merged");
+  assert.equal(broadcasts.at(-1).event.monitor.status, "merged");
+  assert.equal(broadcasts.at(-1).event.monitor.additions, 48);
+  assert.equal(broadcasts.at(-1).event.monitor.deletions, 12);
+  assert.equal(broadcasts.at(-1).event.monitor.filesChanged, 3);
+  assert.equal(notifications.length, 1, "post-CI merge does not send a turn notification");
 });
 
 test("a finished CI monitor re-arms for a new head and retargets while pending", async () => {

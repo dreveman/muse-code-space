@@ -772,7 +772,13 @@ async function recordCompanionUserTurn(db: CompanionDb, sessionTitle: string, at
   });
 }
 
-async function recordTrackedPrCreation(db: CompanionDb, companionId: string, created: { repo: string; number: number }, at: Date): Promise<void> {
+async function recordTrackedPrCreation(
+  db: CompanionDb,
+  companionId: string,
+  created: { repo: string; number: number },
+  at: Date,
+  sessionId?: string,
+): Promise<void> {
   const now = new Date();
   await db.insert(schema.companionTrackedPrs).values({
     id: `${created.repo.toLowerCase()}#${created.number}`,
@@ -783,6 +789,42 @@ async function recordTrackedPrCreation(db: CompanionDb, companionId: string, cre
     createdAt: at,
     updatedAt: now,
   }).onConflictDoNothing();
+
+  // Because github_create_pr starts its PR monitor before the MCP tool call
+  // returns, the initial pr_monitor event can be ingested just before this
+  // completed tool event. Fold any already-stored pr_monitor row for this PR.
+  if (sessionId) {
+    const monitorRows = await db
+      .select({ content: schema.outputEvents.content })
+      .from(schema.outputEvents)
+      .where(and(eq(schema.outputEvents.sessionId, sessionId), eq(schema.outputEvents.kind, "pr_monitor")));
+    for (const mRow of monitorRows) {
+      try {
+        const parsed = JSON.parse(mRow.content) as {
+          owner?: string; repo?: string; number?: number; status?: string;
+          additions?: number | null; deletions?: number | null; filesChanged?: number | null;
+        };
+        if (
+          parsed &&
+          typeof parsed.owner === "string" &&
+          typeof parsed.repo === "string" &&
+          `${parsed.owner}/${parsed.repo}`.toLowerCase() === created.repo.toLowerCase() &&
+          parsed.number === created.number &&
+          typeof parsed.status === "string"
+        ) {
+          await recordTrackedPrSnapshot(db, {
+            owner: parsed.owner,
+            repo: parsed.repo,
+            number: parsed.number,
+            status: parsed.status,
+            additions: parsed.additions ?? null,
+            deletions: parsed.deletions ?? null,
+            filesChanged: parsed.filesChanged ?? null,
+          }, at);
+        }
+      } catch { /* ignore malformed monitor content */ }
+    }
+  }
 }
 
 async function recordTrackedPrSnapshot(db: CompanionDb, monitor: {
@@ -4375,7 +4417,7 @@ export const Actions = {
                 if (!companionId) return;
                 await bumpCompanionStatistics(db, companionId, { toolCalls: 1 }, itemAt);
                 const created = createdPullRequestFromToolEvent({ kind: "tool", tool_details: parseToolDetails(toolDetails) });
-                if (created) await recordTrackedPrCreation(db, companionId, created, itemAt);
+                if (created) await recordTrackedPrCreation(db, companionId, created, itemAt, session.id);
               });
             }
             added += 1;
@@ -4662,11 +4704,11 @@ export const Actions = {
         .where(eq(schema.sessions.id, session.id));
       if (added > 0 || backendChanged) {
         const sessionMetaChanged = nextStatus !== session.status || nameUpdate !== null || needsUserInput !== session.needsUserInput;
-        ctx.invalidateQueries(
-          sessionMetaChanged
-            ? { queryKeys: [["code-sessions"], ["code-session", session.id]] }
-            : { queryKey: ["code-session", session.id] },
-        );
+        ctx.invalidateQueries({
+          queryKeys: sessionMetaChanged
+            ? [["code-sessions"], ["code-session", session.id], ["companion-statistics"]]
+            : [["code-session", session.id], ["companion-statistics"]],
+        });
       }
       return { added, status: nextStatus, pilot_available: true };
     },

@@ -13,7 +13,7 @@
   .more-companions-button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
 }
 .more-companions-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.more-companions-button[aria-expanded="true"] svg { transform: rotate(180deg); }
+.more-companions-button[aria-expanded="true"] > svg { transform: rotate(180deg); }
 .session-list:has(.session-group) + .available-companions { margin-top: 16px; }
 .companion-task-list .session-row { padding: 3px 8px; }
 .session-group-list.companion-task-list { margin-left: 0; padding-left: 0; border-left: 0; }
@@ -140,7 +140,7 @@
 .companion-mini-stat-bars > .filled { background: var(--text); }
 .companion-card {
   width: min(100%, 560px);
-  height: 508px;
+  height: 552px;
   overflow: visible;
   flex: 0 0 auto;
   margin-block: auto;
@@ -152,7 +152,7 @@
 }
 /* More room for wrapping text and skill chips, shared by every companion. */
 @container (max-width: 460px) {
-  .companion-card { height: 484px; }
+  .companion-card { height: 528px; }
 }
 :root[data-color-mode="dark"] .companion-card { background: var(--surface); box-shadow: none; }
 /* Keep the upgrade notice clear while the locked companion looks inactive. */
@@ -187,16 +187,17 @@
 .companion-configuration dt { color: var(--dim); }
 .companion-configuration dd { margin: 0; text-transform: capitalize; text-align: right; overflow-wrap: anywhere; }
 .companion-ratings-note { margin-bottom: 1.5em; color: var(--dim); font-size: 11px; line-height: 1.5; }
-.companion-accomplishments { border-top: 1px solid var(--border); }
-.companion-accomplishments-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 9px 2px; border: 0; background: none; color: var(--text); font: 600 12px/1.2 var(--sans); cursor: pointer; text-align: left; }
+.companion-accomplishments { padding-block: 6px; border-block: 1px solid var(--border); }
+.companion-accomplishments + .companion-stats { border-top: 0; margin-top: 0; }
+.companion-accomplishments-row { justify-content: flex-start; gap: 8px; min-height: 32px; padding: 6px 8px; }
+.companion-accomplishments-label { margin-right: auto; font: 600 12px/1.2 var(--sans); color: var(--text); white-space: nowrap; }
+.companion-accomplishments-items { display: inline-flex; align-items: center; gap: 12px; color: var(--dim); font: 600 12px/1.2 var(--sans); }
 .companion-accomplishments-item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.companion-accomplishments-item svg { width: 15px; height: 15px; color: hsl(var(--companion-hue) 45% 42%); }
-:root[data-color-mode="dark"] .companion-accomplishments-item svg { color: hsl(var(--companion-hue) 55% 68%); }
-.companion-accomplishments-label { margin-left: auto; color: var(--dim); font-weight: 550; white-space: nowrap; }
-.companion-accomplishments-chevron { color: var(--dim); font-size: 16px; line-height: 1; transition: transform 160ms ease; }
-.companion-accomplishments-chevron.is-open { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .companion-accomplishments-chevron { transition: none; } }
-.companion-accomplishment-list { display: grid; gap: 8px; list-style: none; margin: 0 0 14px; padding: 2px 2px 10px; }
+.companion-accomplishments-item.is-earned { color: var(--text); }
+.companion-accomplishments-item svg { width: 15px; height: 15px; color: var(--dim); opacity: .65; }
+.companion-accomplishments-item.is-earned svg { color: hsl(var(--companion-hue) 45% 42%); opacity: 1; }
+:root[data-color-mode="dark"] .companion-accomplishments-item.is-earned svg { color: hsl(var(--companion-hue) 55% 68%); }
+.companion-accomplishment-list { display: grid; gap: 8px; list-style: none; margin: 6px 0 4px; padding: 2px 8px 4px; }
 .companion-accomplishment { display: flex; align-items: center; gap: 9px; min-width: 0; font-size: 12px; }
 .companion-accomplishment-icon { display: inline-flex; flex: 0 0 auto; color: var(--dim); opacity: .55; }
 .companion-accomplishment-icon svg { width: 16px; height: 16px; }
@@ -223,6 +224,7 @@
   .companion-card-access .companion-access-notice > span { white-space: nowrap; }
   .companion-card-access .companion-access-notice a { display: inline-flex; align-items: center; min-height: 24px; flex: 0 0 auto; }
   .companion-card .companion-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; height: auto; margin: 2px 0; padding-block: 14px; }
+  .companion-card .companion-accomplishments + .companion-stats { margin-top: 0; padding-top: 6px; }
   .companion-card .companion-stat { gap: 8px; min-width: 0; }
   .companion-card .companion-stat dt { white-space: nowrap; }
   .companion-card .companion-stat dd { flex: 0 0 auto; }
@@ -232,7 +234,7 @@
   .companion-card .companion-tradeoff { height: auto; min-height: 52px; margin: 0; }
   .companion-card .companion-details { min-height: 38px; margin: auto 0 0; padding-top: 6px; }
   @container (max-width: 460px) {
-    .companion-card { --companion-phone-portrait: clamp(72px, calc(100cqw - 164px), 108px); gap: 6px; height: 484px; padding: 16px 16px 10px; overflow: hidden; border-radius: 18px; }
+    .companion-card { --companion-phone-portrait: clamp(72px, calc(100cqw - 164px), 108px); gap: 6px; height: 528px; padding: 16px 16px 10px; overflow: hidden; border-radius: 18px; }
     .companion-card-identity { gap: 12px; height: var(--companion-phone-portrait); }
     .companion-card-portrait { width: var(--companion-phone-portrait); height: var(--companion-phone-portrait); border-radius: 18px; }
     .companion-card-heading h2 { order: -1; margin: 0 0 4px; font-size: 28px; }
@@ -242,6 +244,7 @@
     .companion-card-access:empty { display: flex; }
     .companion-phone-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--dim); font: 12px/18px var(--sans); }
     .companion-card .companion-stats { grid-template-columns: 1fr; gap: 6px; height: auto; margin: 0; padding: 8px 0; }
+    .companion-card .companion-accomplishments + .companion-stats { padding-top: 2px; }
     .companion-card .companion-stat { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
     .companion-card .companion-stat dt { font-size: 12px; line-height: 14px; white-space: nowrap; }
     .companion-card .companion-stat dd { flex: 0 0 auto; }
@@ -277,7 +280,7 @@
   .companion-welcome-content:not(:has(.companion-card-expanded)) {
     flex-direction: column-reverse;
   }
-  .companion-card-browser { width: min(calc(100% - 88px), 460px); height: 484px; }
+  .companion-card-browser { width: min(calc(100% - 88px), 460px); height: 528px; }
   .companion-card-navigation { top: calc(50% + 16px); width: min(calc(100% - 104px), 460px); }
   .companion-card-navigation button { width: 40px; height: 44px; }
   .companion-card-navigation button:first-child { left: -46px; }
@@ -296,6 +299,7 @@
   .companion-card-access .companion-access-notice a { display: inline-flex; align-items: center; min-height: 40px; flex: 0 0 auto; }
   .companion-phone-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--dim); font: 12px/18px var(--sans); }
   .companion-card .companion-stats { grid-template-columns: 1fr; gap: 6px; height: auto; margin: 0; padding: 8px 0; }
+  .companion-card .companion-accomplishments + .companion-stats { padding-top: 2px; }
   .companion-card .companion-stat { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
   .companion-card .companion-stat dt { font-size: 12px; line-height: 14px; white-space: nowrap; }
   .companion-card .companion-stat dd { flex: 0 0 auto; }
@@ -313,9 +317,9 @@
 /* Only collapsed cards share a fixed height. Expanded cards grow naturally;
    the surrounding view scrolls while the prompt stays in place. */
 @media (min-width: 780px) {
-  .companion-card-expanded { height: auto; min-height: 508px; padding-bottom: 24px; }
+  .companion-card-expanded { height: auto; min-height: 552px; padding-bottom: 24px; }
   @container (max-width: 460px) {
-    .companion-card-expanded { height: auto; min-height: 484px; padding-bottom: 18px; overflow: visible; }
+    .companion-card-expanded { height: auto; min-height: 528px; padding-bottom: 18px; overflow: visible; }
     .companion-card-expanded .companion-card-identity { height: auto; min-height: 48px; }
     .companion-card-expanded .companion-card-role { display: block; }
     .companion-card-expanded .companion-card-access { flex-direction: column; align-items: stretch; gap: 6px; height: auto; min-height: 40px; }
@@ -330,8 +334,8 @@
   }
 }
 @media (max-width: 779px) {
-  .companion-card-browser:has(> .companion-card-expanded) { height: auto; min-height: 484px; visibility: visible; pointer-events: auto; }
-  .companion-card-expanded { height: auto; min-height: 484px; padding-bottom: 18px; overflow: visible; }
+  .companion-card-browser:has(> .companion-card-expanded) { height: auto; min-height: 528px; visibility: visible; pointer-events: auto; }
+  .companion-card-expanded { height: auto; min-height: 528px; padding-bottom: 18px; overflow: visible; }
   .companion-card-expanded .companion-card-identity { height: auto; min-height: 48px; }
   .companion-card-expanded .companion-card-role { display: block; }
   .companion-card-expanded .companion-card-access { flex-direction: column; align-items: stretch; gap: 6px; height: auto; min-height: 40px; }
