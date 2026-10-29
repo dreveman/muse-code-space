@@ -24,6 +24,35 @@ export function extractSpotifyAuthCode(input: string): string | null {
   return null;
 }
 
+/**
+ * Extract the OAuth `state` parameter when the user pastes a full redirect URL.
+ */
+export function extractSpotifyAuthState(input: string): string | null {
+  const trimmed = typeof input === "string" ? input.trim() : "";
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    const state = url.searchParams.get("state");
+    return state && state.length > 0 ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When running inside an iframe (hosted Space) or on iOS, open Spotify
+ * authorization in a new tab/Safari rather than navigating the Space frame
+ * away (which would lose the host's viewer_assertion and dropdown state).
+ */
+export function shouldOpenSpotifyAuthInNewTab(
+  win: { parent?: unknown } | null | undefined,
+  isIos: boolean,
+): boolean {
+  if (isIos) return true;
+  if (win && win.parent !== undefined && win.parent !== win) return true;
+  return false;
+}
+
 export type SpotifyControlState = "connect" | "no-device" | "ready";
 
 /**
