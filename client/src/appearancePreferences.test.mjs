@@ -3,7 +3,19 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyColorMode, COLOR_MODE_KEY, loadColorMode, parseColorMode, resolveColorMode } from "./colorMode.ts";
+import {
+  applyColorMode,
+  applyUiTheme,
+  COLOR_MODE_KEY,
+  detectIosDevice,
+  loadColorMode,
+  loadUiTheme,
+  parseColorMode,
+  parseUiTheme,
+  resolveColorMode,
+  resolveUiTheme,
+  UI_THEME_KEY,
+} from "./colorMode.ts";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(join(dir, "App.tsx"), "utf8");
@@ -20,6 +32,50 @@ test("color mode defaults to system and resolves explicit overrides independentl
   assert.equal(resolveColorMode("system", true), "dark");
   assert.equal(resolveColorMode("light", true), "light");
   assert.equal(resolveColorMode("dark", false), "dark");
+});
+
+test("ui theme defaults to system, detects iOS devices, and resolves explicit overrides", () => {
+  assert.equal(parseUiTheme(null), "system");
+  assert.equal(parseUiTheme("unexpected"), "system");
+  assert.equal(parseUiTheme("web"), "web");
+  assert.equal(parseUiTheme("liquid-glass"), "liquid-glass");
+  assert.equal(detectIosDevice({ userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" }), true);
+  assert.equal(detectIosDevice({ userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)" }), true);
+  assert.equal(detectIosDevice({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", platform: "MacIntel", maxTouchPoints: 5 }), true);
+  assert.equal(detectIosDevice({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", platform: "MacIntel", maxTouchPoints: 0 }), false);
+  assert.equal(detectIosDevice({ userAgent: "Mozilla/5.0 (X11; Linux x86_64)" }), false);
+  assert.equal(resolveUiTheme("system", false), "web");
+  assert.equal(resolveUiTheme("system", true), "liquid-glass");
+  assert.equal(resolveUiTheme("web", true), "web");
+  assert.equal(resolveUiTheme("liquid-glass", false), "liquid-glass");
+
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNavigator = globalThis.navigator;
+  let saved = null;
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => key === UI_THEME_KEY ? saved : null,
+      setItem: (key, val) => { if (key === UI_THEME_KEY) saved = val; },
+    },
+  };
+  globalThis.document = { documentElement: { dataset: {} } };
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" },
+  });
+  try {
+    assert.equal(loadUiTheme(), "system");
+    applyUiTheme(loadUiTheme());
+    assert.equal(document.documentElement.dataset.uiTheme, "liquid-glass");
+    applyUiTheme("web");
+    assert.equal(loadUiTheme(), "web");
+    assert.equal(document.documentElement.dataset.uiTheme, "web");
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
 });
 
 test("color mode restores browser preference and applies it to the root element", () => {

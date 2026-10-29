@@ -368,7 +368,7 @@
 }
 
 @media (max-width: 779px) {
-  .session-rail { padding: 16px 14px; }
+  .session-rail { padding: 12px 14px 16px; }
   .companion-welcome { overflow: visible; }
   .companion-welcome-content {
     overflow-y: auto;

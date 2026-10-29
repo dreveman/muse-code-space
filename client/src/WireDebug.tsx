@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
-import { type ColorMode } from "./colorMode";
+import { applyUiTheme, loadUiTheme, type ColorMode, type UiTheme } from "./colorMode";
 import { RelayDebugPanel } from "./RelayDebug";
 
 type WireEntry = {
@@ -63,6 +63,12 @@ const COLOR_MODE_OPTIONS: Array<{ value: ColorMode; label: string; description: 
   { value: "dark", label: "Dark", description: "Always use the dark palette" },
 ];
 
+const UI_THEME_OPTIONS: Array<{ value: UiTheme; label: string; description: string }> = [
+  { value: "system", label: "System default", description: "Liquid Glass on iOS, Web elsewhere" },
+  { value: "web", label: "Web", description: "Standard web control styling" },
+  { value: "liquid-glass", label: "Liquid Glass", description: "Translucent iOS glass control styling" },
+];
+
 function ActionMenuItem({ action, onDone }: { action: SessionMenuAction; onDone: () => void }) {
   return (
     <button
@@ -95,8 +101,10 @@ function entryDirection(entry: WireEntry): "out" | "in" {
 
 function MenuIcon() {
   return (
-    <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
-      <path d="M3.5 5.25h13M3.5 10h13M3.5 14.75h13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+      <circle cx="5.5" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="18.5" cy="12" r="2" />
     </svg>
   );
 }
@@ -146,6 +154,7 @@ export function SessionMenu({
   const [panelVisible, setPanelVisible] = useState(false);
   const [relayVisible, setRelayVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UiTheme>(loadUiTheme);
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ top: 48, right: 12, width: 560 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -177,6 +186,12 @@ export function SessionMenu({
       wireBodyRef.current.scrollTop = wireBodyRef.current.scrollHeight;
     }
   }, [panelVisible, wireQuery.data?.entries]);
+
+  useEffect(() => {
+    const onThemeChange = () => setUiTheme(loadUiTheme());
+    window.addEventListener("muse-code-space:ui-theme", onThemeChange);
+    return () => window.removeEventListener("muse-code-space:ui-theme", onThemeChange);
+  }, []);
 
   useEffect(() => {
     if (!showPopover) return;
@@ -292,6 +307,27 @@ export function SessionMenu({
                   onActivate: () => onColorModeChange(option.value),
                 }}
                 onDone={() => { /* Keep the menu open to compare palettes. */ }}
+              />
+            ))}
+          </details>
+          <div className="session-menu-separator" role="separator" />
+          <details className="session-menu-section" role="group" aria-label="Theme">
+            <summary className="session-menu-heading">Theme<span className="session-menu-chevron" aria-hidden="true">›</span></summary>
+            {UI_THEME_OPTIONS.map((option) => (
+              <ActionMenuItem
+                key={option.value}
+                action={{
+                  key: `ui-theme-${option.value}`,
+                  label: option.label,
+                  description: option.description,
+                  checked: uiTheme === option.value,
+                  radio: true,
+                  onActivate: () => {
+                    applyUiTheme(option.value);
+                    setUiTheme(option.value);
+                  },
+                }}
+                onDone={() => { /* Keep the menu open to compare themes. */ }}
               />
             ))}
           </details>
