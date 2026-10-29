@@ -253,7 +253,6 @@ export function SpotifyMusicControl() {
     refetchInterval: 30_000,
     retry: false,
   });
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [volume, setVolume] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -281,17 +280,9 @@ export function SpotifyMusicControl() {
     }
   };
 
-  if (statusQuery.data && !connected) {
-    return (
-      <div className="spotify-music-control">
-        <button type="button" className="spotify-connect-button" onClick={() => setDialogOpen(true)}>
-          <SpotifyIcon /> Connect Spotify
-        </button>
-        {statusQuery.data.error && <span className="spotify-music-error">{statusQuery.data.error}</span>}
-        {dialogOpen && <SpotifySetupDialog onClose={() => setDialogOpen(false)} />}
-      </div>
-    );
-  }
+  // Disconnected: the top bar shows nothing for now. Connecting Spotify
+  // lives on the companion card's Music taste row.
+  if (statusQuery.data && !connected) return null;
 
   const error = actionError
     ?? (playbackQuery.data && !playbackQuery.data.ok ? playbackQuery.data.error : null)
@@ -338,7 +329,6 @@ export function SpotifyMusicControl() {
         onPointerUp={() => { if (volume !== null) void run(() => api.setSpotifyVolume({ volume_percent: volume })); }}
         onKeyUp={() => { if (volume !== null) void run(() => api.setSpotifyVolume({ volume_percent: volume })); }} />
       {error && <span className="spotify-music-error" role="alert">{error}</span>}
-      {dialogOpen && <SpotifySetupDialog onClose={() => setDialogOpen(false)} />}
     </div>
   );
 }
