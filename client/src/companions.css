@@ -552,16 +552,15 @@
 }
 .companion-icon-trigger:hover .companion-icon-blank { border-color: var(--dim); }
 .companion-icon-upload { display: grid; place-items: center; width: 56px; height: 56px; border-style: dashed; border-color: var(--border); }
-/* Spotify companion music (card section, setup dialog, session control). */
-.companion-music { margin: 16px 0 20px; }
-.companion-music-genre { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
-.companion-music-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0 0 10px; }
-.companion-music-tags li { padding: 5px 9px; border-radius: 6px; background: color-mix(in srgb, hsl(var(--companion-hue, 210) 45% 55%) 11%, var(--surface)); font-size: 11px; line-height: 1.4; }
-.companion-music-playlist { margin: 0 0 10px; color: var(--dim); font-size: 12px; }
-.companion-music-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.companion-music-button, .spotify-connect-button { min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--text); color: var(--bg); font: 600 12px var(--sans); cursor: pointer; }
-.companion-music-button:disabled { cursor: wait; opacity: .6; }
-.companion-music-account { color: var(--dim); font-size: 11px; }
+/* Spotify companion music (card row, setup dialog, session control). */
+.companion-music-row dd { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; text-transform: none; }
+.companion-music-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spotify-icon { width: 18px; height: 18px; flex: 0 0 auto; display: block; }
+.companion-music-connect, .spotify-connect-button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--text); color: var(--bg); font: 600 12px var(--sans); white-space: nowrap; cursor: pointer; }
+.companion-music-connect .spotify-icon, .spotify-connect-button .spotify-icon { width: 15px; height: 15px; }
+.companion-music-icon-button { display: inline-grid; place-items: center; padding: 2px; border: 0; border-radius: 999px; background: none; cursor: pointer; }
+.companion-music-icon-button:disabled { cursor: wait; opacity: .6; }
+.companion-music-icon { display: inline-flex; padding: 2px; }
 .companion-music-error, .spotify-music-error { color: var(--error); font-size: 11px; line-height: 1.45; }
 .spotify-setup-steps { margin: 0 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.55; }
 .spotify-setup-steps li { margin-bottom: 6px; }
