@@ -9,17 +9,22 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { copyTextToClipboard } from "./clipboard";
+import { detectIosDevice } from "./colorMode";
 import { companionForName } from "./companionRoster";
 import type { CompanionMusic } from "../../server/src/companionMusic";
 import {
   extractSpotifyAuthCode,
+  extractSpotifyAuthState,
   isCompanionBusyInSessions,
+  shouldOpenSpotifyAuthInNewTab,
   spotifyRedirectUri,
   targetCompanionVolume,
 } from "./spotifyControlLogic";
 
 type MusicCompanion = { id: string; name: string; music: CompanionMusic | null };
 
+let savedSetupClientId = "";
+let savedStartedState: string | null = null;
 let stoppedContextUri: string | null = null;
 let tuneInSeq = 0;
 function setStoppedContextUri(uri: string | null) {
@@ -92,8 +97,16 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
   const connected = statusQuery.data?.connected === true;
-  const [clientId, setClientId] = useState("");
-  const [startedState, setStartedState] = useState<string | null>(null);
+  const [clientId, setClientIdState] = useState(() => savedSetupClientId);
+  const [startedState, setStartedStateLocal] = useState<string | null>(() => savedStartedState);
+  const setClientId = (next: string) => {
+    savedSetupClientId = next;
+    setClientIdState(next);
+  };
+  const setStartedState = (next: string | null) => {
+    savedStartedState = next;
+    setStartedStateLocal(next);
+  };
   const [pasteValue, setPasteValue] = useState("");
   const [copiedUri, setCopiedUri] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -118,7 +131,12 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
       }
       setStartedState(res.state);
       if (!res.auth_url.startsWith("#")) {
-        window.location.assign(res.auth_url);
+        if (shouldOpenSpotifyAuthInNewTab(window, detectIosDevice())) {
+          const opened = window.open(res.auth_url, "_blank", "noopener,noreferrer");
+          if (!opened) window.location.assign(res.auth_url);
+        } else {
+          window.location.assign(res.auth_url);
+        }
       }
     } finally {
       setBusy(false);
@@ -131,18 +149,20 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
       setError("Paste the full URL Spotify sent you back to (it contains a code), or the code itself.");
       return;
     }
-    if (!startedState) {
+    const stateToUse = extractSpotifyAuthState(pasteValue) ?? startedState;
+    if (!stateToUse) {
       setError("Click Connect first, approve in Spotify, then paste the redirect URL here.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const res = await api.completeSpotifySetup({ code, state: startedState });
+      const res = await api.completeSpotifySetup({ code, state: stateToUse });
       if (!res.ok) {
         setError(res.error ?? "Spotify did not accept that code.");
         return;
       }
+      setStartedState(null);
       await queryClient.invalidateQueries({ queryKey: ["spotify-status"] });
       onClose();
     } finally {

@@ -5,7 +5,9 @@ import { readFileSync } from "node:fs";
 import {
   deriveSpotifyControlState,
   extractSpotifyAuthCode,
+  extractSpotifyAuthState,
   isCompanionBusyInSessions,
+  shouldOpenSpotifyAuthInNewTab,
   SPOTIFY_BUSY_VOLUME,
   SPOTIFY_IDLE_VOLUME,
   spotifyRedirectUri,
@@ -25,10 +27,20 @@ test("extractSpotifyAuthCode accepts a pasted redirect URL or a bare code", () =
     extractSpotifyAuthCode("https://code-space.example/?code=ABC123&state=xyz"),
     "ABC123",
   );
+  assert.equal(
+    extractSpotifyAuthState("https://code-space.example/?code=ABC123&state=xyz"),
+    "xyz",
+  );
+  assert.equal(extractSpotifyAuthState("  ABC123  "), null);
   assert.equal(extractSpotifyAuthCode("  ABC123  "), "ABC123");
   assert.equal(extractSpotifyAuthCode("https://code-space.example/?error=access_denied"), null);
   assert.equal(extractSpotifyAuthCode(""), null);
   assert.equal(extractSpotifyAuthCode("not a code at all"), null);
+  const topWin = {};
+  topWin.parent = topWin;
+  assert.equal(shouldOpenSpotifyAuthInNewTab(topWin, false), false);
+  assert.equal(shouldOpenSpotifyAuthInNewTab(topWin, true), true);
+  assert.equal(shouldOpenSpotifyAuthInNewTab({ parent: {} }, false), true);
 });
 
 test("targetCompanionVolume and isCompanionBusyInSessions adjust volume for busy vs idle companions", () => {
