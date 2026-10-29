@@ -105,6 +105,15 @@ test("the fake pilot can demo highlighted and plain fences", () => {
   assert.ok(fakePilot.includes("```bash") && fakePilot.includes("```made-up-lang"), "demo reply has a highlighted and a plain fence");
 });
 
+test("highlighting falls back to the no-Wasm engine when Oniguruma is refused", () => {
+  // A host CSP without 'wasm-unsafe-eval' blocks the Oniguruma Wasm module;
+  // without this fallback every supported file silently renders plain.
+  const source = readFileSync(new URL("./codeHighlight.ts", import.meta.url), "utf8");
+  assert.ok(source.includes('import("shiki/engine/javascript")'), "fallback uses the JavaScript regex engine, not Wasm");
+  assert.ok(source.includes("createJavaScriptRegexEngine({ forgiving: true })"), "fallback tolerates grammar patterns the JS engine cannot compile");
+  assert.ok(source.includes("fallbackHighlighter()"), "tokenizing retries on the fallback highlighter");
+});
+
 test("known files tokenize in both themes and preserve the source exactly", async () => {
   const source = "const x: number = 3;\nconsole.log(x)";
   for (const theme of ["light", "dark"]) {
