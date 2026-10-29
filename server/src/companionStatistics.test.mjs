@@ -5,6 +5,9 @@ import {
   applyPrMonitorSnapshot,
   companionAccomplishments,
   createdPullRequestFromToolEvent,
+  formatAccomplishmentNotice,
+  newlyEarnedAccomplishments,
+  parseAccomplishmentNotice,
   summarizeCompanionStatistics,
 } from "./companionStatistics.ts";
 
@@ -126,4 +129,79 @@ test("summary is all zeros before anything is tracked", () => {
   assert.equal(summary.merge_rate, null);
   assert.equal(summary.net_lines, 0);
   assert.equal(summary.last_active_at, null);
+});
+
+test("newlyEarnedAccomplishments detects newly crossed badge, medal, and trophy thresholds", () => {
+  const noneYet = newlyEarnedAccomplishments(
+    { prs_merged: 0, lines_added: 20, files_changed: 2 },
+    { prs_merged: 0, lines_added: 80, files_changed: 9 },
+  );
+  assert.deepEqual(noneYet, []);
+
+  const firstMerge = newlyEarnedAccomplishments(
+    { prs_merged: 0, lines_added: 80, files_changed: 9 },
+    { prs_merged: 1, lines_added: 120, files_changed: 11 },
+  );
+  assert.deepEqual(firstMerge, [
+    { id: "prs-landed", label: "PRs landed", icon: "badge", tierName: "Badge", threshold: 1, current: 1, milestoneText: "1 PR landed" },
+    { id: "lines-shipped", label: "Lines shipped", icon: "badge", tierName: "Badge", threshold: 100, current: 120, milestoneText: "100 lines shipped" },
+    { id: "files-touched", label: "Files touched", icon: "badge", tierName: "Badge", threshold: 10, current: 11, milestoneText: "10 files touched" },
+  ]);
+
+  const medalAndTrophy = newlyEarnedAccomplishments(
+    { prs_merged: 9, lines_added: 9_500, files_changed: 490 },
+    { prs_merged: 10, lines_added: 10_200, files_changed: 510 },
+  );
+  assert.deepEqual(medalAndTrophy, [
+    { id: "prs-landed", label: "PRs landed", icon: "medal", tierName: "Medal", threshold: 10, current: 10, milestoneText: "10 PRs landed" },
+    { id: "lines-shipped", label: "Lines shipped", icon: "medal", tierName: "Medal", threshold: 10_000, current: 10_200, milestoneText: "10,000 lines shipped" },
+    { id: "files-touched", label: "Files touched", icon: "trophy", tierName: "Trophy", threshold: 500, current: 510, milestoneText: "500 files touched" },
+  ]);
+});
+
+test("formatAccomplishmentNotice and parseAccomplishmentNotice round-trip single and combined milestones", () => {
+  const single = formatAccomplishmentNotice({
+    companionName: "Poppy",
+    items: [{ icon: "medal", milestoneText: "10,000 lines shipped" }],
+  });
+  assert.equal(single, "[Accomplishment:medal] Poppy earned a Medal · 10,000 lines shipped");
+  assert.deepEqual(parseAccomplishmentNotice(single), {
+    companionName: "Poppy",
+    icons: ["medal"],
+    summaryText: "earned a Medal",
+    milestones: ["10,000 lines shipped"],
+  });
+
+  const combined = formatAccomplishmentNotice({
+    companionName: "Poppy",
+    items: [
+      { icon: "badge", milestoneText: "1 PR landed" },
+      { icon: "badge", milestoneText: "100 lines shipped" },
+      { icon: "badge", milestoneText: "10 files touched" },
+    ],
+  });
+  assert.equal(combined, "[Accomplishment:badge,badge,badge] Poppy earned 3 Badges · 1 PR landed · 100 lines shipped · 10 files touched");
+  assert.deepEqual(parseAccomplishmentNotice(combined), {
+    companionName: "Poppy",
+    icons: ["badge", "badge", "badge"],
+    summaryText: "earned 3 Badges",
+    milestones: ["1 PR landed", "100 lines shipped", "10 files touched"],
+  });
+
+  const mixed = formatAccomplishmentNotice({
+    companionName: "Remy",
+    items: [
+      { icon: "medal", milestoneText: "10 PRs landed" },
+      { icon: "badge", milestoneText: "1,000 lines shipped" },
+    ],
+  });
+  assert.equal(mixed, "[Accomplishment:medal,badge] Remy earned a Medal and a Badge · 10 PRs landed · 1,000 lines shipped");
+  assert.deepEqual(parseAccomplishmentNotice(mixed), {
+    companionName: "Remy",
+    icons: ["medal", "badge"],
+    summaryText: "earned a Medal and a Badge",
+    milestones: ["10 PRs landed", "1,000 lines shipped"],
+  });
+
+  assert.equal(parseAccomplishmentNotice("Ordinary system notice"), null);
 });

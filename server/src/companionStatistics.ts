@@ -229,6 +229,127 @@ export function companionAccomplishments(stats: {
   });
 }
 
+export type AccomplishmentTierName = "Badge" | "Medal" | "Trophy";
+
+export type UnlockedAccomplishment = {
+  id: CompanionAccomplishment["id"];
+  label: string;
+  icon: AccomplishmentIcon;
+  tierName: AccomplishmentTierName;
+  threshold: number;
+  current: number;
+  milestoneText: string;
+};
+
+export type AccomplishmentNotice = {
+  companionName: string;
+  icons: AccomplishmentIcon[];
+  summaryText: string;
+  milestones: string[];
+};
+
+const TIER_NAME_BY_ICON: Readonly<Record<AccomplishmentIcon, AccomplishmentTierName>> = {
+  badge: "Badge",
+  medal: "Medal",
+  trophy: "Trophy",
+};
+
+const TIER_PLURAL_BY_ICON: Readonly<Record<AccomplishmentIcon, string>> = {
+  badge: "Badges",
+  medal: "Medals",
+  trophy: "Trophies",
+};
+
+const ICON_RANK: Readonly<Record<AccomplishmentIcon, number>> = {
+  trophy: 3,
+  medal: 2,
+  badge: 1,
+};
+
+export function formatMilestoneThresholdText(id: CompanionAccomplishment["id"], threshold: number): string {
+  const num = threshold.toLocaleString("en-US");
+  if (id === "prs-landed") return threshold === 1 ? "1 PR landed" : `${num} PRs landed`;
+  if (id === "lines-shipped") return `${num} lines shipped`;
+  return `${num} files touched`;
+}
+
+export function summarizeEarnedTiers(icons: readonly AccomplishmentIcon[]): string {
+  const counts: Record<AccomplishmentIcon, number> = { trophy: 0, medal: 0, badge: 0 };
+  for (const icon of icons) counts[icon] = (counts[icon] ?? 0) + 1;
+  const parts: string[] = [];
+  for (const kind of ["trophy", "medal", "badge"] as const) {
+    const n = counts[kind];
+    if (n === 1) parts.push(`a ${TIER_NAME_BY_ICON[kind]}`);
+    else if (n > 1) parts.push(`${n} ${TIER_PLURAL_BY_ICON[kind]}`);
+  }
+  if (parts.length === 0) return "earned a Badge";
+  if (parts.length === 1) return `earned ${parts[0]}`;
+  if (parts.length === 2) return `earned ${parts[0]} and ${parts[1]}`;
+  return `earned ${parts[0]}, ${parts[1]}, and ${parts[2]}`;
+}
+
+export function highestAccomplishmentIcon(icons: readonly AccomplishmentIcon[]): AccomplishmentIcon {
+  let best: AccomplishmentIcon = "badge";
+  for (const icon of icons) {
+    if (ICON_RANK[icon] > ICON_RANK[best]) best = icon;
+  }
+  return best;
+}
+
+/**
+ * Milestones newly crossed between `before` and `after` statistics snapshots.
+ * If a single jump crosses multiple tiers in a series, reports the highest
+ * newly reached tier for that series.
+ */
+export function newlyEarnedAccomplishments(
+  before: { prs_merged: number; lines_added: number; files_changed: number },
+  after: { prs_merged: number; lines_added: number; files_changed: number },
+): UnlockedAccomplishment[] {
+  const prevById = new Map(companionAccomplishments(before).map((item) => [item.id, item]));
+  const unlocked: UnlockedAccomplishment[] = [];
+  for (const next of companionAccomplishments(after)) {
+    const prevThreshold = prevById.get(next.id)?.earnedThreshold ?? 0;
+    if (next.earnedThreshold > prevThreshold) {
+      unlocked.push({
+        id: next.id,
+        label: next.label,
+        icon: next.icon,
+        tierName: TIER_NAME_BY_ICON[next.icon],
+        threshold: next.earnedThreshold,
+        current: next.current,
+        milestoneText: formatMilestoneThresholdText(next.id, next.earnedThreshold),
+      });
+    }
+  }
+  return unlocked;
+}
+
+const ACCOMPLISHMENT_NOTICE_RE = /^\[Accomplishment:([a-z,]+)\]\s+(.+?)\s+(earned\s+.+?)\s+·\s+(.+)$/;
+
+export function formatAccomplishmentNotice(input: {
+  companionName: string;
+  items: ReadonlyArray<{ icon: AccomplishmentIcon; milestoneText: string }>;
+}): string {
+  const icons = input.items.map((item) => item.icon);
+  const summaryText = summarizeEarnedTiers(icons);
+  const milestones = input.items.map((item) => item.milestoneText);
+  return `[Accomplishment:${icons.join(",")}] ${input.companionName} ${summaryText} · ${milestones.join(" · ")}`;
+}
+
+export function parseAccomplishmentNotice(content: string): AccomplishmentNotice | null {
+  const match = content.trim().match(ACCOMPLISHMENT_NOTICE_RE);
+  if (!match) return null;
+  const rawIcons = match[1]!.split(",").map((s) => s.trim());
+  if (rawIcons.length === 0 || !rawIcons.every((i): i is AccomplishmentIcon => i === "badge" || i === "medal" || i === "trophy")) {
+    return null;
+  }
+  const companionName = match[2]!.trim();
+  const summaryText = match[3]!.trim();
+  const milestones = match[4]!.split(/\s+·\s+/).map((s) => s.trim()).filter(Boolean);
+  if (!companionName || !summaryText || milestones.length === 0) return null;
+  return { companionName, icons: rawIcons, summaryText, milestones };
+}
+
 export function summarizeCompanionStatistics(
   companionId: string,
   counters: CompanionStatisticsCounters | null,

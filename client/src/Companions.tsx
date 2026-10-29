@@ -4,7 +4,13 @@ import { companionArtwork, type CompanionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
 import { displayModelLabel } from "./modelLabel";
 import { companionModelAccess, computeCompanionStats, PAID_COMPANION_MODELS, type CompanionStats } from "../../server/src/companionModels";
-import { companionAccomplishments, type AccomplishmentIcon, type CompanionStatisticsSummary } from "../../server/src/companionStatistics";
+import {
+  companionAccomplishments,
+  highestAccomplishmentIcon,
+  type AccomplishmentIcon,
+  type AccomplishmentNotice,
+  type CompanionStatisticsSummary,
+} from "../../server/src/companionStatistics";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
 import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
@@ -236,6 +242,34 @@ export function CompanionAccomplishmentsRow({ statistics, expanded, onToggle }: 
         </svg>
       </button>
       {expanded && <AccomplishmentMilestones statistics={statistics} />}
+    </div>
+  );
+}
+
+export function AccomplishmentCelebrationEvent({ notice }: { notice: AccomplishmentNotice }) {
+  const hue = agentNameHue(notice.companionName);
+  const leadIcon = highestAccomplishmentIcon(notice.icons);
+  const milestoneSummary = notice.milestones.join(" · ");
+  const earnedSuffix = notice.summaryText.replace(/^earned\s+/, "");
+  return (
+    <div
+      className={`accomplishment-celebration is-${leadIcon}`}
+      style={{ "--companion-hue": hue } as CSSProperties}
+      role="status"
+      aria-label={`${notice.companionName} ${notice.summaryText}: ${milestoneSummary}`}
+    >
+      <span className="accomplishment-celebration-emblem" aria-hidden="true">
+        <AccomplishmentIcon kind={leadIcon} />
+        <span className="accomplishment-sparkle s1" />
+        <span className="accomplishment-sparkle s2" />
+        <span className="accomplishment-sparkle s3" />
+      </span>
+      <span className="accomplishment-celebration-body">
+        <span className="accomplishment-celebration-title">
+          <strong>{notice.companionName}</strong> earned <strong>{earnedSuffix}</strong>
+        </span>
+      </span>
+      <span className="accomplishment-celebration-pill">{milestoneSummary}</span>
     </div>
   );
 }

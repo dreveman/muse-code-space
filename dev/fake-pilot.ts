@@ -282,12 +282,23 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Background workflows: runId -> timers + state (so cancel can stop them).
 const workflows = new Map<string, { sessionId: string; timers: Timer[]; itemId: string; cancelled: boolean }>();
 
+let nextFakePrNumber = (Math.floor(Date.now() / 1000) % 50_000) + 20;
+function allocGlobalPrNumber(): number {
+  const num = nextFakePrNumber;
+  nextFakePrNumber += 1;
+  return num;
+}
+
 // Simulated PR monitoring ("monitor-pr" / "monitor-prs" prompt keyword): the
 // github_monitor_pr tool call starts it, then pr_monitor events update each
 // monitored PR's transcript row — CI fails (with the monitor's injected turn),
 // then the PR merges. Mirrors pilot/prMonitor.mjs payloads so the UI row can
 // be exercised locally.
-function startFakePrMonitor(session: Session, prNumbers: number[] = [6, 7]) {
+function startFakePrMonitor(
+  session: Session,
+  prNumbers: number[] = [6, 7],
+  diffScale: "badge" | "medal" | "trophy" = "badge",
+) {
   const slug = session.repo ?? "dreveman/muse-code-space";
   const [owner = "dreveman", repo = "muse-code-space"] = slug.split("/");
   const emit = (monitor: Record<string, unknown>) => push(session, "pr_monitor", { monitor });
@@ -300,6 +311,8 @@ function startFakePrMonitor(session: Session, prNumbers: number[] = [6, 7]) {
     push(session, "turn_completed", { turnId: hostTurn, outcome: { status: "completed" } });
     if (session.openTurn === hostTurn) session.openTurn = null;
   };
+  const baseAdditions = diffScale === "trophy" ? 50_000 : diffScale === "medal" ? 10_000 : 120;
+  const baseFilesChanged = diffScale === "trophy" ? 500 : diffScale === "medal" ? 100 : 10;
   const monitors = prNumbers.map((num, idx) => ({
     id: crypto.randomUUID(),
     owner,
@@ -313,9 +326,9 @@ function startFakePrMonitor(session: Session, prNumbers: number[] = [6, 7]) {
     comments: idx === 0 ? 1 : 0,
     // Diff totals, mirroring pilot/prMonitor.mjs monitor rows, so companion
     // statistics can count lines when the fake PR merges.
-    additions: 120 + idx * 45,
+    additions: baseAdditions + idx * 45,
     deletions: 30 + idx * 10,
-    filesChanged: 4 + idx * 2,
+    filesChanged: baseFilesChanged + idx * 2,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }));
@@ -1198,7 +1211,10 @@ async function runTurn(session: Session, text: string) {
     ].join("\n");
     const jsonTool = /\bjson-tool\b/i.test(text);
     const listAgentsTool = /\blist-agents-tool\b/i.test(text);
-    const monitorTool = /\b(?:monitor-prs?|pr-monitor)\b/i.test(text);
+    const earnTrophy = /\bearn-trophy\b/i.test(text);
+    const earnMedal = /\bearn-medal\b/i.test(text);
+    const monitorTool = /\b(?:monitor-prs?|pr-monitor|earn-badge|earn-medal|earn-trophy)\b/i.test(text);
+    const diffScale: "badge" | "medal" | "trophy" = earnTrophy ? "trophy" : earnMedal ? "medal" : "badge";
     const startPreviewMatch = text.match(/\b(?:start-preview|preview-demo|preview-screenshot)(?:\s+(\d{4,5}))?\b/i);
     const hmrUpdateTool = /\bhmr-update\b/i.test(text);
     const stopPreviewTool = /\bstop-preview\b/i.test(text);
@@ -1246,19 +1262,13 @@ async function runTurn(session: Session, text: string) {
     const createPrMatch = text.match(/\bcreate-prs?(?:\s+(\d+))?\b/i);
     const createPrTool = createPrMatch !== null;
     const createPrCount = createPrMatch?.[1] ? Math.min(8, Math.max(1, Number(createPrMatch[1]))) : /\bcreate-prs\b/i.test(text) ? 3 : 1;
-    const allocPrNumber = () => {
-      const next = session.nextPrNumber ?? 6;
-      session.nextPrNumber = next + 1;
-      return next;
-    };
+    const allocPrNumber = () => allocGlobalPrNumber();
     const firstCreatedPrNumber = createPrTool ? allocPrNumber() : 6;
     const prRepoSlug = session.repo ?? "dreveman/muse-code-space";
     const monitoredPrNumbers = (() => {
-      const createdCount = (session.nextPrNumber ?? 6) - 6;
-      if (createdCount > 0) {
-        return Array.from({ length: createdCount }, (_, i) => 6 + i);
-      }
-      return /\bmonitor-prs\b/i.test(text) ? [6, 7] : [6];
+      if (!monitorTool) return [6];
+      const count = /\bmonitor-prs\b/i.test(text) ? 2 : 1;
+      return Array.from({ length: count }, () => allocPrNumber());
     })();
     const userOnlyText = text.replace(/\n\n\[System:[\s\S]*$/i, "").trim();
     const assistantEscaped = assistant.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1396,7 +1406,30 @@ async function runTurn(session: Session, text: string) {
           });
         }
       }] : []),
-      ...(monitorTool ? [() => startFakePrMonitor(session, monitoredPrNumbers)] : []),
+      ...(monitorTool ? [() => {
+        // Ensure tracked PR creation events exist when monitor-pr is used
+        // standalone in a fresh session so merge statistics & accomplishments fire.
+        for (const num of monitoredPrNumbers) {
+          const createId = crypto.randomUUID();
+          const createOut = `Created PR #${num} Number terminal tabs only when there is more than one (#${num})\nhttps://github.com/${prRepoSlug}/pull/${num}\npr-${num} → main`;
+          const createRef = `out-${crypto.randomUUID()}`;
+          toolOutputs.set(createRef, createOut);
+          push(session, "item", {
+            item: {
+              kind: "toolCall",
+              itemId: createId,
+              tool: "mcp__code_space__github_create_pr",
+              status: "completed",
+              recordedAt: new Date().toISOString(),
+              args: JSON.stringify({ title: `Number terminal tabs only when there is more than one (#${num})`, head: `pr-${num}`, base: "main" }),
+              visibleOutput: createOut,
+              truncated: false,
+              outputRef: { id: createRef, byteLen: Buffer.byteLength(createOut), availability: "available", mediaType: "text/plain" },
+            },
+          });
+        }
+        startFakePrMonitor(session, monitoredPrNumbers, diffScale);
+      }] : []),
     ];
     if (/\bthinking\b/i.test(text)) {
       const reasoningId = crypto.randomUUID();
