@@ -206,16 +206,18 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     <div className="companion-music-row">
       <dt>Music taste</dt>
       <dd>
-        <span className="companion-music-line" title={taste}>{taste}</span>
         {connected ? (
-          music.playlist ? (
-            <button type="button" className="companion-music-icon-button" onClick={() => void tuneIn()} disabled={busy}
-              aria-label={`Tune in to ${music.playlist.name} on Spotify`} title={`Tune in: ${music.playlist.name}`}>
-              <SpotifyIcon />
-            </button>
-          ) : (
-            <span className="companion-music-icon" title="Spotify connected" aria-label="Spotify connected"><SpotifyIcon /></span>
-          )
+          <>
+            <span className="companion-music-line" title={taste}>{taste}</span>
+            {music.playlist ? (
+              <button type="button" className="companion-music-icon-button" onClick={() => void tuneIn()} disabled={busy}
+                aria-label={`Tune in to ${music.playlist.name} on Spotify`} title={`Tune in: ${music.playlist.name}`}>
+                <SpotifyIcon />
+              </button>
+            ) : (
+              <span className="companion-music-icon" title="Spotify connected" aria-label="Spotify connected"><SpotifyIcon /></span>
+            )}
+          </>
         ) : (
           <button type="button" className="companion-music-connect" onClick={() => setDialogOpen(true)}>
             <SpotifyIcon /> Connect Spotify
