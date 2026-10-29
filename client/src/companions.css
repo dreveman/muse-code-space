@@ -205,7 +205,7 @@
 :root[data-color-mode="dark"] .companion-accomplishment.is-earned .companion-accomplishment-icon { color: hsl(var(--companion-hue) 55% 68%); }
 .companion-accomplishment-label { flex: 0 0 auto; font-weight: 600; }
 .companion-accomplishment-progress { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
-.output-event.accomplishment-event { margin: 6px 0; padding: 0; border: 0; background: none; }
+.output-event.accomplishment-event { padding-block: 6px; border: 0; background: none; }
 .accomplishment-celebration {
   position: relative;
   overflow: hidden;
@@ -213,6 +213,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 11px;
+  margin-inline: -8px;
   padding: 9px 12px;
   border: 1px solid color-mix(in srgb, hsl(var(--companion-hue) 50% 48%) 34%, var(--border));
   border-radius: 12px;
