@@ -780,11 +780,6 @@ button { color: inherit; }
   transform: scale(0.93);
   filter: brightness(0.97);
 }
-.transcript-companion-card-close {
-  padding: 0;
-  border: 0;
-  cursor: pointer;
-}
 .transcript-companion-tabs.filter-bar {
   width: 100%;
   margin: 4px 0 6px;
