@@ -451,13 +451,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
               </svg>
             </button>
             <div className="companion-card-identity">
-              <button
-                type="button"
-                className="companion-card-portrait transcript-companion-card-close"
-                aria-label={`Collapse ${companion.name} card`}
-                title="Collapse card"
-                onClick={() => setOpen(false)}
-              >
+              <div className="companion-card-portrait">
                 <img
                   src={cardImageSource}
                   width={256}
@@ -467,7 +461,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
                   onLoad={onCardStillLoad}
                   onError={onCardError}
                 />
-              </button>
+              </div>
               <header className="companion-card-heading">
                 <p className="companion-card-role">{companion.role}</p>
                 <h2>{companion.name}</h2>
