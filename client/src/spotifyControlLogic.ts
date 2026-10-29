@@ -39,3 +39,38 @@ export function deriveSpotifyControlState(input: {
   if (input.devices.length === 0) return "no-device";
   return "ready";
 }
+
+export const SPOTIFY_IDLE_VOLUME = 50;
+export const SPOTIFY_BUSY_VOLUME = 75;
+
+/**
+ * Target Spotify volume for a tuned-in companion: quiet ambient volume when
+ * the companion is idle or finished, and normal listening volume while busy.
+ */
+export function targetCompanionVolume(busy: boolean): number {
+  return busy ? SPOTIFY_BUSY_VOLUME : SPOTIFY_IDLE_VOLUME;
+}
+
+export function isCompanionBusyInSessions(
+  companionName: string,
+  sessions: ReadonlyArray<{
+    title: string;
+    status: string;
+    archived?: boolean;
+    needs_you?: boolean;
+  }>,
+  startingCompanionName?: string | null,
+): boolean {
+  const key = companionName.trim().toLowerCase();
+  if (!key) return false;
+  if (startingCompanionName && startingCompanionName.trim().toLowerCase() === key) {
+    return true;
+  }
+  return sessions.some(
+    (s) =>
+      !s.archived &&
+      s.title.trim().toLowerCase() === key &&
+      !s.needs_you &&
+      (s.status === "queued" || s.status === "running"),
+  );
+}

@@ -1,17 +1,34 @@
-// Spotify companion music UI: the setup dialog, the companion card's
-// "Music taste" section, and the session playback control.
+// Spotify companion music UI: the setup dialog and the companion card's
+// "Music taste" section.
 //
 // Playback state is global to the user's Spotify account (never per
 // session, never stored client-side). Nothing here starts or changes
-// playback except an explicit Tune in / control press.
+// playback except an explicit Tune in press.
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { copyTextToClipboard } from "./clipboard";
+import { companionForName } from "./companionRoster";
 import type { CompanionMusic } from "../../server/src/companionMusic";
-import { deriveSpotifyControlState, extractSpotifyAuthCode, spotifyRedirectUri } from "./spotifyControlLogic";
+import {
+  extractSpotifyAuthCode,
+  isCompanionBusyInSessions,
+  spotifyRedirectUri,
+  targetCompanionVolume,
+} from "./spotifyControlLogic";
 
 type MusicCompanion = { id: string; name: string; music: CompanionMusic | null };
+
+let stoppedContextUri: string | null = null;
+let tuneInSeq = 0;
+function setStoppedContextUri(uri: string | null) {
+  stoppedContextUri = uri;
+  if (uri === null) tuneInSeq += 1;
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function" && typeof CustomEvent === "function") {
+    window.dispatchEvent(new CustomEvent("muse-code-space:spotify-stopped", { detail: uri }));
+  }
+}
 
 function useSpotifyStatus() {
   return useQuery({
@@ -22,32 +39,73 @@ function useSpotifyStatus() {
   });
 }
 
+export function useSpotifyPlayback() {
+  const statusQuery = useSpotifyStatus();
+  const connected = statusQuery.data?.connected === true;
+  return useQuery({
+    queryKey: ["spotify-playback"],
+    queryFn: () => api.getSpotifyPlayback({}),
+    enabled: connected,
+    staleTime: 3000,
+    refetchInterval: 10_000,
+    retry: false,
+  });
+}
+
+export function useCompanionTunedState(music: CompanionMusic | null | undefined) {
+  const statusQuery = useSpotifyStatus();
+  const playbackQuery = useSpotifyPlayback();
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onStopped = () => setTick((v) => v + 1);
+    window.addEventListener("muse-code-space:spotify-stopped", onStopped);
+    return () => window.removeEventListener("muse-code-space:spotify-stopped", onStopped);
+  }, []);
+  const connected = statusQuery.data?.connected === true;
+  const playback = playbackQuery.data?.playback ?? null;
+  const playlistUri = music?.playlist?.uri ?? null;
+  const matchesPlaylist = Boolean(
+    connected &&
+    playlistUri &&
+    playback?.context_uri &&
+    playback.context_uri === playlistUri &&
+    stoppedContextUri !== playlistUri,
+  );
+  return {
+    connected,
+    tunedIn: matchesPlaylist,
+    isPlaying: matchesPlaylist && playback?.is_playing === true,
+    track: matchesPlaylist ? (playback?.track ?? null) : null,
+    deviceId: playback?.device?.id ?? undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
-// Setup dialog (modeled on the GitHub setup dialog): create a Spotify
-// Developer app, register the exact redirect URI shown, enter the Client
-// ID, approve in Spotify, land back in Code Space. If Spotify returns the
-// user somewhere the callback didn't run, pasting the redirect URL into
-// the same dialog completes the connection instead.
+// Setup dropdown (modeled on the GitHub setup dropdown in RepoPicker.tsx):
+// create a Spotify Developer app, register the exact redirect URI shown,
+// enter the Client ID, approve in Spotify, land back in Code Space. If
+// Spotify returns the user somewhere the callback didn't run, pasting the
+// redirect URL into the same dropdown completes the connection instead.
 // ---------------------------------------------------------------------------
 
-export function SpotifySetupDialog({ onClose }: { onClose: () => void }) {
+export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
   const connected = statusQuery.data?.connected === true;
   const [clientId, setClientId] = useState("");
   const [startedState, setStartedState] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
+  const [copiedUri, setCopiedUri] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const redirectUri = spotifyRedirectUri(window.location);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  const copyRedirectUri = async () => {
+    if (await copyTextToClipboard(redirectUri)) {
+      setCopiedUri(true);
+      setTimeout(() => setCopiedUri(false), 1500);
+    }
+  };
 
   const connect = async () => {
     setBusy(true);
@@ -59,7 +117,9 @@ export function SpotifySetupDialog({ onClose }: { onClose: () => void }) {
         return;
       }
       setStartedState(res.state);
-      window.location.assign(res.auth_url);
+      if (!res.auth_url.startsWith("#")) {
+        window.location.assign(res.auth_url);
+      }
     } finally {
       setBusy(false);
     }
@@ -72,7 +132,7 @@ export function SpotifySetupDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     if (!startedState) {
-      setError("Click Connect with Spotify first, approve in Spotify, then paste the redirect URL here.");
+      setError("Click Connect first, approve in Spotify, then paste the redirect URL here.");
       return;
     }
     setBusy(true);
@@ -107,55 +167,121 @@ export function SpotifySetupDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="dialog-backdrop" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !busy) onClose();
-    }}>
-      <div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="spotify-setup-title">
-        <h2 id="spotify-setup-title">Connect Spotify</h2>
-        {connected ? (
-          <>
-            <p>Spotify is connected{statusQuery.data?.account_name ? <> as <strong style={{ color: "inherit" }}>{statusQuery.data.account_name}</strong></> : ""}. Companion playlists will play on your Spotify account through Spotify Connect.</p>
-            {error && <p className="confirm-dialog-error" role="alert">{error}</p>}
-            <div className="confirm-dialog-actions">
-              <button type="button" className="confirm-dialog-cancel" onClick={onClose} disabled={busy}>Close</button>
-              <button type="button" className="confirm-dialog-delete" onClick={() => void disconnect()} disabled={busy}>
-                {busy ? "Disconnecting…" : "Disconnect"}
+    <div id={id} className="repo-menu repo-setup-menu spotify-setup-menu" role="dialog" aria-label="Spotify setup">
+      <div className="repo-setup-header">
+        <strong>Spotify setup</strong>
+      </div>
+      {connected ? (
+        <div className="spotify-setup-connected">
+          <p className="repo-manage-description">
+            Connected{statusQuery.data?.account_name ? <> as <strong>{statusQuery.data.account_name}</strong></> : ""}. Companion playlists play on your active Spotify device.
+          </p>
+          {error && <p className="repo-setup-error" role="alert">{error}</p>}
+          <div className="spotify-setup-actions">
+            <button type="button" className="repo-setup-action" onClick={() => void disconnect()} disabled={busy}>
+              {busy ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <ol className="repo-setup-steps">
+          <li className="repo-setup-step">
+            <span className="repo-setup-status" aria-hidden="true">1</span>
+            <div className="repo-setup-identity">
+              <strong>Spotify Developer app</strong>
+              <small>Create an app at developer.spotify.com/dashboard and add this Redirect URI</small>
+            </div>
+          </li>
+          <li className="repo-setup-form">
+            <div className="repo-manage-field">
+              <span className="repo-manage-field-label">Redirect URI</span>
+              <code className="repo-manage-field-value spotify-redirect-uri" title={redirectUri}>{redirectUri}</code>
+              <button
+                type="button"
+                className="repo-manage-copy"
+                title={copiedUri ? "Copied" : "Copy Redirect URI"}
+                aria-label={copiedUri ? "Copied Redirect URI" : "Copy Redirect URI"}
+                onClick={() => void copyRedirectUri()}
+              >
+                {copiedUri ? "✓" : (
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+                    <path d="M10.5 5.5V3.8A1.3 1.3 0 0 0 9.2 2.5H3.8A1.3 1.3 0 0 0 2.5 3.8v5.4a1.3 1.3 0 0 0 1.3 1.3h1.7" />
+                  </svg>
+                )}
               </button>
             </div>
-          </>
-        ) : (
-          <>
-            <p>Code Space plays each companion's playlist on <strong style={{ color: "inherit" }}>your</strong> Spotify account (Premium required for playback control). Create a Spotify Developer app, then connect it here:</p>
-            <ol className="spotify-setup-steps">
-              <li>Open <code>developer.spotify.com/dashboard</code> and create an app (name it anything, e.g. “Code Space”).</li>
-              <li>In the app settings, add this exact Redirect URI:<br /><code className="spotify-redirect-uri">{redirectUri}</code></li>
-              <li>Copy the app's Client ID below and click Connect. Spotify asks you to approve; you land back here connected.</li>
-            </ol>
-            <label className="dialog-field">
-              <span>Spotify Client ID</span>
-              <input value={clientId} onChange={(event) => setClientId(event.target.value)} placeholder="Client ID from your Spotify app" data-autofocus disabled={busy} />
+          </li>
+          <li className="repo-setup-step">
+            <span className="repo-setup-status" aria-hidden="true">2</span>
+            <div className="repo-setup-identity">
+              <strong>Client ID</strong>
+              <small>Paste your app’s Client ID and authorize in Spotify</small>
+            </div>
+          </li>
+          <li className="repo-setup-form">
+            <label className="repo-setup-field">
+              <span>Client ID</span>
+              <input
+                type="text"
+                aria-label="Spotify Client ID"
+                value={clientId}
+                placeholder="Client ID from Spotify app"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={busy}
+                onChange={(event) => setClientId(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && clientId.trim()) {
+                    event.preventDefault();
+                    void connect();
+                  }
+                }}
+              />
             </label>
+            <button
+              type="button"
+              className="repo-setup-action repo-setup-submit"
+              disabled={busy || !clientId.trim()}
+              onClick={() => void connect()}
+            >
+              {busy ? "Connecting…" : "Connect"}
+            </button>
             {startedState && (
-              <label className="dialog-field">
-                <span>Sent back somewhere that didn't finish? Paste the redirect URL (or code) here</span>
-                <input value={pasteValue} onChange={(event) => setPasteValue(event.target.value)} placeholder="https://…/?code=…" disabled={busy} />
-              </label>
-            )}
-            {error && <p className="confirm-dialog-error" role="alert">{error}</p>}
-            <div className="confirm-dialog-actions">
-              <button type="button" className="confirm-dialog-cancel" onClick={onClose} disabled={busy}>Cancel</button>
-              {startedState && (
-                <button type="button" className="confirm-dialog-cancel" onClick={() => void completeFromPaste()} disabled={busy}>
+              <>
+                <label className="repo-setup-field">
+                  <span>Redirect URL</span>
+                  <input
+                    type="text"
+                    aria-label="Spotify redirect URL or code"
+                    value={pasteValue}
+                    placeholder="https://…/?code=…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={busy}
+                    onChange={(event) => setPasteValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && pasteValue.trim()) {
+                        event.preventDefault();
+                        void completeFromPaste();
+                      }
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="repo-setup-action repo-setup-submit"
+                  disabled={busy || !pasteValue.trim()}
+                  onClick={() => void completeFromPaste()}
+                >
                   Complete with pasted code
                 </button>
-              )}
-              <button type="button" className="confirm-dialog-primary" onClick={() => void connect()} disabled={busy || !clientId.trim()}>
-                {busy ? "Connecting…" : "Connect with Spotify"}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+              </>
+            )}
+          </li>
+          {error && <li className="repo-setup-error" role="alert">{error}</li>}
+        </ol>
+      )}
     </div>
   );
 }
@@ -179,10 +305,32 @@ export function SpotifyIcon() {
 export function CompanionMusicSection({ companion }: { companion: MusicCompanion }) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const { tunedIn, isPlaying } = useCompanionTunedState(companion.music);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
   const music = companion.music;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (rowRef.current && event.target instanceof Node && !rowRef.current.contains(event.target)) {
+        setMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
   if (!music) return null;
 
   const connected = statusQuery.data?.connected === true;
@@ -190,6 +338,7 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     setBusy(true);
     setError(null);
     try {
+      setStoppedContextUri(null);
       const res = await api.playCompanionMusic({ companion_id: companion.id });
       if (!res.ok) {
         setError(res.error ?? "Spotify could not start that playlist.");
@@ -201,77 +350,83 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     }
   };
 
-  const taste = [music.genre, ...music.tags, ...(music.playlist ? [music.playlist.name] : [])].join(" · ");
+  const chips = [music.genre, ...music.tags];
   return (
-    <div className="companion-music-row">
-      <dt>Music taste</dt>
-      <dd>
+    <section ref={rowRef} className="companion-music" aria-label="Music taste">
+      <div className="companion-music-header">
+        <h3>Music taste</h3>
         {connected ? (
-          <>
-            <span className="companion-music-line" title={taste}>{taste}</span>
-            {music.playlist ? (
-              <button type="button" className="companion-music-icon-button" onClick={() => void tuneIn()} disabled={busy}
-                aria-label={`Tune in to ${music.playlist.name} on Spotify`} title={`Tune in: ${music.playlist.name}`}>
-                <SpotifyIcon />
-              </button>
-            ) : (
-              <span className="companion-music-icon" title="Spotify connected" aria-label="Spotify connected"><SpotifyIcon /></span>
-            )}
-          </>
+          music.playlist ? (
+            <button type="button" className={`companion-music-connect spotify-tune-in-button${tunedIn ? " is-tuned-in" : ""}`} onClick={() => void tuneIn()} disabled={busy}
+              aria-label={`Tune in to ${music.playlist.name} on Spotify`} title={`Tune in: ${music.playlist.name}`}>
+              <SpotifyIcon /> {busy ? "Tuning in…" : tunedIn && isPlaying ? "Tuned in" : "Tune in"}
+            </button>
+          ) : (
+            <span className="companion-music-icon" title="Spotify connected" aria-label="Spotify connected"><SpotifyIcon /></span>
+          )
         ) : (
-          <button type="button" className="companion-music-connect" onClick={() => setDialogOpen(true)}>
+          <button
+            type="button"
+            className="companion-music-connect"
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
+            aria-controls={menuOpen ? menuId : undefined}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
             <SpotifyIcon /> Connect Spotify
           </button>
         )}
-        {error && <span className="companion-music-error" role="alert">{error}</span>}
-      </dd>
-      {dialogOpen && <SpotifySetupDialog onClose={() => setDialogOpen(false)} />}
-    </div>
+      </div>
+      {connected && chips.length > 0 && (
+        <ul>
+          {chips.map((chip) => (
+            <li key={chip}>{chip}</li>
+          ))}
+        </ul>
+      )}
+      {error && <span className="companion-music-error" role="alert">{error}</span>}
+      {menuOpen && <SpotifySetupMenu id={menuId} onClose={() => setMenuOpen(false)} />}
+    </section>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Session playback control. Polls playback every 10s while mounted (the
-// session view mounts it only for the visible session).
-// ---------------------------------------------------------------------------
+export function CompanionTunedBadge({
+  companionName,
+  music,
+  className = "",
+}: {
+  companionName?: string;
+  music?: CompanionMusic | null;
+  className?: string;
+}) {
+  const resolvedMusic = music !== undefined ? music : (companionName ? companionForName(companionName)?.music ?? null : null);
+  const { tunedIn, isPlaying, track } = useCompanionTunedState(resolvedMusic);
+  if (!tunedIn) return null;
+  const label = track
+    ? `Tuned in: ${track.name} — ${track.artists.join(", ")}${isPlaying ? "" : " (paused)"}`
+    : `Tuned in to ${resolvedMusic?.playlist?.name ?? "Spotify"}`;
+  return (
+    <span className={`companion-tuned-badge${isPlaying ? " is-playing" : ""}${className ? ` ${className}` : ""}`} title={label} aria-label={label}>
+      <SpotifyIcon />
+    </span>
+  );
+}
 
-export function SpotifyMusicControl() {
+export function CompanionMusicBanner({ companion }: { companion: MusicCompanion }) {
   const queryClient = useQueryClient();
-  const statusQuery = useSpotifyStatus();
-  const connected = statusQuery.data?.connected === true;
-  const playbackQuery = useQuery({
-    queryKey: ["spotify-playback"],
-    queryFn: () => api.getSpotifyPlayback({}),
-    enabled: connected,
-    refetchInterval: 10_000,
-    retry: false,
-  });
-  const devicesQuery = useQuery({
-    queryKey: ["spotify-devices"],
-    queryFn: () => api.getSpotifyDevices({}),
-    enabled: connected,
-    refetchInterval: 30_000,
-    retry: false,
-  });
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [volume, setVolume] = useState<number | null>(null);
+  const { tunedIn, isPlaying, track, deviceId } = useCompanionTunedState(companion.music);
   const [busy, setBusy] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const devices = devicesQuery.data?.devices ?? [];
-  const playback = playbackQuery.data?.playback ?? null;
-  const state = deriveSpotifyControlState({ connected, devices });
-  const activeDevice = devices.find((device) => device.is_active) ?? null;
-  const deviceId = selectedDeviceId ?? activeDevice?.id ?? undefined;
-  const shownVolume = volume ?? playback?.device?.volume_percent ?? activeDevice?.volume_percent ?? 50;
+  if (!tunedIn || !companion.music) return null;
 
-  const run = async (action: () => Promise<{ ok: boolean; error: string | null }>) => {
+  const run = async (work: () => Promise<{ ok: boolean; error: string | null }>) => {
     setBusy(true);
-    setActionError(null);
+    setError(null);
     try {
-      const res = await action();
+      const res = await work();
       if (!res.ok) {
-        setActionError(res.error ?? "Spotify reported an error.");
+        setError(res.error ?? "Spotify reported an error.");
         return;
       }
       await queryClient.invalidateQueries({ queryKey: ["spotify-playback"] });
@@ -280,55 +435,153 @@ export function SpotifyMusicControl() {
     }
   };
 
-  // Disconnected: the top bar shows nothing for now. Connecting Spotify
-  // lives on the companion card's Music taste row.
-  if (statusQuery.data && !connected) return null;
+  const stopPlayback = async () => {
+    const uri = companion.music?.playlist?.uri ?? null;
+    setStoppedContextUri(uri);
+    if (isPlaying) {
+      await run(() => api.pauseSpotifyPlayback({}));
+    } else {
+      await queryClient.invalidateQueries({ queryKey: ["spotify-playback"] });
+    }
+  };
 
-  const error = actionError
-    ?? (playbackQuery.data && !playbackQuery.data.ok ? playbackQuery.data.error : null)
-    ?? (devicesQuery.data && !devicesQuery.data.ok ? devicesQuery.data.error : null);
+  const trackTitle = track?.name ?? companion.music.playlist?.name ?? companion.music.genre;
+  const trackArtist = track?.artists?.length ? track.artists.join(", ") : companion.music.genre;
 
   return (
-    <div className="spotify-music-control" aria-label="Spotify playback">
-      <span className="spotify-track" title={playback?.track ? `${playback.track.name} — ${playback.track.artists.join(", ")}` : undefined}>
-        {playback?.track
-          ? <>{playback.track.name} <span className="spotify-track-artist">· {playback.track.artists.join(", ")}</span></>
-          : state === "no-device" ? "Open Spotify on a device to play music" : "Nothing playing"}
-      </span>
-      <div className="spotify-controls">
-        <button type="button" aria-label="Previous track" disabled={busy || state !== "ready"}
-          onClick={() => void run(() => api.skipSpotifyTrack({ direction: "previous" }))}>
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h2.5v14H7zM19 5v14L9.5 12z" /></svg>
+    <div className="companion-music-banner" role="region" aria-label={`${companion.name} music playback`}>
+      <SpotifyIcon />
+      <div className="companion-music-banner-track" title={`${trackTitle} — ${trackArtist}`}>
+        <span className="companion-music-banner-title">{trackTitle}</span>
+        {trackArtist && <span className="companion-music-banner-artist">· {trackArtist}</span>}
+      </div>
+      <div className="companion-music-banner-controls">
+        <button
+          type="button"
+          aria-label="Previous track"
+          title="Previous track"
+          disabled={busy}
+          onClick={() => void run(() => api.skipSpotifyTrack({ direction: "previous" }))}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M6.5 5.5h2.2v13H6.5zm3.2 6.5 8.8-6.5v13z" />
+          </svg>
         </button>
-        {playback?.is_playing ? (
-          <button type="button" aria-label="Pause" disabled={busy || state !== "ready"}
-            onClick={() => void run(() => api.pauseSpotifyPlayback({}))}>
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" /></svg>
+        {isPlaying ? (
+          <button
+            type="button"
+            aria-label="Pause"
+            title="Pause"
+            disabled={busy}
+            onClick={() => void run(() => api.pauseSpotifyPlayback({}))}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M7 5.5h3.5v13H7zm6.5 0H17v13h-3.5z" />
+            </svg>
           </button>
         ) : (
-          <button type="button" aria-label="Play" disabled={busy || state !== "ready"}
-            onClick={() => void run(() => api.resumeSpotifyPlayback({ device_id: deviceId }))}>
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+          <button
+            type="button"
+            aria-label="Play"
+            title="Play"
+            disabled={busy}
+            onClick={() => {
+              setStoppedContextUri(null);
+              void run(() => api.resumeSpotifyPlayback({ device_id: deviceId }));
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M8 5.5v13l10.5-6.5z" />
+            </svg>
           </button>
         )}
-        <button type="button" aria-label="Next track" disabled={busy || state !== "ready"}
-          onClick={() => void run(() => api.skipSpotifyTrack({ direction: "next" }))}>
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14.5 5H17v14h-2.5zM5 5v14l9.5-7z" /></svg>
+        <button
+          type="button"
+          aria-label="Stop"
+          title="Stop"
+          disabled={busy}
+          onClick={() => void stopPlayback()}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          aria-label="Next track"
+          title="Next track"
+          disabled={busy}
+          onClick={() => void run(() => api.skipSpotifyTrack({ direction: "next" }))}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M15.3 5.5h2.2v13h-2.2zM6.5 18.5v-13l8.8 6.5z" />
+          </svg>
         </button>
       </div>
-      <select className="spotify-device-picker" aria-label="Spotify Connect device" value={deviceId ?? ""}
-        disabled={state !== "ready"} onChange={(event) => setSelectedDeviceId(event.target.value || null)}>
-        {devices.length === 0 && <option value="">No devices</option>}
-        {devices.map((device) => (
-          <option key={device.id} value={device.id}>{device.name}{device.is_active ? " (active)" : ""}</option>
-        ))}
-      </select>
-      <input className="spotify-volume" type="range" min={0} max={100} step={1} value={shownVolume}
-        aria-label="Volume" disabled={busy || state !== "ready"}
-        onChange={(event) => setVolume(Number(event.target.value))}
-        onPointerUp={() => { if (volume !== null) void run(() => api.setSpotifyVolume({ volume_percent: volume })); }}
-        onKeyUp={() => { if (volume !== null) void run(() => api.setSpotifyVolume({ volume_percent: volume })); }} />
-      {error && <span className="spotify-music-error" role="alert">{error}</span>}
+      {error && <span className="companion-music-banner-error" role="alert">{error}</span>}
     </div>
   );
+}
+
+/**
+ * Automatically adjusts Spotify playback volume based on whether the
+ * currently tuned-in companion is actively working (`SPOTIFY_BUSY_VOLUME`)
+ * or idle/finished (`SPOTIFY_IDLE_VOLUME`).
+ */
+export function useSpotifyCompanionVolumeSync({
+  sessions,
+  companions,
+  startingCompanionName = null,
+}: {
+  sessions: ReadonlyArray<{ title: string; status: string; archived?: boolean; needs_you?: boolean }>;
+  companions: ReadonlyArray<MusicCompanion>;
+  startingCompanionName?: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const statusQuery = useSpotifyStatus();
+  const playbackQuery = useSpotifyPlayback();
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const onStopped = () => setTick((v) => v + 1);
+    window.addEventListener("muse-code-space:spotify-stopped", onStopped);
+    return () => window.removeEventListener("muse-code-space:spotify-stopped", onStopped);
+  }, []);
+
+  const connected = statusQuery.data?.connected === true;
+  const playback = playbackQuery.data?.playback ?? null;
+  const contextUri = playback?.context_uri ?? null;
+  const isPlaying = Boolean(
+    connected &&
+    playback?.is_playing &&
+    contextUri &&
+    stoppedContextUri !== contextUri,
+  );
+  const tunedCompanion = isPlaying && contextUri
+    ? companions.find((c) => c.music?.playlist?.uri === contextUri) ?? null
+    : null;
+  const busy = tunedCompanion
+    ? isCompanionBusyInSessions(tunedCompanion.name, sessions, startingCompanionName)
+    : null;
+
+  const lastAppliedRef = useRef<{ uri: string; busy: boolean; seq: number } | null>(null);
+
+  useEffect(() => {
+    if (!tunedCompanion || !contextUri || busy === null) {
+      lastAppliedRef.current = null;
+      return;
+    }
+    const prev = lastAppliedRef.current;
+    if (prev && prev.uri === contextUri && prev.busy === busy && prev.seq === tuneInSeq) {
+      return;
+    }
+    lastAppliedRef.current = { uri: contextUri, busy, seq: tuneInSeq };
+    const volumePercent = targetCompanionVolume(busy);
+    void api.setSpotifyVolume({ volume_percent: volumePercent })
+      .then((res) => {
+        if (res.ok) {
+          void queryClient.invalidateQueries({ queryKey: ["spotify-playback"] });
+        }
+      })
+      .catch(() => { /* best-effort volume adjustment */ });
+  }, [tunedCompanion, contextUri, busy, queryClient]);
 }

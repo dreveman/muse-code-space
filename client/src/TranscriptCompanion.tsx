@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { agentNameHue } from "./agentColor";
 import { artworkForCompanionName, CompanionAccomplishmentsRow, companions, type Companion } from "./Companions";
+import { CompanionMusicBanner, CompanionMusicSection, CompanionTunedBadge } from "./SpotifyMusic";
 import {
   isAnimationPreloaded,
   isIdleMotionAllowed,
@@ -409,10 +410,15 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
         aria-controls={mounted ? menuId : undefined}
         onClick={() => setOpen((value) => !value)}
       >
-        {imageSource && <CompanionPortrait source={imageSource}
-          stillSource={artwork?.still ?? imageSource}
-          crossFade={motionAllowed && visible && !archived}
-          onError={() => setFailedSource(source ?? null)} />}
+        {imageSource && (
+          <span className="transcript-companion-portrait-wrap">
+            <CompanionPortrait source={imageSource}
+              stillSource={artwork?.still ?? imageSource}
+              crossFade={motionAllowed && visible && !archived}
+              onError={() => setFailedSource(source ?? null)} />
+            <CompanionTunedBadge music={companion?.music} className="transcript-companion-tuned-badge" />
+          </span>
+        )}
         <span className="transcript-companion-label" role="status" aria-live="polite" aria-atomic="true"
           aria-label={showActivity ? `${name}: ${label}` : name}>
           <span className="transcript-companion-name">{name}</span>
@@ -471,6 +477,8 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
             <div className="companion-card-access">
               <p className="companion-phone-description">{companion.description}</p>
             </div>
+
+            <CompanionMusicBanner companion={companion} />
 
             <CompanionAccomplishmentsRow statistics={statistics} expanded={accomplishmentsOpen}
               onToggle={() => setAccomplishmentsOpen((value) => !value)} />
@@ -576,9 +584,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
                           <dd>{companion.effort === "xhigh" ? "Extra high" : companion.effort}</dd>
                         </div>
                       </dl>
-                      <p className="companion-ratings-note">
-                        Ratings reflect relative strengths, model, and working style.
-                      </p>
+                      <CompanionMusicSection companion={companion} />
                       <details
                         className="companion-soul"
                         open={soulOpen}

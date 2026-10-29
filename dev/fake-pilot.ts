@@ -17,6 +17,7 @@ import {
 } from "../pilot/preview.mjs";
 import { readGitVcsStatus } from "../pilot/vcsSmartlog.mjs";
 import { validateAssistantAvatar } from "../pilot/assistant-avatar.mjs";
+import { createSpotifyClient } from "../pilot/spotify.mjs";
 
 // Fake pilot for local UI/action testing — no muse, no VM, no credentials.
 //
@@ -193,6 +194,25 @@ function validGitAuthor(value: unknown): { name: string; email: string } | null 
   return { name, email };
 }
 const isReserved = (name: unknown) => ["muse", "jolly", assistant.name.toLowerCase()].includes(String(name ?? "").trim().replace(/^@/, "").toLowerCase());
+
+const SPOTIFY_CONFIG_FILE = process.env.MUSE_CODE_SPACE_SPOTIFY_CONFIG
+  ?? resolve(import.meta.dir, "..", ".dev", "spotify.json");
+const realSpotify = createSpotifyClient({ configFile: SPOTIFY_CONFIG_FILE });
+const FAKE_SPOTIFY_TRACKS = [
+  { name: "Weightless", artists: ["Marconi Union"], uri: "spotify:track:fake1", duration_ms: 198_000 },
+  { name: "Midnight City", artists: ["M83"], uri: "spotify:track:fake2", duration_ms: 243_000 },
+  { name: "Avril 14th", artists: ["Aphex Twin"], uri: "spotify:track:fake3", duration_ms: 125_000 },
+  { name: "Resonance", artists: ["HOME"], uri: "spotify:track:fake4", duration_ms: 212_000 },
+];
+const fakeSpotify = {
+  connected: false,
+  accountName: "Demo Listener",
+  pendingState: null as string | null,
+  isPlaying: false,
+  contextUri: null as string | null,
+  trackIndex: 0,
+  volumePercent: 65,
+};
 function hydrateFromDevAppDb() {
   if (PORT !== 18793) return;
   const dbPath = resolve(import.meta.dir, "..", ".dev", "app.db");
@@ -2031,6 +2051,127 @@ Bun.serve({
           return json(200, { brokerDone: githubSetup.brokerDone, appDone: githubSetup.appDone, appHelpRequested: true });
         }
         return json(400, { error: "Unknown setup step.", code: "invalid_github_setup_step" });
+      }
+    }
+
+    // Spotify companion music: supports both simulated local testing (enter
+    // any short Client ID like "demo", or "paste" to exercise the manual
+    // redirect-URL paste fallback) and real Spotify OAuth when a 32-hex
+    // Spotify Client ID is provided.
+    if (path === "/spotify/status" && req.method === "GET") {
+      if (realSpotify.isConnected()) {
+        return json(200, await realSpotify.status());
+      }
+      return json(200, {
+        connected: fakeSpotify.connected,
+        ...(fakeSpotify.connected ? { account_name: fakeSpotify.accountName } : {}),
+      });
+    }
+    if (path.startsWith("/spotify/")) {
+      try {
+        if (path === "/spotify/setup/start" && req.method === "POST") {
+          const clientId = typeof body.client_id === "string" ? body.client_id.trim() : "";
+          const redirectUri = typeof body.redirect_uri === "string" ? body.redirect_uri.trim() : "";
+          if (!clientId || !redirectUri) {
+            return json(400, { error: "client_id and redirect_uri are required", code: "spotify_setup_invalid" });
+          }
+          if (/^[0-9a-f]{32}$/i.test(clientId)) {
+            const started = await realSpotify.startSetup({ clientId, redirectUri });
+            return json(200, started);
+          }
+          const state = `fake-spotify-${crypto.randomUUID()}`;
+          fakeSpotify.pendingState = state;
+          const sep = redirectUri.includes("?") ? "&" : "?";
+          const authUrl = clientId.toLowerCase() === "paste"
+            ? "#spotify-paste-demo"
+            : `${redirectUri}${sep}code=fake-spotify-code&state=${encodeURIComponent(state)}`;
+          return json(200, { auth_url: authUrl, state });
+        }
+        if (path === "/spotify/setup/complete" && req.method === "POST") {
+          const code = typeof body.code === "string" ? body.code.trim() : "";
+          const state = typeof body.state === "string" ? body.state.trim() : "";
+          if (state.startsWith("fake-spotify-")) {
+            if (!code) {
+              return json(400, { error: "Missing authorization code.", code: "spotify_setup_invalid" });
+            }
+            fakeSpotify.connected = true;
+            fakeSpotify.pendingState = null;
+            return json(200, { connected: true, account_name: fakeSpotify.accountName });
+          }
+          const completed = await realSpotify.completeSetup({ code, state });
+          return json(200, completed);
+        }
+        if (path === "/spotify/disconnect" && req.method === "POST") {
+          fakeSpotify.connected = false;
+          fakeSpotify.isPlaying = false;
+          if (realSpotify.isConnected()) {
+            await realSpotify.disconnect();
+          }
+          return json(200, { connected: false });
+        }
+        if (realSpotify.isConnected()) {
+          if (path === "/spotify/devices" && req.method === "GET") return json(200, { devices: await realSpotify.devices() });
+          if (path === "/spotify/playback" && req.method === "GET") return json(200, { playback: await realSpotify.playback() });
+          if (path === "/spotify/play" && req.method === "POST") return json(200, await realSpotify.play({ contextUri: body.context_uri, deviceId: body.device_id }));
+          if (path === "/spotify/pause" && req.method === "POST") return json(200, await realSpotify.pause());
+          if (path === "/spotify/resume" && req.method === "POST") return json(200, await realSpotify.resume({ deviceId: body.device_id }));
+          if (path === "/spotify/next" && req.method === "POST") return json(200, await realSpotify.next());
+          if (path === "/spotify/previous" && req.method === "POST") return json(200, await realSpotify.previous());
+          if (path === "/spotify/volume" && req.method === "POST") return json(200, await realSpotify.setVolume(body.volume_percent));
+        }
+        if (!fakeSpotify.connected) {
+          return json(409, { error: "Spotify is not connected", code: "spotify_not_connected" });
+        }
+        const fakeDevice = { id: "fake-device-1", name: "This Computer (Fake)", type: "Computer", is_active: true, volume_percent: fakeSpotify.volumePercent };
+        if (path === "/spotify/devices" && req.method === "GET") {
+          return json(200, { devices: [fakeDevice] });
+        }
+        if (path === "/spotify/playback" && req.method === "GET") {
+          const track = fakeSpotify.contextUri
+            ? FAKE_SPOTIFY_TRACKS[fakeSpotify.trackIndex % FAKE_SPOTIFY_TRACKS.length]!
+            : null;
+          return json(200, {
+            playback: {
+              is_playing: fakeSpotify.isPlaying,
+              progress_ms: fakeSpotify.isPlaying ? 42_000 : 0,
+              track,
+              device: fakeDevice,
+              context_uri: fakeSpotify.contextUri,
+            },
+          });
+        }
+        if (path === "/spotify/play" && req.method === "POST") {
+          fakeSpotify.isPlaying = true;
+          fakeSpotify.contextUri = typeof body.context_uri === "string" ? body.context_uri : null;
+          return json(200, { ok: true });
+        }
+        if (path === "/spotify/pause" && req.method === "POST") {
+          fakeSpotify.isPlaying = false;
+          return json(200, { ok: true });
+        }
+        if (path === "/spotify/resume" && req.method === "POST") {
+          fakeSpotify.isPlaying = true;
+          return json(200, { ok: true });
+        }
+        if (path === "/spotify/next" && req.method === "POST") {
+          fakeSpotify.trackIndex = (fakeSpotify.trackIndex + 1) % FAKE_SPOTIFY_TRACKS.length;
+          fakeSpotify.isPlaying = true;
+          return json(200, { ok: true });
+        }
+        if (path === "/spotify/previous" && req.method === "POST") {
+          fakeSpotify.trackIndex = (fakeSpotify.trackIndex - 1 + FAKE_SPOTIFY_TRACKS.length) % FAKE_SPOTIFY_TRACKS.length;
+          fakeSpotify.isPlaying = true;
+          return json(200, { ok: true });
+        }
+        if (path === "/spotify/volume" && req.method === "POST") {
+          if (typeof body.volume_percent === "number") fakeSpotify.volumePercent = body.volume_percent;
+          return json(200, { ok: true });
+        }
+        return json(404, { error: "Unknown Spotify route", code: "spotify_unknown_route" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const isSetup = path.startsWith("/spotify/setup/");
+        return json(isSetup ? 400 : 502, { error: message.slice(0, 300), code: isSetup ? "spotify_setup_invalid" : "spotify_error" });
       }
     }
     // Agent-to-agent messages, like the real pilot (deliverAgentMessage).

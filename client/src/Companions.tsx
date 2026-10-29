@@ -12,7 +12,7 @@ import {
   type CompanionStatisticsSummary,
 } from "../../server/src/companionStatistics";
 import { companionMusicOf, type CompanionMusic } from "../../server/src/companionMusic";
-import { CompanionMusicSection } from "./SpotifyMusic";
+import { CompanionMusicSection, CompanionTunedBadge } from "./SpotifyMusic";
 import { CompanionAccessNotice, CompanionLock } from "./CompanionAccess";
 import { CompanionAvatar, isAnimationPreloaded, isIdleMotionAllowed, subscribeIdleMotion, useProgressiveCompanionImage } from "./CompanionAvatar";
 import { ExpandButton } from "./MoreCompanionsButton";
@@ -296,9 +296,8 @@ function CompanionConfiguration({
     <dl className="companion-configuration">
       <div><dt>Preferred model</dt><dd>{displayModelLabel(companion.model.preferredId)}</dd></div>
       <div><dt>Effort</dt><dd>{companion.effort === "xhigh" ? "Extra high" : companion.effort}</dd></div>
-      <CompanionMusicSection companion={companion} />
     </dl>
-    <p className="companion-ratings-note">Ratings reflect relative strengths, model, and working style.</p>
+    <CompanionMusicSection companion={companion} />
     <details
       className="companion-soul"
       open={soulOpen}
@@ -431,7 +430,10 @@ export function CompanionContact({ companion, selected, disabled, models, onSele
       onClick={onSelect} disabled={disabled}>
       {/* Still in the Available list: motion is reserved for companions
           with a task in the sidebar (their session rows animate). */}
-      <CompanionAvatar artwork={companion.artwork} animate={false} />
+      <span className="companion-contact-avatar-wrap">
+        <CompanionAvatar artwork={companion.artwork} animate={false} />
+        <CompanionTunedBadge music={companion.music} className="sidebar-contact-tuned-badge" />
+      </span>
       <span><strong>{companion.name}{access.status !== "ready" && <span title={access.status === "upgrade-required" ? "Upgrade required" : "Unavailable"}><CompanionLock /></span>}</strong><small>{roleLabel}</small></span>
     </button>
   );

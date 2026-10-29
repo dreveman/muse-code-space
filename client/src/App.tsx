@@ -15,7 +15,7 @@ import { CompanionAccessNotice } from "./CompanionAccess";
 import { companionModelAccess, orderCompanionsByAccess, PAID_COMPANION_MODELS } from "../../server/src/companionModels";
 import { displayModelLabel } from "./modelLabel";
 import { TranscriptCompanion } from "./TranscriptCompanion";
-import { SpotifyMusicControl } from "./SpotifyMusic";
+import { CompanionTunedBadge, useSpotifyCompanionVolumeSync } from "./SpotifyMusic";
 import { availableCompanionDefinitions, companionAssignedElsewhere, isDefaultCompanion, matchesCompanionQuery } from "./companionRoster";
 import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
@@ -1615,6 +1615,7 @@ const SessionRow = memo(function SessionRow({
           title={summary ? `${displayTitle} — ${summary}` : displayTitle}
         >
           {rosterArtwork && <CompanionAvatar className="companion-task-avatar" artwork={rosterArtwork} animate={!session.archived} />}
+          {rosterArtwork && <CompanionTunedBadge companionName={session.title} className="sidebar-task-tuned-badge" />}
           <StatusMark visual={visual} />
           <span className="session-name-block">
             <span className="session-title">{displayTitle}</span>
@@ -2258,6 +2259,11 @@ export function App() {
     retry: false,
   });
   const sessions = sessionsQuery.data?.sessions ?? [];
+  useSpotifyCompanionVolumeSync({
+    sessions,
+    companions: allCompanions,
+    startingCompanionName: startingDraft?.draft.companionName ?? null,
+  });
   const sessionQuery = sessions.length > 1 ? sessionFilterInput : "";
   const selectedCompanion = allCompanions.find((companion) => companion.id === selectedCompanionId) ?? null;
   const selectedModelAccess = selectedCompanion ? companionModelAccess(selectedCompanion, accessibleModels) : null;
@@ -4889,7 +4895,6 @@ export function App() {
                         activity={detailCompanionActivity}
                         visible={detailCompanionVisible} />
                       <div className="chat-floating-actions">
-                        <SpotifyMusicControl />
                         <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
                         <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
@@ -6227,7 +6232,6 @@ function LinkedConversationPane({
             visible={true}
           />
           <div className="chat-floating-actions">
-            <SpotifyMusicControl />
             <OwnedArtifactMenu paths={ownedFiles} onOpen={onOpenFile} />
             <NewPreviewButton active={false} onOpen={onTogglePreview} />
             <NewTerminalButton onOpen={onOpenTerminal} />
