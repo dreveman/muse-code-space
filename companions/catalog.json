@@ -25,6 +25,18 @@
         "portraitIdle": "client/src/assets/companions/poppy/portrait-idle.webp",
         "working": "client/src/assets/companions/poppy/working.webp",
         "waking": "client/src/assets/companions/poppy/waking.webp"
+      },
+      "music": {
+        "genre": "Instrumental Beats",
+        "tags": [
+          "lock-in",
+          "chill beats"
+        ],
+        "playlist": {
+          "name": "Focus Flow",
+          "uri": "spotify:playlist:37i9dQZF1DWZZbwlv3Vmtr",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DWZZbwlv3Vmtr"
+        }
       }
     },
     {
@@ -50,6 +62,19 @@
         "portraitIdle": "client/src/assets/companions/remy/portrait-idle.webp",
         "working": "client/src/assets/companions/remy/working.webp",
         "waking": "client/src/assets/companions/remy/waking.webp"
+      },
+      "music": {
+        "genre": "Lo-fi",
+        "tags": [
+          "chill",
+          "beats",
+          "tidy"
+        ],
+        "playlist": {
+          "name": "lofi beats",
+          "uri": "spotify:playlist:37i9dQZF1DWWQRwui0ExPn",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DWWQRwui0ExPn"
+        }
       }
     },
     {
@@ -75,6 +100,18 @@
         "portraitIdle": "client/src/assets/companions/tilly/portrait-idle.webp",
         "working": "client/src/assets/companions/tilly/working.webp",
         "waking": "client/src/assets/companions/tilly/waking.webp"
+      },
+      "music": {
+        "genre": "Jazz",
+        "tags": [
+          "instrumental",
+          "curious"
+        ],
+        "playlist": {
+          "name": "Jazz Vibes",
+          "uri": "spotify:playlist:37i9dQZF1DX0SM0LYsmbMT",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DX0SM0LYsmbMT"
+        }
       }
     },
     {
@@ -100,6 +137,18 @@
         "portraitIdle": "client/src/assets/companions/nova/portrait-idle.webp",
         "working": "client/src/assets/companions/nova/working.webp",
         "waking": "client/src/assets/companions/nova/waking.webp"
+      },
+      "music": {
+        "genre": "IDM",
+        "tags": [
+          "hypnotic",
+          "electronic"
+        ],
+        "playlist": {
+          "name": "Brain Food",
+          "uri": "spotify:playlist:37i9dQZF1DWXLeA8Omikj7",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DWXLeA8Omikj7"
+        }
       }
     },
     {
@@ -125,6 +174,18 @@
         "portraitIdle": "client/src/assets/companions/sage/portrait-idle.webp",
         "working": "client/src/assets/companions/sage/working.webp",
         "waking": "client/src/assets/companions/sage/waking.webp"
+      },
+      "music": {
+        "genre": "Ambient",
+        "tags": [
+          "deep focus",
+          "guitar"
+        ],
+        "playlist": {
+          "name": "Deep Focus",
+          "uri": "spotify:playlist:37i9dQZF1DWZeKCadgRdKQ",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DWZeKCadgRdKQ"
+        }
       }
     },
     {
@@ -150,6 +211,14 @@
         "portraitIdle": "client/src/assets/companions/pip/portrait-idle.webp",
         "working": "client/src/assets/companions/pip/working.webp",
         "waking": "client/src/assets/companions/pip/waking.webp"
+      },
+      "music": {
+        "genre": "Indie Pop",
+        "tags": [
+          "feel-good",
+          "melodic"
+        ],
+        "playlist": null
       }
     },
     {
@@ -175,6 +244,18 @@
         "portraitIdle": "client/src/assets/companions/juno/portrait-idle.webp",
         "working": "client/src/assets/companions/juno/working.webp",
         "waking": "client/src/assets/companions/juno/waking.webp"
+      },
+      "music": {
+        "genre": "Classical",
+        "tags": [
+          "timeless",
+          "orchestral"
+        ],
+        "playlist": {
+          "name": "Classical Essentials",
+          "uri": "spotify:playlist:37i9dQZF1DWWEJlAGA9gs0",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DWWEJlAGA9gs0"
+        }
       }
     },
     {
@@ -200,6 +281,14 @@
         "portraitIdle": "client/src/assets/companions/milo/portrait-idle.webp",
         "working": "client/src/assets/companions/milo/working.webp",
         "waking": "client/src/assets/companions/milo/waking.webp"
+      },
+      "music": {
+        "genre": "Acoustic Pop",
+        "tags": [
+          "warm",
+          "singer-songwriter"
+        ],
+        "playlist": null
       }
     },
     {
@@ -225,6 +314,18 @@
         "portraitIdle": "client/src/assets/companions/ziggy/portrait-idle.webp",
         "working": "client/src/assets/companions/ziggy/working.webp",
         "waking": "client/src/assets/companions/ziggy/waking.webp"
+      },
+      "music": {
+        "genre": "Rock",
+        "tags": [
+          "guitar",
+          "high energy"
+        ],
+        "playlist": {
+          "name": "MARROW",
+          "uri": "spotify:playlist:37i9dQZF1DXcF6B6QPhFDv",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DXcF6B6QPhFDv"
+        }
       }
     },
     {
@@ -250,6 +351,14 @@
         "portraitIdle": "client/src/assets/companions/bea/portrait-idle.webp",
         "working": "client/src/assets/companions/bea/working.webp",
         "waking": "client/src/assets/companions/bea/waking.webp"
+      },
+      "music": {
+        "genre": "Indie Rock",
+        "tags": [
+          "driving",
+          "guitar"
+        ],
+        "playlist": null
       }
     },
     {
@@ -275,6 +384,14 @@
         "portraitIdle": "client/src/assets/companions/kit/portrait-idle.webp",
         "working": "client/src/assets/companions/kit/working.webp",
         "waking": "client/src/assets/companions/kit/waking.webp"
+      },
+      "music": {
+        "genre": "Trip-hop",
+        "tags": [
+          "downtempo",
+          "noir"
+        ],
+        "playlist": null
       }
     },
     {
@@ -300,6 +417,18 @@
         "portraitIdle": "client/src/assets/companions/luna/portrait-idle.webp",
         "working": "client/src/assets/companions/luna/working.webp",
         "waking": "client/src/assets/companions/luna/waking.webp"
+      },
+      "music": {
+        "genre": "Neo-classical",
+        "tags": [
+          "piano",
+          "calm"
+        ],
+        "playlist": {
+          "name": "Peaceful Piano",
+          "uri": "spotify:playlist:37i9dQZF1DX4sWSpwq3LiO",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DX4sWSpwq3LiO"
+        }
       }
     },
     {
@@ -325,6 +454,18 @@
         "portraitIdle": "client/src/assets/companions/otto/portrait-idle.webp",
         "working": "client/src/assets/companions/otto/working.webp",
         "waking": "client/src/assets/companions/otto/waking.webp"
+      },
+      "music": {
+        "genre": "Techno",
+        "tags": [
+          "dark",
+          "systems"
+        ],
+        "playlist": {
+          "name": "TECHNO BUNKER",
+          "uri": "spotify:playlist:37i9dQZF1DX6J5NfMJS675",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DX6J5NfMJS675"
+        }
       }
     },
     {
@@ -350,6 +491,14 @@
         "portraitIdle": "client/src/assets/companions/iris/portrait-idle.webp",
         "working": "client/src/assets/companions/iris/working.webp",
         "waking": "client/src/assets/companions/iris/waking.webp"
+      },
+      "music": {
+        "genre": "Dream Pop",
+        "tags": [
+          "shoegaze",
+          "ethereal"
+        ],
+        "playlist": null
       }
     },
     {
@@ -375,6 +524,18 @@
         "portraitIdle": "client/src/assets/companions/finn/portrait-idle.webp",
         "working": "client/src/assets/companions/finn/working.webp",
         "waking": "client/src/assets/companions/finn/waking.webp"
+      },
+      "music": {
+        "genre": "Dance",
+        "tags": [
+          "electronic",
+          "upbeat"
+        ],
+        "playlist": {
+          "name": "mint",
+          "uri": "spotify:playlist:37i9dQZF1DX4dyzvuaRJ0n",
+          "url": "https://open.spotify.com/playlist/37i9dQZF1DX4dyzvuaRJ0n"
+        }
       }
     },
     {
@@ -400,6 +561,14 @@
         "portraitIdle": "client/src/assets/companions/echo/portrait-idle.webp",
         "working": "client/src/assets/companions/echo/working.webp",
         "waking": "client/src/assets/companions/echo/waking.webp"
+      },
+      "music": {
+        "genre": "Post-rock",
+        "tags": [
+          "atmospheric",
+          "tension"
+        ],
+        "playlist": null
       }
     },
     {
@@ -425,6 +594,14 @@
         "portraitIdle": "client/src/assets/companions/bo/portrait-idle.webp",
         "working": "client/src/assets/companions/bo/working.webp",
         "waking": "client/src/assets/companions/bo/waking.webp"
+      },
+      "music": {
+        "genre": "Minimal Ambient",
+        "tags": [
+          "sparse",
+          "calm"
+        ],
+        "playlist": null
       }
     },
     {
@@ -450,6 +627,14 @@
         "portraitIdle": "client/src/assets/companions/rio/portrait-idle.webp",
         "working": "client/src/assets/companions/rio/working.webp",
         "waking": "client/src/assets/companions/rio/waking.webp"
+      },
+      "music": {
+        "genre": "Soul",
+        "tags": [
+          "groove",
+          "smooth"
+        ],
+        "playlist": null
       }
     },
     {
@@ -475,6 +660,14 @@
         "portraitIdle": "client/src/assets/companions/mochi/portrait-idle.webp",
         "working": "client/src/assets/companions/mochi/working.webp",
         "waking": "client/src/assets/companions/mochi/waking.webp"
+      },
+      "music": {
+        "genre": "Chiptune",
+        "tags": [
+          "8-bit",
+          "playful"
+        ],
+        "playlist": null
       }
     },
     {
@@ -500,6 +693,14 @@
         "portraitIdle": "client/src/assets/companions/ember/portrait-idle.webp",
         "working": "client/src/assets/companions/ember/working.webp",
         "waking": "client/src/assets/companions/ember/waking.webp"
+      },
+      "music": {
+        "genre": "Synthwave",
+        "tags": [
+          "retro",
+          "neon"
+        ],
+        "playlist": null
       }
     }
   ]

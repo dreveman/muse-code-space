@@ -22,6 +22,7 @@ import { countsAsUnread } from "./transcriptVisibility";
 import { parseToolDetails, toolDetailsFromItem, type ToolDetails } from "./toolDetails";
 import { ownedArtifactPaths } from "./ownedArtifacts";
 import { ownedPullRequestsFromEvents } from "./ownedPullRequests";
+import { resolveCompanionPlaylist } from "./companionMusic";
 import {
   applyPrMonitorSnapshot,
   createdPullRequestFromToolEvent,
@@ -1539,6 +1540,285 @@ export const Actions = {
         return { ok: true, broker_done: res.brokerDone, app_done: res.appDone, broker_requested: res.brokerRequested ?? false, app_requested: res.appRequested ?? false, app_help_requested: res.appHelpRequested ?? false, error: null };
       } catch (error) {
         return { ok: false, broker_done: false, app_done: false, broker_requested: false, app_requested: false, app_help_requested: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  // --- Spotify companion music -------------------------------------------
+  // The client never supplies a playlist URI and never sees a token: the
+  // server resolves URIs from companions/catalog.json by companion ID and
+  // the pilot holds the Spotify connection. Playback state is global to
+  // the Spotify account, so nothing Spotify-shaped is stored in app.db.
+
+  getSpotifyStatus: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      connected: z.boolean(),
+      account_name: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/spotify/status", { method: "GET" },
+          z.object({ connected: z.boolean(), account_name: z.string().optional() }));
+        return { ok: true, connected: res.connected, account_name: res.account_name ?? null, error: null };
+      } catch (error) {
+        return { ok: false, connected: false, account_name: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  startSpotifySetup: defineAction({
+    request: z.object({
+      client_id: z.string().trim().min(1).max(200),
+      redirect_uri: z.string().trim().min(1).max(2000),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      auth_url: z.string().nullable(),
+      state: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, auth_url: null, state: null, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        // Like performGithubSetupStep: a 60s budget so a slow token
+        // exchange isn't masked as a connection failure.
+        const res = await pilotRequest(baseUrl, "/spotify/setup/start",
+          { method: "POST", body: JSON.stringify({ client_id: args.client_id, redirect_uri: args.redirect_uri }) },
+          z.object({ auth_url: z.string(), state: z.string() }), 60_000);
+        return { ok: true, auth_url: res.auth_url, state: res.state, error: null };
+      } catch (error) {
+        return { ok: false, auth_url: null, state: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  completeSpotifySetup: defineAction({
+    request: z.object({
+      code: z.string().trim().min(1).max(4096),
+      state: z.string().trim().min(1).max(200),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      connected: z.boolean(),
+      account_name: z.string().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, connected: false, account_name: null, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/spotify/setup/complete",
+          { method: "POST", body: JSON.stringify({ code: args.code, state: args.state }) },
+          z.object({ connected: z.boolean(), account_name: z.string().optional() }), 60_000);
+        ctx.invalidateQueries({ queryKey: ["spotify-status"] });
+        return { ok: true, connected: res.connected, account_name: res.account_name ?? null, error: null };
+      } catch (error) {
+        return { ok: false, connected: false, account_name: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  disconnectSpotify: defineAction({
+    request: z.object({}),
+    response: z.object({ ok: z.boolean(), connected: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, connected: true, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, "/spotify/disconnect", { method: "POST", body: JSON.stringify({}) },
+          z.object({ connected: z.boolean() }));
+        ctx.invalidateQueries({ queryKey: ["spotify-status"] });
+        return { ok: true, connected: false, error: null };
+      } catch (error) {
+        return { ok: false, connected: true, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  getSpotifyDevices: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      devices: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        type: z.string(),
+        is_active: z.boolean(),
+        volume_percent: z.number().int().min(0).max(100).nullable(),
+      })),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/spotify/devices", { method: "GET" },
+          z.object({
+            devices: z.array(z.object({
+              id: z.string(), name: z.string(), type: z.string(), is_active: z.boolean(),
+              volume_percent: z.number().int().min(0).max(100).nullable(),
+            })),
+          }));
+        return { ok: true, devices: res.devices, error: null };
+      } catch (error) {
+        return { ok: false, devices: [], error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  getSpotifyPlayback: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      playback: z.object({
+        is_playing: z.boolean(),
+        progress_ms: z.number().int().nonnegative().nullable(),
+        track: z.object({
+          name: z.string(),
+          artists: z.array(z.string()),
+          uri: z.string().nullable(),
+          duration_ms: z.number().int().nonnegative().nullable(),
+        }).nullable(),
+        device: z.object({
+          id: z.string().nullable(),
+          name: z.string().nullable(),
+          volume_percent: z.number().int().min(0).max(100).nullable(),
+        }).nullable(),
+        context_uri: z.string().nullable(),
+      }).nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(baseUrl, "/spotify/playback", { method: "GET" },
+          z.object({
+            playback: z.object({
+              is_playing: z.boolean(),
+              progress_ms: z.number().int().nonnegative().nullable(),
+              track: z.object({
+                name: z.string(), artists: z.array(z.string()),
+                uri: z.string().nullable(), duration_ms: z.number().int().nonnegative().nullable(),
+              }).nullable(),
+              device: z.object({
+                id: z.string().nullable(), name: z.string().nullable(),
+                volume_percent: z.number().int().min(0).max(100).nullable(),
+              }).nullable(),
+              context_uri: z.string().nullable(),
+            }),
+          }));
+        return { ok: true, playback: res.playback, error: null };
+      } catch (error) {
+        return { ok: false, playback: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  playCompanionMusic: defineAction({
+    request: z.object({
+      companion_id: z.string().trim().min(1).max(200),
+      device_id: z.string().trim().min(1).max(200).optional(),
+    }).strict(),
+    response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, error: denied };
+      // The playlist URI comes from the catalog, never from the client.
+      const resolved = resolveCompanionPlaylist(companionCatalog.companions, args.companion_id);
+      if (!resolved.ok) return { ok: false, error: resolved.error };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, "/spotify/play",
+          { method: "POST", body: JSON.stringify({ context_uri: resolved.uri, device_id: args.device_id }) },
+          z.object({ ok: z.boolean() }));
+        return { ok: true, error: null };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  pauseSpotifyPlayback: defineAction({
+    request: z.object({}),
+    response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, "/spotify/pause", { method: "POST", body: JSON.stringify({}) }, z.object({ ok: z.boolean() }));
+        return { ok: true, error: null };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  resumeSpotifyPlayback: defineAction({
+    request: z.object({ device_id: z.string().trim().min(1).max(200).optional() }).strict(),
+    response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, "/spotify/resume",
+          { method: "POST", body: JSON.stringify({ device_id: args.device_id }) }, z.object({ ok: z.boolean() }));
+        return { ok: true, error: null };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  skipSpotifyTrack: defineAction({
+    request: z.object({ direction: z.enum(["next", "previous"]) }).strict(),
+    response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, args.direction === "next" ? "/spotify/next" : "/spotify/previous",
+          { method: "POST", body: JSON.stringify({}) }, z.object({ ok: z.boolean() }));
+        return { ok: true, error: null };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  setSpotifyVolume: defineAction({
+    request: z.object({ volume_percent: z.number().int().min(0).max(100) }).strict(),
+    response: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        await pilotRequest(baseUrl, "/spotify/volume",
+          { method: "POST", body: JSON.stringify({ volume_percent: args.volume_percent }) }, z.object({ ok: z.boolean() }));
+        return { ok: true, error: null };
+      } catch (error) {
+        return { ok: false, error: pilotRequestErrorText(error) };
       }
     },
   }),

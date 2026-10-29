@@ -51,6 +51,15 @@ test("name matching is exact and search also finds specialties and skills", () =
   assert.equal(matchesCompanionQuery(pip, "nonexistent"), false);
 });
 
+test("search also finds companions by music genre and tags", () => {
+  const nova = companionForName("Nova");
+  assert.ok(matchesCompanionQuery(nova, "idm"));
+  assert.ok(matchesCompanionQuery(nova, "hypnotic"));
+  const sage = companionForName("Sage");
+  assert.ok(matchesCompanionQuery(sage, "ambient"));
+  assert.equal(matchesCompanionQuery(sage, "techno"), false);
+});
+
 test("archived tasks need a different companion if their previous one owns another task", () => {
   const tasks = [{ id: "past", ...session("Juno", true) }, { id: "other", ...session("JUNO") }];
   assert.equal(companionAssignedElsewhere(tasks, " Juno ", "past"), true);

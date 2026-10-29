@@ -54,6 +54,13 @@ export function availableCompanionDefinitions<T extends { name: string }>(
     .sort((a, b) => (lastUsed.get(nameKey(b.name)) ?? 0) - (lastUsed.get(nameKey(a.name)) ?? 0));
 }
 
-export function matchesCompanionQuery(companion: { name: string; role: string; skills: readonly string[] }, query: string): boolean {
-  return [companion.name, companion.role, ...companion.skills].join(" ").toLowerCase().includes(query.trim().toLowerCase());
+export function matchesCompanionQuery(companion: {
+  name: string;
+  role: string;
+  skills: readonly string[];
+  music?: { genre: string; tags: readonly string[] } | null;
+}, query: string): boolean {
+  const haystack = [companion.name, companion.role, ...companion.skills];
+  if (companion.music) haystack.push(companion.music.genre, ...companion.music.tags);
+  return haystack.join(" ").toLowerCase().includes(query.trim().toLowerCase());
 }

@@ -261,6 +261,14 @@ else
   log "no GitHub credential file yet — sessions will fail with a clear broker credential error until one is provisioned (see docs/INSTALL_GUIDE_FOR_MUSE_ASSISTENT.md)"
 fi
 
+# The Spotify config is likewise host-local and user-provisioned (through
+# the in-app Connect Spotify flow); install only reports its presence.
+if [ -f "${HOME}/.config/muse-code-space-pilot/spotify.json" ]; then
+  log "found host-local Spotify config (left untouched)"
+else
+  log "no Spotify config yet — companion music stays disconnected until the user connects Spotify in the app"
+fi
+
 # Package files have just been copied into the runtime, so comparing them
 # now always says "equal". Verify the installed SDK version itself instead:
 # a stale node_modules after an upgrade/downgrade can break the pilot.

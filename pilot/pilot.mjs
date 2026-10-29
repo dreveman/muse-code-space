@@ -53,6 +53,7 @@ import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { runGithubAppSetup } from "./githubAppSetup.mjs";
+import { createSpotifyClient } from "./spotify.mjs";
 import { CLONE_MAX_DURATION_MS, CLONE_STALL_TIMEOUT_MS, cloneTimeoutReason, ensureRepoCloned, listGitHubRepos, parseGitCloneProgress, parseRepoInput, searchGitHubRepos } from "./repoSetup.mjs";
 import { readGitVcsStatus } from "./vcsSmartlog.mjs";
 import {
@@ -1107,6 +1108,10 @@ if (typeof brokerProber.unref === "function") brokerProber.unref();
 // falls back to local `gh` and `git` commands unless explicitly disabled
 // with `MUSE_CODE_SPACE_GITHUB_BROKER_URL=disconnected`.
 const GITHUB_BROKER_CONFIG = process.env.MUSE_CODE_SPACE_GITHUB_BROKER_CONFIG ?? `${HOME}/.config/muse-code-space-pilot/github-broker.json`;
+// Spotify companion music (spotify.mjs): host-local config holding only the
+// client id + refresh token; install never creates or overwrites it.
+const SPOTIFY_CONFIG = process.env.MUSE_CODE_SPACE_SPOTIFY_CONFIG ?? `${HOME}/.config/muse-code-space-pilot/spotify.json`;
+const spotify = createSpotifyClient({ configFile: SPOTIFY_CONFIG, brokerCaFile: join(dirname(STATE_DIR), "github-broker-ca.pem") });
 const GITHUB_BROKER_MODE = (process.env.MUSE_CODE_SPACE_GITHUB_BROKER_URL ?? "").trim().toLowerCase();
 const GITHUB_DISCONNECTED = ["0", "false", "off", "disconnected", "disabled"].includes(GITHUB_BROKER_MODE);
 const GITHUB_SENTINEL = "broker-provided-sentinel";
@@ -2390,6 +2395,57 @@ const server = createServer(async (req, res) => {
           return json(res, 200, { brokerDone: true, appDone: false, appRequested: true });
         }
         return json(res, 400, { error: "Unknown setup step.", code: "invalid_github_setup_step" });
+      }
+    }
+    // Spotify companion music (spotify.mjs). Loopback only, like every
+    // pilot route. Responses never contain tokens: status reports only
+    // whether a config exists (plus the account display name).
+    if (path === "/spotify/status" && req.method === "GET") {
+      return json(res, 200, await spotify.status());
+    }
+    if (path.startsWith("/spotify/")) {
+      const body = req.method === "POST" ? await readBody(req).catch(() => ({})) : {};
+      try {
+        if (path === "/spotify/setup/start" && req.method === "POST") {
+          const started = await spotify.startSetup({ clientId: body.client_id, redirectUri: body.redirect_uri });
+          return json(res, 200, started);
+        }
+        if (path === "/spotify/setup/complete" && req.method === "POST") {
+          const completed = await spotify.completeSetup({ code: body.code, state: body.state });
+          return json(res, 200, completed);
+        }
+        if (path === "/spotify/disconnect" && req.method === "POST") {
+          return json(res, 200, await spotify.disconnect());
+        }
+        if (!spotify.isConnected()) {
+          return json(res, 409, { error: "Spotify is not connected", code: "spotify_not_connected" });
+        }
+        if (path === "/spotify/devices" && req.method === "GET") {
+          return json(res, 200, { devices: await spotify.devices() });
+        }
+        if (path === "/spotify/playback" && req.method === "GET") {
+          return json(res, 200, { playback: await spotify.playback() });
+        }
+        if (path === "/spotify/play" && req.method === "POST") {
+          return json(res, 200, await spotify.play({ contextUri: body.context_uri, deviceId: body.device_id }));
+        }
+        if (path === "/spotify/pause" && req.method === "POST") return json(res, 200, await spotify.pause());
+        if (path === "/spotify/resume" && req.method === "POST") return json(res, 200, await spotify.resume({ deviceId: body.device_id }));
+        if (path === "/spotify/next" && req.method === "POST") return json(res, 200, await spotify.next());
+        if (path === "/spotify/previous" && req.method === "POST") return json(res, 200, await spotify.previous());
+        if (path === "/spotify/volume" && req.method === "POST") {
+          return json(res, 200, await spotify.setVolume(body.volume_percent));
+        }
+        return json(res, 404, { error: "Unknown Spotify route", code: "spotify_unknown_route" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "Spotify is not connected") {
+          return json(res, 409, { error: message, code: "spotify_not_connected" });
+        }
+        // Setup validation fails fast with a precise client error; playback
+        // and token failures are upstream (Spotify) errors.
+        const isSetup = path.startsWith("/spotify/setup/");
+        return json(res, isSetup ? 400 : 502, { error: message.slice(0, 300), code: isSetup ? "spotify_setup_invalid" : "spotify_error" });
       }
     }
     // Full assistant identity is fetched separately; avatars never enter message events.
