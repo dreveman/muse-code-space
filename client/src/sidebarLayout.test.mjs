@@ -43,7 +43,7 @@ test("rail resizes independently while chat content centers", () => {
   );
   assert.ok(app.includes('label="Resize companion sidebar and chat"'), "sidebar divider can be dragged");
   assert.ok(
-    /\.output-stream,\s*\.terminal-prompt,\s*\.transcript-empty\s*\{[^}]*max-width:\s*860px[^}]*margin-inline:\s*auto/.test(css),
+    /\.output-stream,\s*\.terminal-prompt,\s*\.transcript-empty\s*\{[^}]*max-width:\s*700px[^}]*margin-inline:\s*auto/.test(css),
     "chat reading content must center at a fixed measure",
   );
 });
@@ -60,18 +60,18 @@ test("row grid gives the last column to the time", () => {
 test("chat boxes ease from square/full width to rounded as the chat centers", () => {
   const composer = css.match(/^\.terminal-composer\s*\{[^}]*\}/m)?.[0] ?? "";
   assert.ok(/border:\s*1px solid/.test(composer), "input has a top border at every width");
-  assert.ok(/--chat-side-border:\s*clamp\(0px, \(100cqw - 860px\) \/ 2, 1px\)/.test(css), "side borders appear with the first gap beside the 860px box");
+  assert.ok(/--chat-side-border:\s*clamp\(0px, \(100cqw - 700px\) \/ 2, 1px\)/.test(css), "side borders appear with the first gap beside the 700px box");
   assert.ok(/border-left-width:\s*var\(--chat-side-border/.test(css) && /border-right-width:\s*var\(--chat-side-border/.test(css));
   assert.ok(/\.transcript\s*\{\s*container:\s*transcript \/ inline-size;/.test(css), "the transcript is the size container");
   assert.ok(!css.includes("@container transcript (min-width"), "no hard switch");
   const vars = css.match(/^\.transcript\s*\{[^}]*--chat-round:[^}]*\}/m)?.[0] ?? "";
   for (const name of ["--chat-round", "--chat-inset-top", "--chat-inset-bottom"]) {
-    assert.ok(new RegExp(`${name}:\\s*clamp\\(0px, \\(100cqw - 880px\\)`).test(vars), `${name} ramps with the column width`);
+    assert.ok(new RegExp(`${name}:\\s*clamp\\(0px, \\(100cqw - 720px\\)`).test(vars), `${name} ramps with the column width`);
   }
   assert.ok(/\.terminal-composer\s*\{[^}]*border-radius:\s*var\(--chat-round/.test(css));
   assert.ok(/\.output-event\.user, \.output-event\.tool, \.output-event\.agents, \.output-event\.message\s*\{\s*border-radius:\s*var\(--chat-round/.test(css), "tool runs round as one unified block");
   assert.ok(app.includes('className="output-event tool"'), "consecutive tools share one unified .output-event.tool container");
-  // The ramp: ~4px at a 902px column, the full 11px from 940px.
-  const radius = (w) => Math.min(11, Math.max(0, (w - 880) * 0.1834));
-  assert.ok(radius(902) > 3 && radius(902) < 5 && radius(902) < radius(950) && radius(950) === 11);
+  // The ramp: ~4px at a 742px column, the full 11px from 780px.
+  const radius = (w) => Math.min(11, Math.max(0, (w - 720) * 0.1834));
+  assert.ok(radius(742) > 3 && radius(742) < 5 && radius(742) < radius(790) && radius(790) === 11);
 });

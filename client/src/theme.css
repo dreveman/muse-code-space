@@ -2108,7 +2108,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .tool-box + .tool-box { margin-top: 11px; }
   /* The chat column takes all leftover width, but its reading content stays
      centered at a fixed measure no matter how wide the window grows. */
-  .output-stream, .terminal-prompt, .transcript-empty { width: 100%; max-width: 860px; margin-inline: auto; }
+  .output-stream, .terminal-prompt, .transcript-empty { width: 100%; max-width: 700px; margin-inline: auto; }
   .transcript { container: transcript / inline-size; }
   .companion-welcome { container: companion-welcome / inline-size; }
   .working-indicator { margin-left: 20px; }
@@ -2260,20 +2260,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .wire-debug-log { max-height: 48dvh; }
 }
 
-/* Centered chat: as the column grows past the 860px reading measure, the
+/* Centered chat: as the column grows past the 700px reading measure, the
    prompt, tool and input boxes ease from square/full width to rounded, and
-   the input lifts off the bottom edge. Everything ramps over 880–940px of
-   column width (e.g. 902px is less rounded than 950px) instead of switching.
+   the input lifts off the bottom edge. Everything ramps over 720–780px of
+   column width (e.g. 742px is less rounded than 790px) instead of switching.
    cqw resolves on the boxes inside the transcript or companion container; outside the
    desktop layout there is no container and it stays square. */
 .companion-welcome,
 .transcript {
-  /* The input is at most 860px wide and centered: any column width beyond
+  /* The input is at most 700px wide and centered: any column width beyond
      that is a gap on each side, and only then does it get side borders. */
-  --chat-side-border: clamp(0px, (100cqw - 860px) / 2, 1px);
-  --chat-round: clamp(0px, (100cqw - 880px) * 0.1834, 11px);
-  --chat-inset-top: clamp(0px, (100cqw - 880px) * 0.1334, 8px);
-  --chat-inset-bottom: clamp(0px, (100cqw - 880px) * 0.2667, 16px);
+  --chat-side-border: clamp(0px, (100cqw - 700px) / 2, 1px);
+  --chat-round: clamp(0px, (100cqw - 720px) * 0.1834, 11px);
+  --chat-inset-top: clamp(0px, (100cqw - 720px) * 0.1334, 8px);
+  --chat-inset-bottom: clamp(0px, (100cqw - 720px) * 0.2667, 16px);
 }
 .terminal-prompt { padding-top: var(--chat-inset-top, 0); padding-bottom: var(--chat-inset-bottom, 0px); }
 .terminal-composer {
@@ -2283,6 +2283,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   border-radius: var(--chat-round, 0);
 }
 .output-event.user, .output-event.tool, .output-event.agents, .output-event.message { border-radius: var(--chat-round, 0); }
+.output-event.stdout { border-radius: var(--chat-round, 0); }
 
 /* Permanent-delete confirmation. */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .38); }
