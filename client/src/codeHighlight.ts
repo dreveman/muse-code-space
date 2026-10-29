@@ -41,7 +41,8 @@ const languages: Record<CodeLanguage, () => Promise<unknown>> = {
   shellscript: () => import("shiki/langs/shellscript.mjs"),
 };
 
-let highlighterPromise: Promise<Awaited<ReturnType<typeof import("shiki/core")["createHighlighterCore"]>>> | null = null;
+type Highlighter = Awaited<ReturnType<typeof import("shiki/core")["createHighlighterCore"]>>;
+let highlighterPromise: Promise<Highlighter> | null = null;
 function highlighter() {
   highlighterPromise ??= Promise.all([import("shiki/core"), import("shiki/engine/oniguruma")]).then(async ([core, engine]) =>
     core.createHighlighterCore({
@@ -52,17 +53,42 @@ function highlighter() {
   ).catch((error: unknown) => { highlighterPromise = null; throw error; });
   return highlighterPromise;
 }
+// The Oniguruma engine compiles a Wasm module, which a host CSP without
+// 'wasm-unsafe-eval' refuses — silently leaving every file plain. The
+// JavaScript regex engine needs no Wasm, so it is the fallback whenever
+// the primary highlighter or grammar load fails.
+let fallbackPromise: Promise<Highlighter> | null = null;
+function fallbackHighlighter() {
+  fallbackPromise ??= Promise.all([import("shiki/core"), import("shiki/engine/javascript")]).then(async ([core, engine]) =>
+    core.createHighlighterCore({
+      themes: [import("shiki/themes/github-light.mjs"), import("shiki/themes/github-dark.mjs")],
+      langs: [],
+      engine: engine.createJavaScriptRegexEngine({ forgiving: true }),
+    }),
+  ).catch((error: unknown) => { fallbackPromise = null; throw error; });
+  return fallbackPromise;
+}
 const loadingLanguages = new Map<CodeLanguage, Promise<void>>();
-async function loadLanguage(lang: CodeLanguage) {
-  const h = await highlighter();
-  if (h.getLoadedLanguages().includes(lang)) return h;
-  let pending = loadingLanguages.get(lang);
+async function loadInto(h: Highlighter, lang: CodeLanguage, registry: Map<CodeLanguage, Promise<void>>) {
+  if (h.getLoadedLanguages().includes(lang)) return;
+  let pending = registry.get(lang);
   if (!pending) {
     pending = languages[lang]().then(async (grammar) => { await h.loadLanguage(grammar as Parameters<typeof h.loadLanguage>[0]); });
-    loadingLanguages.set(lang, pending);
+    registry.set(lang, pending);
   }
-  try { await pending; } catch { loadingLanguages.delete(lang); throw new Error("Grammar unavailable"); }
-  return h;
+  try { await pending; } catch { registry.delete(lang); throw new Error("Grammar unavailable"); }
+}
+const loadingFallbackLanguages = new Map<CodeLanguage, Promise<void>>();
+async function loadLanguage(lang: CodeLanguage) {
+  try {
+    const h = await highlighter();
+    await loadInto(h, lang, loadingLanguages);
+    return h;
+  } catch {
+    const h = await fallbackHighlighter();
+    await loadInto(h, lang, loadingFallbackLanguages);
+    return h;
+  }
 }
 
 // Serialize uncached tokenization across macrotasks so multiple cold-start
@@ -96,15 +122,31 @@ export async function highlightCodeForLanguage(text: string, lang: CodeLanguage 
   if (existing) return existing;
   const pending = enqueueTokenize(async () => {
     try {
-      const h = await loadLanguage(lang);
-      const result = h.codeToTokens(text, { lang, theme: theme === "dark" ? "github-dark" : "github-light" });
-      const tokens = result.tokens.map((line) => line.map((token) => ({ text: token.content, color: token.color ?? null })));
-      // Shiki may normalize final newlines or unsupported input; never render a
-      // token stream if it doesn't reconstruct exactly what the user can copy.
-      const valid = tokens.map((line) => line.map((token) => token.text).join("")).join("\n") === text ? tokens : null;
-      setCached(key, valid);
-      return valid;
-    } catch {
+      // Second attempt is the no-Wasm fallback highlighter; loadLanguage
+      // already falls back on load failure, but a Wasm refusal can also
+      // surface only when the engine first tokenizes.
+      const attempts = [
+        () => loadLanguage(lang),
+        async () => {
+          const h = await fallbackHighlighter();
+          await loadInto(h, lang, loadingFallbackLanguages);
+          return h;
+        },
+      ];
+      for (const attempt of attempts) {
+        try {
+          const h = await attempt();
+          const result = h.codeToTokens(text, { lang, theme: theme === "dark" ? "github-dark" : "github-light" });
+          const tokens = result.tokens.map((line) => line.map((token) => ({ text: token.content, color: token.color ?? null })));
+          // Shiki may normalize final newlines or unsupported input; never render a
+          // token stream if it doesn't reconstruct exactly what the user can copy.
+          const valid = tokens.map((line) => line.map((token) => token.text).join("")).join("\n") === text ? tokens : null;
+          setCached(key, valid);
+          return valid;
+        } catch {
+          // Try the next engine.
+        }
+      }
       return null;
     } finally {
       inflightHighlights.delete(key);
