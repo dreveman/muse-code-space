@@ -780,6 +780,10 @@ test("the first-turn preamble carries the companion SOUL before the separator", 
   assert.equal(t.agentPreamble("nova", "   "), without);
   assert.equal(t.cleanSoul(123), null);
   assert.equal(t.soulBlock("x".repeat(9000))?.length, "[SOUL.md]\n".length + 8000);
+
+  t.setAssistant({ user_name: "Alex" });
+  assert.ok(t.agentPreamble("nova").includes("The user's name is Alex."));
+  t.setAssistant({ user_name: null });
 });
 
 test("project briefing rides the hidden preamble channel with the SOUL", () => {

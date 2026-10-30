@@ -93,6 +93,8 @@
 }
 .companion-card-browser { position: relative; container-type: inline-size; width: min(calc(100% - 80px), 560px); flex: 0 0 auto; margin-block: auto; }
 .companion-card-navigation { position: absolute; top: calc(50% + 10px); left: 50%; transform: translate(-50%, -50%); width: min(calc(100% - 128px), 560px); height: 0; z-index: 3; pointer-events: none; }
+.companion-welcome-content:has(.companion-icon-dropdown) { position: relative; z-index: 5; }
+.companion-welcome:has(.repo-menu, .companion-menu, .companion-icon-dropdown) .companion-card-navigation { z-index: 0; }
 .companion-card-navigation button { pointer-events: auto; position: absolute; top: 0; transform: translateY(-50%); display: grid; place-items: center; width: 32px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: var(--surface); color: var(--dim); font-size: 26px; cursor: pointer; }
 .companion-card-navigation button:first-child { left: -40px; }
 .companion-card-navigation button:last-child { right: -40px; }

@@ -5,7 +5,8 @@
 // session, never stored client-side). Nothing here starts or changes
 // playback except an explicit Tune in press.
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { copyTextToClipboard } from "./clipboard";
@@ -93,7 +94,17 @@ export function useCompanionTunedState(music: CompanionMusic | null | undefined)
 // redirect URL into the same dropdown completes the connection instead.
 // ---------------------------------------------------------------------------
 
-export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => void }) {
+export function SpotifySetupMenu({
+  id,
+  triggerRef,
+  menuRef,
+  onClose,
+}: {
+  id?: string;
+  triggerRef: RefObject<HTMLElement | null>;
+  menuRef: RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
   const connected = statusQuery.data?.connected === true;
@@ -111,7 +122,55 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
   const [copiedUri, setCopiedUri] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const redirectUri = spotifyRedirectUri(window.location);
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const margin = 12;
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+      const width = Math.min(360, Math.max(220, viewportW - margin * 2));
+      const maxLeft = Math.max(margin, viewportW - margin - width);
+      const left = Math.min(Math.max(rect.right - width, margin), maxLeft);
+      const spaceAbove = rect.top - margin - 6;
+      const spaceBelow = viewportH - rect.bottom - margin - 6;
+      const openAbove = spaceAbove >= 240 || spaceAbove >= spaceBelow;
+      if (openAbove) {
+        setMenuStyle({
+          position: "fixed",
+          left: `${left}px`,
+          bottom: `${Math.max(margin, viewportH - rect.top + 6)}px`,
+          top: "auto",
+          right: "auto",
+          width: `${width}px`,
+          maxHeight: `${Math.max(160, spaceAbove)}px`,
+          zIndex: 10000,
+        });
+      } else {
+        setMenuStyle({
+          position: "fixed",
+          left: `${left}px`,
+          top: `${Math.max(margin, rect.bottom + 6)}px`,
+          bottom: "auto",
+          right: "auto",
+          width: `${width}px`,
+          maxHeight: `${Math.max(160, spaceBelow)}px`,
+          zIndex: 10000,
+        });
+      }
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [triggerRef, startedState, error]);
 
   const copyRedirectUri = async () => {
     if (await copyTextToClipboard(redirectUri)) {
@@ -186,8 +245,15 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
     }
   };
 
-  return (
-    <div id={id} className="repo-menu repo-setup-menu spotify-setup-menu" role="dialog" aria-label="Spotify setup">
+  const content = (
+    <div
+      ref={menuRef}
+      id={id}
+      className="repo-menu repo-setup-menu spotify-setup-menu"
+      style={menuStyle}
+      role="dialog"
+      aria-label="Spotify setup"
+    >
       <div className="repo-setup-header">
         <strong>Spotify setup</strong>
       </div>
@@ -304,6 +370,7 @@ export function SpotifySetupMenu({ id, onClose }: { id?: string; onClose: () => 
       )}
     </div>
   );
+  return typeof document !== "undefined" ? createPortal(content, document.body) : content;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,15 +397,18 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const music = companion.music;
 
   useEffect(() => {
     if (!menuOpen) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (rowRef.current && event.target instanceof Node && !rowRef.current.contains(event.target)) {
-        setMenuOpen(false);
-      }
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (rowRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setMenuOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenuOpen(false);
@@ -386,6 +456,7 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
           )
         ) : (
           <button
+            ref={triggerRef}
             type="button"
             className="companion-music-connect"
             aria-haspopup="dialog"
@@ -405,7 +476,14 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
         </ul>
       )}
       {error && <span className="companion-music-error" role="alert">{error}</span>}
-      {menuOpen && <SpotifySetupMenu id={menuId} onClose={() => setMenuOpen(false)} />}
+      {menuOpen && (
+        <SpotifySetupMenu
+          id={menuId}
+          triggerRef={triggerRef}
+          menuRef={menuRef}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
     </section>
   );
 }
