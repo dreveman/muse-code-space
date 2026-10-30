@@ -113,11 +113,13 @@ export async function handleMcpRequest(token, message, deps) {
   if (method === "initialize") {
     const requested = params?.protocolVersion;
     const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : SUPPORTED_PROTOCOL_VERSIONS[0];
+    const userName = typeof deps?.userName === "function" ? deps.userName() : null;
     return ok(id, {
       protocolVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: MCP_SERVER_NAME, version: "1.0.0" },
       instructions: "Code Space agent messaging: use send_message to message another agent or the user's Muse assistant, list_agents to see who's there. "
+        + (userName ? `The user's name is ${userName}. ` : "")
         + "You can display workspace images in your Markdown replies with `![alt](relative/path.png)`, and when a dev server is running on 127.0.0.1:<port>, use preview_screenshot to include a clickable screenshot link in your reply that opens the live Preview tab."
         + (deps.github?.enabled() ? " GitHub tools (github_create_pr, github_update_pr, github_pr_status, github_list_prs, github_monitor_pr) work through Code Space's GitHub broker; repo and branch default to your workspace checkout. create_pr monitors CI until it finishes by default and then stops; after pushing new commits to a PR, call github_update_pr or github_monitor_pr to re-arm CI monitoring for the new head." : ""),
     });
