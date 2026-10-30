@@ -2079,12 +2079,75 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .console-layout.sidebar-collapsed .session-filter,
   .console-layout.sidebar-collapsed .archive-error,
   .console-layout.sidebar-collapsed .session-group-header-row { display: none; }
-  .console-layout.sidebar-collapsed .available-companions-toggle { width: 36px; height: 36px; min-height: 36px; padding: 0; margin: 2px auto 0; border-radius: 10px; display: inline-grid; place-items: center; color: var(--dim); }
-  .console-layout.sidebar-collapsed .available-companions-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+  .console-layout.sidebar-collapsed .available-companions-toggle,
+  .console-layout.sidebar-collapsed .available-companions .more-companions-button {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    margin: 2px auto 0;
+    border: 0;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    background: #fff;
+    color: rgb(20 23 26 / .86);
+    box-shadow:
+      0 4px 14px rgb(0 0 0 / .12),
+      0 1px 3px rgb(0 0 0 / .08);
+    touch-action: manipulation;
+    transition: color 120ms ease, background-color 120ms ease, filter 120ms ease;
+  }
+  :root[data-color-mode="dark"] .console-layout.sidebar-collapsed .available-companions-toggle,
+  :root[data-color-mode="dark"] .console-layout.sidebar-collapsed .available-companions .more-companions-button {
+    background: var(--surface-strong);
+    color: rgb(255 255 255 / .92);
+    box-shadow:
+      0 6px 18px rgb(0 0 0 / .38),
+      0 1px 4px rgb(0 0 0 / .24);
+  }
+  :root[data-ui-theme="liquid-glass"] .console-layout.sidebar-collapsed .available-companions-toggle,
+  :root[data-ui-theme="liquid-glass"] .console-layout.sidebar-collapsed .available-companions .more-companions-button {
+    border: 1px solid transparent;
+    background:
+      linear-gradient(rgb(255 255 255 / .88), rgb(255 255 255 / .84)) padding-box,
+      linear-gradient(
+        135deg,
+        rgb(0 0 0 / .06) 0%,
+        rgb(0 0 0 / .16) 35%,
+        rgb(0 0 0 / .18) 65%,
+        rgb(0 0 0 / .07) 100%
+      ) border-box;
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    color: #121416;
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / .95);
+  }
+  :root[data-ui-theme="liquid-glass"][data-color-mode="dark"] .console-layout.sidebar-collapsed .available-companions-toggle,
+  :root[data-ui-theme="liquid-glass"][data-color-mode="dark"] .console-layout.sidebar-collapsed .available-companions .more-companions-button {
+    background:
+      linear-gradient(rgb(38 42 46 / .78), rgb(30 34 38 / .74)) padding-box,
+      linear-gradient(
+        135deg,
+        rgb(255 255 255 / .12) 0%,
+        rgb(255 255 255 / .26) 35%,
+        rgb(255 255 255 / .28) 65%,
+        rgb(255 255 255 / .12) 100%
+      ) border-box;
+    color: #f4f6f8;
+    box-shadow: inset 0 0.5px 0 rgb(255 255 255 / .22);
+  }
+  .console-layout.sidebar-collapsed .available-companions-toggle:hover,
+  .console-layout.sidebar-collapsed .available-companions .more-companions-button:hover {
+    filter: brightness(0.97);
+  }
+  .console-layout.sidebar-collapsed .available-companions-toggle:active,
+  .console-layout.sidebar-collapsed .available-companions .more-companions-button:active {
+    filter: brightness(0.93);
+  }
   .console-layout.sidebar-collapsed .available-companions-toggle .session-group-chevron,
   .console-layout.sidebar-collapsed .available-companions-toggle .session-group-name { display: none; }
   .console-layout.sidebar-collapsed .available-companions-toggle .available-companions-plus { display: block; }
-  .console-layout.sidebar-collapsed .available-companions .more-companions-button { width: 36px; height: 30px; min-height: 30px; padding: 0; border-radius: 8px; display: inline-grid; place-items: center; }
   .console-layout.sidebar-collapsed .available-companions .more-companions-button > span { display: none; }
   .console-layout.sidebar-collapsed .session-list,
   .console-layout.sidebar-collapsed .session-group,
@@ -2103,7 +2166,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .console-layout.sidebar-collapsed .session-time,
   .console-layout.sidebar-collapsed .session-row-actions,
   .console-layout.sidebar-collapsed .session-row-prs,
-  .console-layout.sidebar-collapsed .companion-contact > span { display: none !important; }
+  .console-layout.sidebar-collapsed .companion-contact > span:not(.companion-contact-avatar-wrap) { display: none !important; }
   .console-layout.sidebar-collapsed .companion-task-list .session-row-select:has(.companion-task-avatar) > .status-dot { margin-bottom: 2px; margin-right: 2px; }
   .console-layout.sidebar-collapsed .companion-task-list .session-row-select:has(.companion-task-avatar) > .sidebar-task-tuned-badge { margin-top: 2px; margin-right: 2px; }
   .console-layout.sidebar-collapsed .companion-contact { width: 52px; height: 52px; padding: 4px; border-radius: 50%; justify-content: center; }
