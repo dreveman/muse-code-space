@@ -5223,7 +5223,7 @@ export function App() {
                         <div className="transcript-empty">
                           {!connectionLost && !pilotUnavailable && (sessionActive ? (
                             <WorkingIndicator label={workingLabel} elapsedSeconds={runElapsedSeconds} detailed={showWorkingDetails} />
-                          ) : "No output yet.")}
+                          ) : !detail && detailQuery.isPending ? "Loading conversation…" : "No output yet.")}
                         </div>
                       ) : (
                         <div ref={transcriptContentRef} className="output-stream">
@@ -6276,7 +6276,7 @@ function LinkedConversationPane({
             <div className="transcript-empty">
               {!connectionLost && !pilotUnavailable && (sessionActive ? (
                 <WorkingIndicator label={workingLabel} elapsedSeconds={runElapsedSeconds} detailed={showWorkingDetails} />
-              ) : "No output yet.")}
+              ) : !detail && detailQuery.isPending ? "Loading conversation…" : "No output yet.")}
             </div>
           ) : (
             <div ref={transcriptContentRef} className="output-stream">
