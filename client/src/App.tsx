@@ -6200,6 +6200,11 @@ function LinkedConversationPane({
   const paneTaskStarting = sessionActive && (awaitingPilot || (workingLabel === "Starting" && transcriptEvents.filter((e) => e.kind === "user").length <= 1));
   const detailEventsCharCount = detail?.events.reduce((sum, event) => sum + event.content.length, 0) ?? 0;
   const savedDraft = sessionDraftTextRef.current.get(sessionId) ?? "";
+  const partnerInputRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const input = partnerInputRef.current;
+    if (input) resizeComposerTextarea(input);
+  });
   const estimatedContextTokens = Math.ceil(((detailSession.prompt.length ?? 0) + detailEventsCharCount + savedDraft.length) / 4);
   const paneContextLabel = contextUsageLabel(estimatedContextTokens, CONTEXT_WINDOW_TOKENS);
   const effort = (listSession ?? detailSession).reasoning_effort ?? "high";
@@ -6334,6 +6339,7 @@ function LinkedConversationPane({
           )}
           <div className="terminal-composer">
             <textarea
+              ref={partnerInputRef}
               className="composer-input"
               value={savedDraft}
               readOnly

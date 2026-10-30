@@ -16,7 +16,6 @@ export function resizeComposerTextarea(
   input: Pick<HTMLTextAreaElement, "style" | "scrollHeight"> & { parentElement?: HTMLElement | null },
   availableLayoutHeight?: number,
 ): void {
-  const previousHeight = input.style.height || `${COMPOSER_MIN_HEIGHT}px`;
   const hasAttachments = Boolean(input.parentElement?.querySelector?.(".composer-attachments"));
   const attachmentsHeight = hasAttachments ? COMPOSER_ATTACHMENTS_HEIGHT : 0;
   const layoutHeight =
@@ -39,7 +38,4 @@ export function resizeComposerTextarea(
   const nextHeight = `${clampedHeight}px`;
   input.style.height = nextHeight;
   input.style.overflowY = contentHeight > effectiveMaxHeight ? "auto" : "hidden";
-  if (nextHeight !== previousHeight || input.parentElement?.style) {
-    input.parentElement?.style.setProperty("height", `${clampedHeight + COMPOSER_TOOLBAR_HEIGHT + attachmentsHeight}px`);
-  }
 }
