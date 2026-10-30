@@ -3,7 +3,18 @@
 // client-side; these helpers only shape what the components render.
 
 /** The exact redirect URI to register in the Spotify Developer app. */
-export function spotifyRedirectUri(location: { origin: string; pathname: string }): string {
+export function spotifyRedirectUri(location: { origin: string; pathname: string; href?: string }): string {
+  if (location.origin && location.origin !== "null") {
+    return `${location.origin}${location.pathname || "/"}`;
+  }
+  if (typeof location.href === "string" && location.href.length > 0) {
+    try {
+      const u = new URL(location.href);
+      u.search = "";
+      u.hash = "";
+      return u.toString();
+    } catch { /* fall through */ }
+  }
   return `${location.origin}${location.pathname || "/"}`;
 }
 

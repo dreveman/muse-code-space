@@ -55,6 +55,13 @@ test("setup start returns a PKCE auth URL with only the MVP scopes", async () =>
     assert.deepEqual(url.searchParams.get("scope").split(" "), [...SPOTIFY_SCOPES]);
     // The auth URL must never carry the verifier itself.
     assert.ok(!auth_url.includes("code_verifier"));
+
+    // Custom app scheme redirect URIs (e.g. hatch-space://12344/ in the iOS app) are accepted.
+    const customScheme = await h.client.startSetup({
+      clientId: "client-123",
+      redirectUri: "hatch-space://12344/",
+    });
+    assert.equal(new URL(customScheme.auth_url).searchParams.get("redirect_uri"), "hatch-space://12344/");
   } finally { h.cleanup(); }
 });
 

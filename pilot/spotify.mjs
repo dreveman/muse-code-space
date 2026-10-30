@@ -355,8 +355,10 @@ export function createSpotifyClient(deps = {}) {
       }
       let parsedRedirect = null;
       try { parsedRedirect = new URL(typeof redirectUri === "string" ? redirectUri.trim() : ""); } catch { parsedRedirect = null; }
-      if (!parsedRedirect || !/^https?:$/.test(parsedRedirect.protocol) || parsedRedirect.hash) {
-        throw new Error("The redirect URI must be a valid http(s) URL without a fragment.");
+      const proto = parsedRedirect?.protocol?.toLowerCase() ?? "";
+      const disallowedProto = proto === "javascript:" || proto === "data:" || proto === "vbscript:" || proto === "file:";
+      if (!parsedRedirect || !/^[a-z][a-z0-9+.-]*:$/.test(proto) || disallowedProto || parsedRedirect.hash) {
+        throw new Error("The redirect URI must be a valid URL without a fragment.");
       }
       prunePending();
       const verifier = Buffer.from(randomBytes(32)).toString("base64url");
