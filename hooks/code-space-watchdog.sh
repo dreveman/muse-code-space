@@ -151,10 +151,35 @@ fi
 
 # ---- Check 3: artifact icon matches repo's icon.webp ----
 # The runtime overwrites icon.webp on every build. If the snapshot's icon
-# differs from the repo's, copy the repo's over directly.
+# differs from the repo's, copy the repo's over directly — UNLESS an
+# artifact build is in flight. The submit freshness gate rejects the
+# publish when icon.webp changes after the build, so the sync stays out of
+# the way while the parent-held sentinel exists. The parent creates the
+# sentinel before an install's artifact.edit and removes it when the build
+# handoff lands; the 8-hour expiry keeps a stale sentinel from blocking
+# the sync forever.
 
 REPO_ICON="$HOME/workspace/github/dreveman/muse-code-space/icon.webp"
-if SNAPSHOT_DIR=$(find_code_space_dir); then
+BUILD_SENTINEL="$HOME/hooks/state/code-space-build-inflight"
+BUILD_INFLIGHT=0
+if [ -f "$BUILD_SENTINEL" ]; then
+  SENTINEL_AGE_S=$(( $(date +%s) - $(stat -c %Y "$BUILD_SENTINEL") ))
+  if [ "$SENTINEL_AGE_S" -lt 28800 ]; then
+    BUILD_INFLIGHT=1
+  fi
+fi
+
+if [ "$BUILD_INFLIGHT" -eq 1 ]; then
+  # Log the deferral once per sentinel so the 15s polls don't spam the log.
+  if [ "${HATCH_HOOK_DRY_RUN:-0}" != "1" ]; then
+    DEFER_MARKER="$HOME/hooks/state/code-space-icon-defer-logged"
+    SENTINEL_MTIME=$(stat -c %Y "$BUILD_SENTINEL")
+    if [ "$(cat "$DEFER_MARKER" 2>/dev/null)" != "$SENTINEL_MTIME" ]; then
+      log "icon-sync-deferred" '{"reason":"artifact build in flight, icon sync paused until publish lands"}'
+      echo "$SENTINEL_MTIME" > "$DEFER_MARKER"
+    fi
+  fi
+elif SNAPSHOT_DIR=$(find_code_space_dir); then
   SNAPSHOT_ICON="${SNAPSHOT_DIR}icon.webp"
   if [ -f "$REPO_ICON" ] && [ -f "$SNAPSHOT_ICON" ]; then
     if ! cmp -s "$REPO_ICON" "$SNAPSHOT_ICON"; then
