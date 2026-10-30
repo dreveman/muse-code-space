@@ -21,8 +21,12 @@ test("spotifyRedirectUri is the exact app origin + path to register in the Spoti
   );
   assert.equal(spotifyRedirectUri({ origin: "http://127.0.0.1:4173", pathname: "" }), "http://127.0.0.1:4173/");
   assert.equal(
+    spotifyRedirectUri({ origin: "hatch-space://12344", pathname: "/", href: "hatch-space://12344/" }),
+    "http://127.0.0.1/callback",
+  );
+  assert.equal(
     spotifyRedirectUri({ origin: "null", pathname: "", href: "hatch-space://12344/?viewer_assertion=tok#top" }),
-    "hatch-space://12344/",
+    "http://127.0.0.1/callback",
   );
 });
 
