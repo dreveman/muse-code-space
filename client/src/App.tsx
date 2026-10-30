@@ -5566,6 +5566,9 @@ export function App() {
                       onSelectSplitSession={(targetId) => linkConversations(activeLinkedPair.partnerId, targetId)}
                       onFocusSession={(focusComposer = false) => {
                         const partnerId = activeLinkedPair.partnerId;
+                        if (focusComposer) {
+                          takeoverInputRef.current?.focus();
+                        }
                         setSelectedCompanionId(null);
                         setSelectedId(partnerId);
                         if (focusComposer) {
@@ -6217,7 +6220,7 @@ function LinkedConversationPane({
         aria-live={isTurnLive(detailSession.status) ? "polite" : "off"}
         onPointerDown={(event) => {
           const target = event.target as HTMLElement | null;
-          if (target?.closest("button, a, input, summary, details, .wire-debug")) return;
+          if (target?.closest("button, a, input, textarea, summary, details, .wire-debug")) return;
           onFocusSession(Boolean(target?.closest(".terminal-composer")));
         }}
       >
@@ -6342,7 +6345,7 @@ function LinkedConversationPane({
               ref={partnerInputRef}
               className="composer-input"
               value={savedDraft}
-              readOnly
+              onChange={() => {}}
               onFocus={() => onFocusSession(true)}
               placeholder={panePast ? "Type a message to resume this task…" : "Type a message…"}
               rows={1}
