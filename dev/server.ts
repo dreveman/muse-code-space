@@ -153,6 +153,16 @@ function broadcast(event: "reload" | "invalidate", payload: Record<string, unkno
     }
   }
 }
+const sseHeartbeat = setInterval(() => {
+  for (const controller of listeners) {
+    try {
+      controller.enqueue(": ping\n\n");
+    } catch {
+      listeners.delete(controller);
+    }
+  }
+}, 25_000);
+sseHeartbeat.unref?.();
 
 // Same-origin postMessage is what the SDK's query-invalidation listener
 // accepts when the page is top-level (not framed by the Hatch host).
@@ -550,6 +560,7 @@ const server = Bun.serve({
       const previewTarget = parseDevPreviewTarget(req, url);
       if (previewTarget) return attachAuthCookie(await handlePreviewRoute(req, url, previewTarget));
       if (url.pathname === "/__dev/events") {
+        server.timeout(req, 0);
         let ctl: ReadableStreamDefaultController<string>;
         const stream = new ReadableStream<string>({
           start(controller) {
