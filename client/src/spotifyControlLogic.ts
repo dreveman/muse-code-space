@@ -2,20 +2,21 @@
 // Playback state is global to the Spotify account and is never stored
 // client-side; these helpers only shape what the components render.
 
-/** The exact redirect URI to register in the Spotify Developer app. */
+export const DEFAULT_SPOTIFY_REDIRECT_URI = "http://127.0.0.1/callback";
+
+/**
+ * The exact redirect URI to register in the Spotify Developer app.
+ * When the Space is loaded inside a non-HTTP custom WebView scheme (such as
+ * `hatch-space://...` in the iOS app), falls back to the standard loopback
+ * HTTP redirect URI (`http://127.0.0.1/callback`) so Spotify, the VM pilot,
+ * and mobile Safari all accept the redirect URL and keep `?code=...` in the
+ * browser address bar for copying into Step 2.
+ */
 export function spotifyRedirectUri(location: { origin: string; pathname: string; href?: string }): string {
-  if (location.origin && location.origin !== "null") {
+  if (typeof location.origin === "string" && /^https?:\/\//i.test(location.origin)) {
     return `${location.origin}${location.pathname || "/"}`;
   }
-  if (typeof location.href === "string" && location.href.length > 0) {
-    try {
-      const u = new URL(location.href);
-      u.search = "";
-      u.hash = "";
-      return u.toString();
-    } catch { /* fall through */ }
-  }
-  return `${location.origin}${location.pathname || "/"}`;
+  return DEFAULT_SPOTIFY_REDIRECT_URI;
 }
 
 /**
