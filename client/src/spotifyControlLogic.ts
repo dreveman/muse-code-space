@@ -2,6 +2,14 @@
 // Playback state is global to the Spotify account and is never stored
 // client-side; these helpers only shape what the components render.
 
+// Security note on the fallback below: the authorization `code` lands in
+// this URL's query string, so it will appear in github.com's request logs.
+// That is safe because the flow is PKCE (S256): the code_verifier is
+// generated server-side in the pilot (randomBytes) and held only in its
+// pending-setups map — it never appears in the authorization URL or the
+// redirect. Spotify only exchanges the code for tokens when presented with
+// the matching verifier, so a bare code from a log is useless. Pending
+// setups are single-use and expire.
 export const DEFAULT_SPOTIFY_REDIRECT_URI = "https://github.com/dreveman/muse-code-space";
 
 /**
