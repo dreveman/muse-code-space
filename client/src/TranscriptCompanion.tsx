@@ -300,7 +300,7 @@ export const TranscriptCompanion = memo(function TranscriptCompanion({
     setVisibleOpen(false);
     const timer = window.setTimeout(() => {
       setMounted(false);
-    }, 260);
+    }, 400);
     return () => window.clearTimeout(timer);
   }, [open]);
   useLayoutEffect(() => {

@@ -620,7 +620,9 @@ export function createSpotifyClient(deps = {}) {
           list.find((d) => d.is_active) ??
           list.find((d) => typeof d.type === "string" && d.type.toLowerCase() === "smartphone") ??
           list[0];
-        if (!target) throw err;
+        if (!target) {
+          throw new Error("Spotify: No active Spotify device found. Open the Spotify app on your phone or computer and play a song once to wake it up, then try again.");
+        }
         await api("PUT", `/v1/me/player/play?device_id=${encodeURIComponent(target.id)}`, { context_uri: contextUri });
       }
       return { ok: true };
