@@ -1550,6 +1550,93 @@ export const Actions = {
   // the pilot holds the Spotify connection. Playback state is global to
   // the Spotify account, so nothing Spotify-shaped is stored in app.db.
 
+  getUiState: defineAction({
+    request: z.object({}),
+    response: z.object({
+      selected_session_id: z.string().nullable(),
+      selected_companion_id: z.string().nullable(),
+      mobile_list_open: z.boolean(),
+      details_open: z.boolean(),
+      soul_open: z.boolean(),
+      spotify_setup_open: z.boolean(),
+      spotify_client_id: z.string().nullable(),
+      spotify_started_state: z.string().nullable(),
+    }),
+    async handler(ctx) {
+      const db = ctx.db<typeof schema>();
+      try {
+        const rows = await db.select().from(schema.uiState).where(eq(schema.uiState.id, "current")).limit(1);
+        const row = rows[0];
+        if (row) {
+          return {
+            selected_session_id: row.selectedSessionId ?? null,
+            selected_companion_id: row.selectedCompanionId ?? null,
+            mobile_list_open: row.mobileListOpen,
+            details_open: row.detailsOpen,
+            soul_open: row.soulOpen,
+            spotify_setup_open: row.spotifySetupOpen,
+            spotify_client_id: row.spotifyClientId ?? null,
+            spotify_started_state: row.spotifyStartedState ?? null,
+          };
+        }
+      } catch { /* fallback if migration not applied yet */ }
+      return {
+        selected_session_id: null,
+        selected_companion_id: null,
+        mobile_list_open: true,
+        details_open: false,
+        soul_open: false,
+        spotify_setup_open: false,
+        spotify_client_id: null,
+        spotify_started_state: null,
+      };
+    },
+  }),
+
+  setUiState: defineAction({
+    request: z.object({
+      selected_session_id: z.string().max(200).nullable().optional(),
+      selected_companion_id: z.string().max(200).nullable().optional(),
+      mobile_list_open: z.boolean().optional(),
+      details_open: z.boolean().optional(),
+      soul_open: z.boolean().optional(),
+      spotify_setup_open: z.boolean().optional(),
+      spotify_client_id: z.string().max(200).nullable().optional(),
+      spotify_started_state: z.string().max(200).nullable().optional(),
+    }).strict(),
+    response: z.object({ ok: z.boolean() }),
+    async handler(ctx, args) {
+      const db = ctx.db<typeof schema>();
+      const now = new Date();
+      try {
+        await db.insert(schema.uiState).values({
+          id: "current",
+          selectedSessionId: args.selected_session_id ?? null,
+          selectedCompanionId: args.selected_companion_id ?? null,
+          mobileListOpen: args.mobile_list_open ?? true,
+          detailsOpen: args.details_open ?? false,
+          soulOpen: args.soul_open ?? false,
+          spotifySetupOpen: args.spotify_setup_open ?? false,
+          spotifyClientId: args.spotify_client_id ?? null,
+          spotifyStartedState: args.spotify_started_state ?? null,
+          updatedAt: now,
+        }).onConflictDoNothing();
+        await db.update(schema.uiState).set({
+          ...(args.selected_session_id !== undefined ? { selectedSessionId: args.selected_session_id } : {}),
+          ...(args.selected_companion_id !== undefined ? { selectedCompanionId: args.selected_companion_id } : {}),
+          ...(args.mobile_list_open !== undefined ? { mobileListOpen: args.mobile_list_open } : {}),
+          ...(args.details_open !== undefined ? { detailsOpen: args.details_open } : {}),
+          ...(args.soul_open !== undefined ? { soulOpen: args.soul_open } : {}),
+          ...(args.spotify_setup_open !== undefined ? { spotifySetupOpen: args.spotify_setup_open } : {}),
+          ...(args.spotify_client_id !== undefined ? { spotifyClientId: args.spotify_client_id } : {}),
+          ...(args.spotify_started_state !== undefined ? { spotifyStartedState: args.spotify_started_state } : {}),
+          updatedAt: now,
+        }).where(eq(schema.uiState.id, "current"));
+      } catch { /* ignore if table not migrated yet */ }
+      return { ok: true };
+    },
+  }),
+
   getSpotifyStatus: defineAction({
     request: z.object({}),
     response: z.object({
@@ -1593,6 +1680,25 @@ export const Actions = {
         const res = await pilotRequest(baseUrl, "/spotify/setup/start",
           { method: "POST", body: JSON.stringify({ client_id: args.client_id, redirect_uri: args.redirect_uri }) },
           z.object({ auth_url: z.string(), state: z.string() }), 60_000);
+        try {
+          const db = ctx.db<typeof schema>();
+          const now = new Date();
+          await db.insert(schema.uiState).values({
+            id: "current",
+            detailsOpen: true,
+            spotifySetupOpen: true,
+            spotifyClientId: args.client_id,
+            spotifyStartedState: res.state,
+            updatedAt: now,
+          }).onConflictDoNothing();
+          await db.update(schema.uiState).set({
+            detailsOpen: true,
+            spotifySetupOpen: true,
+            spotifyClientId: args.client_id,
+            spotifyStartedState: res.state,
+            updatedAt: now,
+          }).where(eq(schema.uiState.id, "current"));
+        } catch { /* best-effort UI state persistence */ }
         return { ok: true, auth_url: res.auth_url, state: res.state, error: null };
       } catch (error) {
         return { ok: false, auth_url: null, state: null, error: pilotRequestErrorText(error) };
@@ -1620,6 +1726,14 @@ export const Actions = {
         const res = await pilotRequest(baseUrl, "/spotify/setup/complete",
           { method: "POST", body: JSON.stringify({ code: args.code, state: args.state }) },
           z.object({ connected: z.boolean(), account_name: z.string().optional() }), 60_000);
+        try {
+          const db = ctx.db<typeof schema>();
+          await db.update(schema.uiState).set({
+            spotifySetupOpen: false,
+            spotifyStartedState: null,
+            updatedAt: new Date(),
+          }).where(eq(schema.uiState.id, "current"));
+        } catch { /* best-effort UI state cleanup */ }
         ctx.invalidateQueries({ queryKey: ["spotify-status"] });
         return { ok: true, connected: res.connected, account_name: res.account_name ?? null, error: null };
       } catch (error) {

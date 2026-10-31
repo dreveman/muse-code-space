@@ -1,4 +1,6 @@
 import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "./api";
 import { builtinCompanionDefinitions, companionDefinitions, companionForName, companionRoleTitle } from "./companionRoster";
 import { companionArtwork, type CompanionArtwork } from "./companionArtwork";
 import { agentNameHue } from "./agentColor";
@@ -453,15 +455,42 @@ export function CompanionWelcome({ companion, visible, models, statistics, avail
 }) {
   const welcomeRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  const uiStateQuery = useQuery({
+    queryKey: ["ui-state"],
+    queryFn: () => api.getUiState({}),
+    staleTime: Infinity,
+    retry: false,
+  });
   const [detailsOpen, setDetailsOpenState] = useState(() => savedDetailsOpen);
   const [soulOpen, setSoulOpenState] = useState(() => savedSoulOpen);
+  const restoredDetailsRef = useRef(false);
+  useEffect(() => {
+    if (restoredDetailsRef.current || !uiStateQuery.data) return;
+    restoredDetailsRef.current = true;
+    const shouldExpandDetails = uiStateQuery.data.details_open || uiStateQuery.data.spotify_setup_open || Boolean(uiStateQuery.data.spotify_started_state);
+    if (shouldExpandDetails !== savedDetailsOpen) {
+      savedDetailsOpen = shouldExpandDetails;
+      setDetailsOpenState(shouldExpandDetails);
+    }
+    if (uiStateQuery.data.soul_open !== savedSoulOpen) {
+      savedSoulOpen = uiStateQuery.data.soul_open;
+      setSoulOpenState(uiStateQuery.data.soul_open);
+    }
+  }, [uiStateQuery.data]);
   const setDetailsOpen = (next: boolean) => {
     savedDetailsOpen = next;
     setDetailsOpenState(next);
+    void api.setUiState({ details_open: next, ...(next ? {} : { spotify_setup_open: false }) })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["ui-state"] }))
+      .catch(() => undefined);
   };
   const setSoulOpen = (next: boolean) => {
     savedSoulOpen = next;
     setSoulOpenState(next);
+    void api.setUiState({ soul_open: next })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["ui-state"] }))
+      .catch(() => undefined);
   };
   const index = availableIds.indexOf(companion.id);
   const canBrowse = index >= 0 && availableIds.length > 1;

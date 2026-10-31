@@ -2826,6 +2826,14 @@ export function App() {
     }
   };
 
+  const uiStateQuery = useQuery({
+    queryKey: ["ui-state"],
+    queryFn: () => api.getUiState({}),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const uiStateRestoredRef = useRef(false);
+
   // Filter switches and refetches keep the selection (see resolveSelectedId).
   // The first load opens the first session; explicit archive/delete actions
   // can clear a selection without opening the next task. An empty workspace
@@ -2838,6 +2846,24 @@ export function App() {
     if (!sessionsQuery.data) return; // never judge a selection against a list that hasn't loaded
     const autoPickFirst = false;
     initialPickDoneRef.current = true;
+    if (!uiStateRestoredRef.current && uiStateQuery.isFetched) {
+      uiStateRestoredRef.current = true;
+      const saved = uiStateQuery.data;
+      if (saved && selectedId === null && selectedCompanionId === null) {
+        if (saved.selected_session_id && sessions.some((s) => s.id === saved.selected_session_id)) {
+          setSelectedCompanionId(null);
+          setSelectedId(saved.selected_session_id);
+          setMobileListOpen(saved.mobile_list_open);
+          return;
+        }
+        if (saved.selected_companion_id && allCompanions.some((c) => c.id === saved.selected_companion_id)) {
+          setSelectedId(null);
+          setSelectedCompanionId(saved.selected_companion_id);
+          setMobileListOpen(saved.mobile_list_open);
+          return;
+        }
+      }
+    }
     if (selectedCompanionId !== null) return;
     setSelectedId((current) =>
       resolveSelectedId(
@@ -2847,7 +2873,16 @@ export function App() {
         { draftId: draft?.id ?? null, defer: isNarrow && mobileListOpen, autoPickFirst },
       ),
     );
-  }, [isNarrow, mobileListOpen, sessions, sessionGroups, draft, sessionsQuery.data, selectedCompanionId]);
+  }, [isNarrow, mobileListOpen, sessions, sessionGroups, draft, sessionsQuery.data, selectedId, selectedCompanionId, uiStateQuery.isFetched, uiStateQuery.data, allCompanions]);
+
+  useEffect(() => {
+    if (!uiStateRestoredRef.current) return;
+    void api.setUiState({
+      selected_session_id: draftSelected ? null : selectedId,
+      selected_companion_id: selectedCompanionId,
+      mobile_list_open: mobileListOpen,
+    }).catch(() => undefined);
+  }, [selectedId, selectedCompanionId, mobileListOpen, draftSelected]);
 
   const detail = detailQuery.data;
   const detailSession = detail?.session ?? selectedSession;

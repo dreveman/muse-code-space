@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Spotify Connected — Code Space</title>
+    <style>
+      :root {
+        --bg: #f4f4f4;
+        --surface: #ffffff;
+        --text: #141718;
+        --dim: #626965;
+        --border: #dfe3df;
+        --green: #1ed760;
+        --green-ink: #082411;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #090b0c;
+          --surface: #131719;
+          --text: #e8eade;
+          --dim: #929b94;
+          --border: #262c2f;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+      .card {
+        width: min(420px, 100%);
+        padding: 24px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--surface);
+        box-shadow: 0 12px 36px rgb(0 0 0 / .12);
+        display: grid;
+        gap: 14px;
+      }
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .head svg {
+        width: 28px;
+        height: 28px;
+        flex: 0 0 auto;
+      }
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.25;
+      }
+      p {
+        margin: 0;
+        color: var(--dim);
+        font-size: 13.5px;
+      }
+      ol {
+        margin: 0;
+        padding-left: 20px;
+        display: grid;
+        gap: 6px;
+        font-size: 13.5px;
+      }
+      strong { color: var(--text); }
+      .copy-btn {
+        width: 100%;
+        min-height: 44px;
+        padding: 10px 16px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--green);
+        color: var(--green-ink);
+        font: 700 14px/1.2 inherit;
+        cursor: pointer;
+        transition: filter 120ms ease, transform 100ms ease;
+      }
+      .copy-btn:active {
+        transform: scale(0.98);
+      }
+      .status {
+        margin: 0;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--green);
+        text-align: center;
+        min-height: 18px;
+      }
+      .url-box {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--bg);
+        color: var(--dim);
+        font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="head">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512" aria-hidden="true">
+          <path fill="#1ed760" d="M248 8C111.1 8 0 119.1 0 256s111.1 248 248 248 248-111.1 248-248S384.9 8 248 8Z" />
+          <path fill="#082411" d="M406.6 231.1c-5.2 0-8.4-1.3-12.9-3.9-71.2-42.5-198.5-52.7-280.9-29.7-3.6 1-8.1 2.6-12.9 2.6-13.2 0-23.3-10.3-23.3-23.6 0-13.6 8.4-21.3 17.4-23.9 35.2-10.3 74.6-15.2 117.5-15.2 73 0 149.5 15.2 205.4 47.8 7.8 4.5 12.9 10.7 12.9 22.6 0 13.6-11 23.3-23.2 23.3zm-31 76.2c-5.2 0-8.7-2.3-12.3-4.2-62.5-37-155.7-51.9-238.6-29.4-4.8 1.3-7.4 2.6-11.9 2.6-10.7 0-19.4-8.7-19.4-19.4s5.2-17.8 15.5-20.7c27.8-7.8 56.2-13.6 97.8-13.6 64.9 0 127.6 16.1 177 45.5 8.1 4.8 11.3 11 11.3 19.7-.1 10.8-8.5 19.5-19.4 19.5zm-26.9 65.6c-4.2 0-6.8-1.3-10.7-3.6-62.4-37.6-135-39.2-206.7-24.5-3.9 1-9 2.6-11.9 2.6-9.7 0-15.8-7.7-15.8-15.8 0-10.3 6.1-15.2 13.6-16.8 81.9-18.1 165.6-16.5 237 26.2 6.1 3.9 9.7 7.4 9.7 16.5s-7.1 15.4-15.2 15.4z" />
+        </svg>
+        <h1 id="headline">Spotify Authorized</h1>
+      </div>
+      <p id="subtext">Finish connecting Spotify in Code Space:</p>
+      <ol>
+        <li>Tap <strong>Copy Completion URL</strong> below.</li>
+        <li>Return to <strong>Code Space</strong>.</li>
+        <li>Paste into the <strong>Completion URL</strong> field in the Spotify setup menu and tap <strong>Complete with URL</strong>.</li>
+      </ol>
+      <button type="button" id="copy-btn" class="copy-btn">Copy Completion URL</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <input id="url-input" class="url-box" type="text" readonly aria-label="Completion URL" />
+    </main>
+    <script>
+      (() => {
+        const href = window.location.href;
+        const input = document.getElementById("url-input");
+        const btn = document.getElementById("copy-btn");
+        const status = document.getElementById("status");
+        if (input) input.value = href;
+
+        const markCopied = () => {
+          if (btn) btn.textContent = "✓ Copied Completion URL";
+          if (status) status.textContent = "Copied to clipboard! Switch back to Code Space and paste it into Completion URL.";
+        };
+
+        const copyNow = async () => {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              await navigator.clipboard.writeText(href);
+              markCopied();
+              return true;
+            }
+          } catch {}
+          try {
+            if (input) {
+              input.focus();
+              input.select();
+              if (document.execCommand("copy")) {
+                markCopied();
+                return true;
+              }
+            }
+          } catch {}
+          return false;
+        };
+
+        if (btn) {
+          btn.addEventListener("click", () => { void copyNow(); });
+        }
+        if (input) {
+          input.addEventListener("click", () => { input.select(); });
+        }
+        // Attempt automatic clipboard copy on load (works when browser allows it).
+        void copyNow();
+      })();
+    </script>
+  </body>
+</html>
