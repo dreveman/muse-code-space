@@ -2415,8 +2415,24 @@ const server = createServer(async (req, res) => {
           return json(res, 200, started);
         }
         if (path === "/spotify/setup/complete" && req.method === "POST") {
-          const completed = await spotify.completeSetup({ code: body.code, state: body.state });
+          const completed = await spotify.completeSetup({
+            code: body.code,
+            state: body.state,
+            accessToken: body.access_token,
+            refreshToken: body.refresh_token,
+            expiresIn: body.expires_in,
+          });
           return json(res, 200, completed);
+        }
+        if (path === "/spotify/token-refresh-params" && req.method === "GET") {
+          return json(res, 200, spotify.tokenRefreshParams());
+        }
+        if (path === "/spotify/token" && req.method === "POST") {
+          return json(res, 200, await spotify.updateTokens({
+            accessToken: body.access_token,
+            refreshToken: body.refresh_token,
+            expiresIn: body.expires_in,
+          }));
         }
         if (path === "/spotify/disconnect" && req.method === "POST") {
           return json(res, 200, await spotify.disconnect());

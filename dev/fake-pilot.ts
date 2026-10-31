@@ -2091,15 +2091,37 @@ Bun.serve({
           const code = typeof body.code === "string" ? body.code.trim() : "";
           const state = typeof body.state === "string" ? body.state.trim() : "";
           if (state.startsWith("fake-spotify-")) {
-            if (!code) {
+            if (!code && typeof body.access_token !== "string") {
               return json(400, { error: "Missing authorization code.", code: "spotify_setup_invalid" });
             }
             fakeSpotify.connected = true;
             fakeSpotify.pendingState = null;
             return json(200, { connected: true, account_name: fakeSpotify.accountName });
           }
-          const completed = await realSpotify.completeSetup({ code, state });
+          const completed = await realSpotify.completeSetup({
+            code,
+            state,
+            accessToken: body.access_token,
+            refreshToken: body.refresh_token,
+            expiresIn: body.expires_in,
+          });
           return json(200, completed);
+        }
+        if (path === "/spotify/token-refresh-params" && req.method === "GET") {
+          if (realSpotify.isConnected()) {
+            return json(200, realSpotify.tokenRefreshParams());
+          }
+          return json(200, { connected: fakeSpotify.connected, needs_refresh: false, client_id: null, refresh_token: null, expires_at: null });
+        }
+        if (path === "/spotify/token" && req.method === "POST") {
+          if (realSpotify.isConnected()) {
+            return json(200, await realSpotify.updateTokens({
+              accessToken: body.access_token,
+              refreshToken: body.refresh_token,
+              expiresIn: body.expires_in,
+            }));
+          }
+          return json(200, { ok: true, expires_at: Date.now() + 3_600_000 });
         }
         if (path === "/spotify/disconnect" && req.method === "POST") {
           fakeSpotify.connected = false;

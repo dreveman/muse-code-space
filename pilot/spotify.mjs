@@ -250,9 +250,35 @@ export function createSpotifyClient(deps = {}) {
   const randomBytes = deps.randomBytes ?? ((n) => cryptoRandomBytes(n));
 
   const pendingFile = `${configFile}.pending`;
+  const tokenCacheFile = `${configFile}.token`;
   const pendingSetups = new Map(); // state -> { verifier, clientId, redirectUri, expiresAt }
-  let cachedToken = null; // { accessToken, expiresAt } — memory only, never on disk
+  let cachedToken = null; // { accessToken, expiresAt }
   let cachedAccountName = null;
+
+  function loadTokenFromDisk() {
+    if (cachedToken) return cachedToken;
+    try {
+      if (!existsSync(tokenCacheFile)) return null;
+      const raw = JSON.parse(readFileSync(tokenCacheFile, "utf8"));
+      if (typeof raw?.access_token === "string" && raw.access_token && typeof raw?.expires_at === "number" && raw.expires_at > now()) {
+        cachedToken = { accessToken: raw.access_token, expiresAt: raw.expires_at };
+        return cachedToken;
+      }
+    } catch { /* best-effort */ }
+    return null;
+  }
+
+  function saveTokenToDisk(token) {
+    try {
+      if (!token) {
+        rmSync(tokenCacheFile, { force: true });
+        return;
+      }
+      mkdirSync(dirname(tokenCacheFile), { recursive: true });
+      writeFileSync(tokenCacheFile, `${JSON.stringify({ access_token: token.accessToken, expires_at: token.expiresAt }, null, 2)}\n`, { mode: 0o600 });
+      chmodSync(tokenCacheFile, 0o600);
+    } catch { /* best-effort */ }
+  }
 
   function loadPendingFromDisk() {
     try {
@@ -335,8 +361,9 @@ export function createSpotifyClient(deps = {}) {
   async function accessToken(forceRefresh = false) {
     const config = readConfig();
     if (!config) throw new Error("Spotify is not connected");
-    if (!forceRefresh && cachedToken && cachedToken.expiresAt - now() > TOKEN_REFRESH_SLACK_MS) {
-      return cachedToken.accessToken;
+    const activeToken = loadTokenFromDisk();
+    if (!forceRefresh && activeToken && activeToken.expiresAt - now() > TOKEN_REFRESH_SLACK_MS) {
+      return activeToken.accessToken;
     }
     const json = await tokenRequest({
       grant_type: "refresh_token",
@@ -347,6 +374,7 @@ export function createSpotifyClient(deps = {}) {
       accessToken: json.access_token,
       expiresAt: now() + Math.max(0, Number(json.expires_in) || 0) * 1000,
     };
+    saveTokenToDisk(cachedToken);
     // Spotify may rotate the refresh token; persist the replacement.
     if (typeof json.refresh_token === "string" && json.refresh_token && json.refresh_token !== config.refresh_token) {
       writeConfig({ client_id: config.client_id, refresh_token: json.refresh_token });
@@ -367,6 +395,7 @@ export function createSpotifyClient(deps = {}) {
     let res = await send(await accessToken());
     if (res.status === 401) {
       cachedToken = null;
+      saveTokenToDisk(null);
       res = await send(await accessToken(true));
     }
     if (res.status === 204) return null;
@@ -406,7 +435,9 @@ export function createSpotifyClient(deps = {}) {
       prunePending();
       const verifier = Buffer.from(randomBytes(32)).toString("base64url");
       const challenge = createHash("sha256").update(verifier).digest("base64url");
-      const state = Buffer.from(randomBytes(16)).toString("base64url");
+      const nonce = Buffer.from(randomBytes(16)).toString("base64url");
+      const pkceMeta = Buffer.from(JSON.stringify({ c: cleanClientId, v: verifier })).toString("base64url");
+      const state = `${nonce}.${pkceMeta}`;
       pendingSetups.set(state, {
         verifier,
         clientId: cleanClientId,
@@ -422,12 +453,17 @@ export function createSpotifyClient(deps = {}) {
       auth.searchParams.set("state", state);
       auth.searchParams.set("code_challenge_method", "S256");
       auth.searchParams.set("code_challenge", challenge);
-      return { auth_url: auth.toString(), state };
+      return { auth_url: auth.toString(), state, code_verifier: verifier };
     },
 
-    async completeSetup({ code, state } = {}) {
+    async completeSetup({ code, state, accessToken: providedAccessToken, refreshToken: providedRefreshToken, expiresIn: providedExpiresIn } = {}) {
+      const hasProvidedTokens =
+        typeof providedAccessToken === "string" && providedAccessToken.trim().length > 0 &&
+        typeof providedRefreshToken === "string" && providedRefreshToken.trim().length > 0;
       const cleanCode = typeof code === "string" ? code.trim() : "";
-      if (!cleanCode || cleanCode.length > 4096) throw new Error("Paste the authorization code from the Spotify redirect URL.");
+      if (!hasProvidedTokens && (!cleanCode || cleanCode.length > 4096)) {
+        throw new Error("Paste the authorization code from the Spotify redirect URL.");
+      }
       const cleanState = typeof state === "string" ? state.trim() : "";
       if (!cleanState) throw new Error("Missing setup state — start the Spotify connection again.");
       prunePending();
@@ -436,13 +472,19 @@ export function createSpotifyClient(deps = {}) {
       pendingSetups.delete(cleanState);
       savePendingToDisk();
       if (!pending) throw new Error("That setup link is unknown or expired — start the Spotify connection again.");
-      const json = await tokenRequest({
-        grant_type: "authorization_code",
-        code: cleanCode,
-        redirect_uri: pending.redirectUri,
-        client_id: pending.clientId,
-        code_verifier: pending.verifier,
-      });
+      const json = hasProvidedTokens
+        ? {
+            access_token: providedAccessToken.trim(),
+            refresh_token: providedRefreshToken.trim(),
+            expires_in: Number(providedExpiresIn) > 0 ? Number(providedExpiresIn) : 3600,
+          }
+        : await tokenRequest({
+            grant_type: "authorization_code",
+            code: cleanCode,
+            redirect_uri: pending.redirectUri,
+            client_id: pending.clientId,
+            code_verifier: pending.verifier,
+          });
       if (typeof json.refresh_token !== "string" || !json.refresh_token) {
         throw new Error("Spotify did not return a refresh token — nothing was written.");
       }
@@ -450,6 +492,7 @@ export function createSpotifyClient(deps = {}) {
         accessToken: json.access_token,
         expiresAt: now() + Math.max(0, Number(json.expires_in) || 0) * 1000,
       };
+      saveTokenToDisk(cachedToken);
       cachedAccountName = null;
       // Only a confirmed exchange writes the config.
       writeConfig({ client_id: pending.clientId, refresh_token: json.refresh_token });
@@ -458,11 +501,45 @@ export function createSpotifyClient(deps = {}) {
       return name ? { connected: true, account_name: name } : { connected: true };
     },
 
+    tokenRefreshParams() {
+      const config = readConfig();
+      if (!config) {
+        return { connected: false, needs_refresh: false, client_id: null, refresh_token: null, expires_at: null };
+      }
+      const active = loadTokenFromDisk();
+      const needsRefresh = !active || active.expiresAt - now() <= 5 * 60_000;
+      return {
+        connected: true,
+        needs_refresh: needsRefresh,
+        client_id: config.client_id,
+        refresh_token: config.refresh_token,
+        expires_at: active ? active.expiresAt : null,
+      };
+    },
+
+    async updateTokens({ accessToken: nextAccess, refreshToken: nextRefresh, expiresIn } = {}) {
+      const config = readConfig();
+      if (!config) throw new Error("Spotify is not connected");
+      const cleanAccess = typeof nextAccess === "string" ? nextAccess.trim() : "";
+      if (!cleanAccess) throw new Error("Missing Spotify access token.");
+      const cleanRefresh = typeof nextRefresh === "string" && nextRefresh.trim() ? nextRefresh.trim() : config.refresh_token;
+      cachedToken = {
+        accessToken: cleanAccess,
+        expiresAt: now() + Math.max(60, Number(expiresIn) || 3600) * 1000,
+      };
+      saveTokenToDisk(cachedToken);
+      if (cleanRefresh !== config.refresh_token) {
+        writeConfig({ client_id: config.client_id, refresh_token: cleanRefresh });
+      }
+      return { ok: true, expires_at: cachedToken.expiresAt };
+    },
+
     async disconnect() {
       cachedToken = null;
       cachedAccountName = null;
       pendingSetups.clear();
       savePendingToDisk();
+      saveTokenToDisk(null);
       rmSync(configFile, { force: true });
       return { connected: false };
     },

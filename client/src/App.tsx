@@ -15,7 +15,7 @@ import { CompanionAccessNotice } from "./CompanionAccess";
 import { companionModelAccess, orderCompanionsByAccess, PAID_COMPANION_MODELS } from "../../server/src/companionModels";
 import { displayModelLabel } from "./modelLabel";
 import { TranscriptCompanion } from "./TranscriptCompanion";
-import { CompanionTunedBadge, useSpotifyCompanionVolumeSync } from "./SpotifyMusic";
+import { CompanionTunedBadge, completeSpotifyOAuthInBrowser, useSpotifyCompanionVolumeSync } from "./SpotifyMusic";
 import { availableCompanionDefinitions, companionAssignedElsewhere, isDefaultCompanion, matchesCompanionQuery } from "./companionRoster";
 import { CompanionAvatar, preloadCompanionStill } from "./CompanionAvatar";
 import { isLifecycleMessage } from "../../server/src/transcriptVisibility";
@@ -2055,19 +2055,26 @@ export function App() {
 
   const queryClient = useQueryClient();
   // Spotify OAuth landing: Spotify redirects back to the app origin with
-  // ?code&state. Complete the connection once, then scrub the code from
-  // the URL so it never lingers in history or gets reused.
+  // ?code&state. Complete the connection once (exchanging the PKCE code in
+  // the browser first), then scrub the code from the URL so it never
+  // lingers in history or gets reused.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
     if (!code || !state) return;
+    const pasteOrUrl = window.location.href;
     params.delete("code");
     params.delete("state");
     params.delete("error");
     const rest = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
-    void api.completeSpotifySetup({ code, state })
+    window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
+    void completeSpotifyOAuthInBrowser({
+      pasteOrUrl,
+      code,
+      state,
+      redirectUri: `${window.location.origin}${window.location.pathname || "/"}`,
+    })
       .then(() => queryClient.invalidateQueries({ queryKey: ["spotify-status"] }))
       .catch(() => { /* the setup dialog surfaces failures on demand */ });
   }, [queryClient]);
