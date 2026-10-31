@@ -249,9 +249,46 @@ export function createSpotifyClient(deps = {}) {
   const now = deps.now ?? (() => Date.now());
   const randomBytes = deps.randomBytes ?? ((n) => cryptoRandomBytes(n));
 
+  const pendingFile = `${configFile}.pending`;
   const pendingSetups = new Map(); // state -> { verifier, clientId, redirectUri, expiresAt }
   let cachedToken = null; // { accessToken, expiresAt } — memory only, never on disk
   let cachedAccountName = null;
+
+  function loadPendingFromDisk() {
+    try {
+      if (!existsSync(pendingFile)) return;
+      const raw = JSON.parse(readFileSync(pendingFile, "utf8"));
+      if (!raw || typeof raw !== "object") return;
+      const at = now();
+      for (const [st, val] of Object.entries(raw)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          typeof val.verifier === "string" &&
+          typeof val.clientId === "string" &&
+          typeof val.redirectUri === "string" &&
+          typeof val.expiresAt === "number" &&
+          val.expiresAt > at &&
+          !pendingSetups.has(st)
+        ) {
+          pendingSetups.set(st, val);
+        }
+      }
+    } catch { /* best-effort */ }
+  }
+
+  function savePendingToDisk() {
+    try {
+      if (pendingSetups.size === 0) {
+        rmSync(pendingFile, { force: true });
+        return;
+      }
+      mkdirSync(dirname(pendingFile), { recursive: true });
+      const obj = Object.fromEntries(pendingSetups.entries());
+      writeFileSync(pendingFile, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
+      chmodSync(pendingFile, 0o600);
+    } catch { /* best-effort */ }
+  }
 
   function readConfig() {
     try {
@@ -272,10 +309,16 @@ export function createSpotifyClient(deps = {}) {
   }
 
   function prunePending() {
+    loadPendingFromDisk();
     const at = now();
+    let changed = false;
     for (const [state, pending] of pendingSetups) {
-      if (pending.expiresAt <= at) pendingSetups.delete(state);
+      if (pending.expiresAt <= at) {
+        pendingSetups.delete(state);
+        changed = true;
+      }
     }
+    if (changed) savePendingToDisk();
   }
 
   async function tokenRequest(form) {
@@ -370,6 +413,7 @@ export function createSpotifyClient(deps = {}) {
         redirectUri: parsedRedirect.toString(),
         expiresAt: now() + SETUP_STATE_TTL_MS,
       });
+      savePendingToDisk();
       const auth = new URL(`${ACCOUNTS_BASE}/authorize`);
       auth.searchParams.set("response_type", "code");
       auth.searchParams.set("client_id", cleanClientId);
@@ -390,6 +434,7 @@ export function createSpotifyClient(deps = {}) {
       const pending = pendingSetups.get(cleanState);
       // Single-use: consumed whether the exchange succeeds or fails.
       pendingSetups.delete(cleanState);
+      savePendingToDisk();
       if (!pending) throw new Error("That setup link is unknown or expired — start the Spotify connection again.");
       const json = await tokenRequest({
         grant_type: "authorization_code",
@@ -417,6 +462,7 @@ export function createSpotifyClient(deps = {}) {
       cachedToken = null;
       cachedAccountName = null;
       pendingSetups.clear();
+      savePendingToDisk();
       rmSync(configFile, { force: true });
       return { connected: false };
     },
