@@ -83,9 +83,13 @@
         color: var(--green-ink);
         font: 700 14px/1.2 inherit;
         cursor: pointer;
-        transition: filter 120ms ease, transform 100ms ease;
+        transition: filter 120ms ease, transform 100ms ease, opacity 120ms ease;
       }
-      .copy-btn:active {
+      .copy-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .copy-btn:active:not(:disabled) {
         transform: scale(0.98);
       }
       .status {
@@ -129,11 +133,64 @@
     </main>
     <script>
       (() => {
-        const href = window.location.href;
+        // PostMessage bridge so Code Space can also refresh Spotify tokens
+        // via a hidden iframe if its host WebView CSP restricts direct fetch.
+        window.addEventListener("message", async (event) => {
+          const data = event.data;
+          if (!data || typeof data !== "object" || data.type !== "muse-spotify-token-request") return;
+          const { requestId, params } = data;
+          try {
+            const res = await fetch("https://accounts.spotify.com/api/token", {
+              method: "POST",
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams(params || {}).toString(),
+            });
+            const json = await res.json().catch(() => null);
+            event.source?.postMessage(
+              { type: "muse-spotify-token-response", requestId, ok: res.ok, status: res.status, json },
+              "*",
+            );
+          } catch (err) {
+            event.source?.postMessage(
+              { type: "muse-spotify-token-response", requestId, ok: false, error: String(err) },
+              "*",
+            );
+          }
+        });
+
+        const toBase64Url = (str) =>
+          btoa(unescape(encodeURIComponent(str)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/g, "");
+
+        const fromBase64Url = (b64) => {
+          const padded = b64.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64.length + 3) % 4);
+          return decodeURIComponent(escape(atob(padded)));
+        };
+
+        const decodeStatePkce = (state) => {
+          if (typeof state !== "string") return null;
+          const dot = state.indexOf(".");
+          if (dot <= 0) return null;
+          try {
+            const parsed = JSON.parse(fromBase64Url(state.slice(dot + 1)));
+            if (typeof parsed?.c === "string" && typeof parsed?.v === "string") {
+              return { clientId: parsed.c, verifier: parsed.v };
+            }
+          } catch {}
+          return null;
+        };
+
+        let completionHref = window.location.href;
         const input = document.getElementById("url-input");
         const btn = document.getElementById("copy-btn");
         const status = document.getElementById("status");
-        if (input) input.value = href;
+        const updateUrlDisplay = (nextHref) => {
+          completionHref = nextHref;
+          if (input) input.value = nextHref;
+        };
+        updateUrlDisplay(completionHref);
 
         const markCopied = () => {
           if (btn) btn.textContent = "✓ Copied Completion URL";
@@ -143,7 +200,7 @@
         const copyNow = async () => {
           try {
             if (navigator.clipboard && navigator.clipboard.writeText) {
-              await navigator.clipboard.writeText(href);
+              await navigator.clipboard.writeText(completionHref);
               markCopied();
               return true;
             }
@@ -167,8 +224,72 @@
         if (input) {
           input.addEventListener("click", () => { input.select(); });
         }
-        // Attempt automatic clipboard copy on load (works when browser allows it).
-        void copyNow();
+
+        const exchangeInBrowserIfNeeded = async () => {
+          const currentUrl = new URL(window.location.href);
+          const code = currentUrl.searchParams.get("code");
+          const state = currentUrl.searchParams.get("state");
+          if (!code || !state) {
+            void copyNow();
+            return;
+          }
+          const cacheKey = `muse-spotify-completion:${state}`;
+          try {
+            const cached = sessionStorage.getItem(cacheKey);
+            if (cached) {
+              window.history.replaceState(null, "", cached);
+              updateUrlDisplay(cached);
+              void copyNow();
+              return;
+            }
+          } catch {}
+          const pkce = decodeStatePkce(state);
+          if (!pkce) {
+            void copyNow();
+            return;
+          }
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Completing authorization…";
+          }
+          try {
+            const redirectUri = `${currentUrl.origin}${currentUrl.pathname}`;
+            const res = await fetch("https://accounts.spotify.com/api/token", {
+              method: "POST",
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: redirectUri,
+                client_id: pkce.clientId,
+                code_verifier: pkce.verifier,
+              }).toString(),
+            });
+            const json = await res.json().catch(() => null);
+            if (res.ok && typeof json?.access_token === "string" && typeof json?.refresh_token === "string") {
+              const tokenBundle = toBase64Url(JSON.stringify({
+                access_token: json.access_token,
+                refresh_token: json.refresh_token,
+                expires_in: Number(json.expires_in) || 3600,
+                state,
+              }));
+              const nextUrl = `${currentUrl.origin}${currentUrl.pathname}?state=${encodeURIComponent(state)}#spotify_tokens=${tokenBundle}`;
+              try { sessionStorage.setItem(cacheKey, nextUrl); } catch {}
+              window.history.replaceState(null, "", nextUrl);
+              updateUrlDisplay(nextUrl);
+            }
+          } catch {
+            // Keep original URL so Code Space can exchange it directly.
+          } finally {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = "Copy Completion URL";
+            }
+          }
+          void copyNow();
+        };
+
+        void exchangeInBrowserIfNeeded();
       })();
     </script>
   </body>

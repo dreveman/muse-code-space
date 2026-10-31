@@ -14,13 +14,198 @@ import { detectIosDevice } from "./colorMode";
 import { companionForName } from "./companionRoster";
 import type { CompanionMusic } from "../../server/src/companionMusic";
 import {
+  DEFAULT_SPOTIFY_REDIRECT_URI,
+  decodeSpotifyStatePkce,
   extractSpotifyAuthCode,
   extractSpotifyAuthState,
+  extractSpotifyTokens,
   isCompanionBusyInSessions,
   shouldOpenSpotifyAuthInNewTab,
   spotifyRedirectUri,
   targetCompanionVolume,
 } from "./spotifyControlLogic";
+
+type SpotifyTokenResponse = {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+};
+
+let tokenBridgeIframe: HTMLIFrameElement | null = null;
+let tokenBridgeReadyPromise: Promise<Window> | null = null;
+
+function ensureTokenBridgeWindow(): Promise<Window> {
+  if (typeof document === "undefined") {
+    return Promise.reject(new Error("Browser document unavailable"));
+  }
+  if (tokenBridgeReadyPromise && tokenBridgeIframe?.contentWindow) {
+    return tokenBridgeReadyPromise;
+  }
+  tokenBridgeReadyPromise = new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.src = DEFAULT_SPOTIFY_REDIRECT_URI;
+    iframe.style.display = "none";
+    iframe.setAttribute("aria-hidden", "true");
+    const timer = window.setTimeout(() => {
+      reject(new Error("Spotify token bridge timed out"));
+    }, 10_000);
+    iframe.onload = () => {
+      window.clearTimeout(timer);
+      if (iframe.contentWindow) resolve(iframe.contentWindow);
+      else reject(new Error("Spotify token bridge unavailable"));
+    };
+    iframe.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("Spotify token bridge failed to load"));
+    };
+    document.body.appendChild(iframe);
+    tokenBridgeIframe = iframe;
+  });
+  return tokenBridgeReadyPromise;
+}
+
+export async function requestSpotifyTokenInBrowser(params: Record<string, string>): Promise<SpotifyTokenResponse> {
+  // 1. Try direct browser fetch to https://accounts.spotify.com/api/token first.
+  try {
+    const res = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params).toString(),
+    });
+    const json = await res.json().catch(() => null);
+    if (res.ok && typeof json?.access_token === "string") {
+      return {
+        access_token: json.access_token,
+        ...(typeof json.refresh_token === "string" ? { refresh_token: json.refresh_token } : {}),
+        ...(typeof json.expires_in === "number" ? { expires_in: json.expires_in } : {}),
+      };
+    }
+    if (json?.error) {
+      const msg = typeof json.error_description === "string" ? json.error_description : String(json.error);
+      throw new Error(`Spotify: ${msg}`);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Spotify:")) {
+      throw err;
+    }
+    // Network/CSP error in WebView: fall through to the GitHub Pages iframe bridge.
+  }
+
+  // 2. Fallback: execute the POST from the hosted callback origin via postMessage.
+  const bridgeWin = await ensureTokenBridgeWindow();
+  const requestId = `spotify-tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return new Promise<SpotifyTokenResponse>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Spotify token exchange timed out in browser."));
+    }, 12_000);
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+    };
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.type !== "muse-spotify-token-response" || data.requestId !== requestId) {
+        return;
+      }
+      cleanup();
+      const json = data.json;
+      if (data.ok && typeof json?.access_token === "string") {
+        resolve({
+          access_token: json.access_token,
+          ...(typeof json.refresh_token === "string" ? { refresh_token: json.refresh_token } : {}),
+          ...(typeof json.expires_in === "number" ? { expires_in: json.expires_in } : {}),
+        });
+        return;
+      }
+      const msg = typeof json?.error_description === "string"
+        ? json.error_description
+        : typeof json?.error === "string"
+          ? json.error
+          : typeof data.error === "string"
+            ? data.error
+            : "Token exchange failed";
+      reject(new Error(`Spotify: ${msg}`));
+    };
+    window.addEventListener("message", onMessage);
+    bridgeWin.postMessage({ type: "muse-spotify-token-request", requestId, params }, "*");
+  });
+}
+
+export async function ensureBrowserSpotifyTokenFresh(): Promise<boolean> {
+  const params = await api.getSpotifyTokenRefreshParams({});
+  if (!params.ok || !params.connected || !params.client_id || !params.refresh_token) return false;
+  const refreshed = await requestSpotifyTokenInBrowser({
+    grant_type: "refresh_token",
+    refresh_token: params.refresh_token,
+    client_id: params.client_id,
+  });
+  const saved = await api.refreshSpotifyToken({
+    access_token: refreshed.access_token,
+    ...(refreshed.refresh_token ? { refresh_token: refreshed.refresh_token } : {}),
+    ...(refreshed.expires_in ? { expires_in: refreshed.expires_in } : {}),
+  });
+  return saved.ok;
+}
+
+async function runWithBrowserTokenRefresh<T extends { ok: boolean; error: string | null }>(
+  work: () => Promise<T>,
+): Promise<T> {
+  const first = await work();
+  if (first.ok || !first.error?.includes("refresh_rejected")) {
+    return first;
+  }
+  const refreshed = await ensureBrowserSpotifyTokenFresh().catch(() => false);
+  if (!refreshed) return first;
+  return work();
+}
+
+export async function completeSpotifyOAuthInBrowser({
+  pasteOrUrl,
+  code,
+  state,
+  redirectUri,
+}: {
+  pasteOrUrl?: string;
+  code?: string | null;
+  state: string;
+  redirectUri: string;
+}) {
+  const preExchanged = pasteOrUrl ? extractSpotifyTokens(pasteOrUrl) : null;
+  if (preExchanged) {
+    return api.completeSpotifySetup({
+      state: preExchanged.state ?? state,
+      access_token: preExchanged.access_token,
+      refresh_token: preExchanged.refresh_token,
+      expires_in: preExchanged.expires_in,
+    });
+  }
+  const cleanCode = code ?? (pasteOrUrl ? extractSpotifyAuthCode(pasteOrUrl) : null);
+  if (!cleanCode) {
+    return { ok: false, connected: false, account_name: null, error: "Paste the full Completion URL from Spotify (it contains a code), or the code itself." };
+  }
+  if (!state.startsWith("fake-spotify-")) {
+    const pkce = decodeSpotifyStatePkce(state);
+    if (pkce) {
+      const exchanged = await requestSpotifyTokenInBrowser({
+        grant_type: "authorization_code",
+        code: cleanCode,
+        redirect_uri: redirectUri,
+        client_id: pkce.clientId,
+        code_verifier: pkce.verifier,
+      });
+      if (exchanged.access_token && exchanged.refresh_token) {
+        return api.completeSpotifySetup({
+          state,
+          access_token: exchanged.access_token,
+          refresh_token: exchanged.refresh_token,
+          ...(exchanged.expires_in ? { expires_in: exchanged.expires_in } : {}),
+        });
+      }
+    }
+  }
+  return api.completeSpotifySetup({ code: cleanCode, state });
+}
 
 type MusicCompanion = { id: string; name: string; music: CompanionMusic | null };
 
@@ -227,12 +412,13 @@ export function SpotifySetupMenu({
   };
 
   const completeFromPaste = async () => {
-    const code = extractSpotifyAuthCode(pasteValue);
-    if (!code) {
+    const preExchanged = extractSpotifyTokens(pasteValue);
+    const code = preExchanged ? null : extractSpotifyAuthCode(pasteValue);
+    if (!preExchanged && !code) {
       setError("Paste the full Completion URL from Spotify (it contains a code), or the code itself.");
       return;
     }
-    const stateToUse = extractSpotifyAuthState(pasteValue) ?? startedState;
+    const stateToUse = preExchanged?.state ?? extractSpotifyAuthState(pasteValue) ?? startedState;
     if (!stateToUse) {
       setError("Click Connect first, approve in Spotify, then paste the Completion URL here.");
       return;
@@ -242,12 +428,22 @@ export function SpotifySetupMenu({
     try {
       let res: Awaited<ReturnType<typeof api.completeSpotifySetup>>;
       try {
-        res = await api.completeSpotifySetup({ code, state: stateToUse });
+        res = await completeSpotifyOAuthInBrowser({
+          pasteOrUrl: pasteValue,
+          code,
+          state: stateToUse,
+          redirectUri,
+        });
       } catch {
         // After switching back from Safari on iOS, the Space auth session may
         // still be refreshing; wait briefly and retry once automatically.
         await new Promise((r) => setTimeout(r, 700));
-        res = await api.completeSpotifySetup({ code, state: stateToUse });
+        res = await completeSpotifyOAuthInBrowser({
+          pasteOrUrl: pasteValue,
+          code,
+          state: stateToUse,
+          redirectUri,
+        });
       }
       if (!res.ok) {
         setError(res.error ?? "Spotify did not accept that code.");
@@ -502,7 +698,7 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     setError(null);
     try {
       setStoppedContextUri(null);
-      const res = await api.playCompanionMusic({ companion_id: companion.id });
+      const res = await runWithBrowserTokenRefresh(() => api.playCompanionMusic({ companion_id: companion.id }));
       if (!res.ok) {
         setError(res.error ?? "Spotify could not start that playlist.");
         return;
@@ -595,7 +791,7 @@ export function CompanionMusicBanner({ companion }: { companion: MusicCompanion 
     setBusy(true);
     setError(null);
     try {
-      const res = await work();
+      const res = await runWithBrowserTokenRefresh(work);
       if (!res.ok) {
         setError(res.error ?? "Spotify reported an error.");
         return;
@@ -719,6 +915,51 @@ export function useSpotifyCompanionVolumeSync({
   }, []);
 
   const connected = statusQuery.data?.connected === true;
+
+  // Browser-side token refresh: Hatch's VM egress proxy blocks POSTs to
+  // accounts.spotify.com/api/token, so whenever the pilot's cached access
+  // token is missing or within 5 minutes of expiry, the browser refreshes
+  // it directly with Spotify and pushes the fresh token to the pilot.
+  const refreshParamsQuery = useQuery({
+    queryKey: ["spotify-token-refresh-params"],
+    queryFn: () => api.getSpotifyTokenRefreshParams({}),
+    enabled: connected,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: false,
+  });
+  const refreshingRef = useRef(false);
+  useEffect(() => {
+    const data = refreshParamsQuery.data;
+    if (!connected || !data?.ok || !data.needs_refresh || !data.client_id || !data.refresh_token || refreshingRef.current) {
+      return;
+    }
+    refreshingRef.current = true;
+    void requestSpotifyTokenInBrowser({
+      grant_type: "refresh_token",
+      refresh_token: data.refresh_token,
+      client_id: data.client_id,
+    })
+      .then((refreshed) =>
+        api.refreshSpotifyToken({
+          access_token: refreshed.access_token,
+          ...(refreshed.refresh_token ? { refresh_token: refreshed.refresh_token } : {}),
+          ...(refreshed.expires_in ? { expires_in: refreshed.expires_in } : {}),
+        }),
+      )
+      .then(() =>
+        Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["spotify-token-refresh-params"] }),
+          queryClient.invalidateQueries({ queryKey: ["spotify-status"] }),
+          queryClient.invalidateQueries({ queryKey: ["spotify-playback"] }),
+        ]),
+      )
+      .catch(() => { /* retry on next poll */ })
+      .finally(() => {
+        refreshingRef.current = false;
+      });
+  }, [connected, refreshParamsQuery.data, queryClient]);
+
   const playback = playbackQuery.data?.playback ?? null;
   const contextUri = playback?.context_uri ?? null;
   const isPlaying = Boolean(

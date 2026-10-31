@@ -52,10 +52,70 @@ export function extractSpotifyAuthState(input: string): string | null {
   try {
     const url = new URL(trimmed);
     const state = url.searchParams.get("state");
-    return state && state.length > 0 ? state : null;
+    if (state && state.length > 0) return state;
+  } catch { /* fall through */ }
+  const tokens = extractSpotifyTokens(trimmed);
+  return tokens?.state ?? null;
+}
+
+function decodeBase64UrlUtf8(b64url: string): string | null {
+  try {
+    const padded = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
+    if (typeof atob === "function") {
+      return decodeURIComponent(escape(atob(padded)));
+    }
+    return Buffer.from(padded, "base64").toString("utf8");
   } catch {
     return null;
   }
+}
+
+export function extractSpotifyTokens(input: string): {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  state: string | null;
+} | null {
+  const trimmed = typeof input === "string" ? input.trim() : "";
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+    const encoded = hashParams.get("spotify_tokens") ?? url.searchParams.get("spotify_tokens");
+    if (!encoded) return null;
+    const raw = decodeBase64UrlUtf8(encoded);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.access_token === "string" && parsed.access_token && typeof parsed?.refresh_token === "string" && parsed.refresh_token) {
+      return {
+        access_token: parsed.access_token,
+        refresh_token: parsed.refresh_token,
+        expires_in: Number(parsed.expires_in) > 0 ? Number(parsed.expires_in) : 3600,
+        state: typeof parsed.state === "string" && parsed.state ? parsed.state : url.searchParams.get("state"),
+      };
+    }
+  } catch {
+    // Not a token-bundle URL.
+  }
+  return null;
+}
+
+export function decodeSpotifyStatePkce(state: string | null | undefined): {
+  clientId: string;
+  verifier: string;
+} | null {
+  if (typeof state !== "string") return null;
+  const dot = state.indexOf(".");
+  if (dot <= 0) return null;
+  const raw = decodeBase64UrlUtf8(state.slice(dot + 1));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.c === "string" && parsed.c && typeof parsed?.v === "string" && parsed.v) {
+      return { clientId: parsed.c, verifier: parsed.v };
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 /**

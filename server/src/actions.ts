@@ -1708,8 +1708,11 @@ export const Actions = {
 
   completeSpotifySetup: defineAction({
     request: z.object({
-      code: z.string().trim().min(1).max(4096),
-      state: z.string().trim().min(1).max(200),
+      code: z.string().trim().max(4096).optional(),
+      state: z.string().trim().min(1).max(1000),
+      access_token: z.string().trim().min(1).max(4096).optional(),
+      refresh_token: z.string().trim().min(1).max(4096).optional(),
+      expires_in: z.number().int().positive().max(86400 * 30).optional(),
     }).strict(),
     response: z.object({
       ok: z.boolean(),
@@ -1724,7 +1727,16 @@ export const Actions = {
       try {
         const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
         const res = await pilotRequest(baseUrl, "/spotify/setup/complete",
-          { method: "POST", body: JSON.stringify({ code: args.code, state: args.state }) },
+          {
+            method: "POST",
+            body: JSON.stringify({
+              ...(args.code ? { code: args.code } : {}),
+              state: args.state,
+              ...(args.access_token ? { access_token: args.access_token } : {}),
+              ...(args.refresh_token ? { refresh_token: args.refresh_token } : {}),
+              ...(args.expires_in !== undefined ? { expires_in: args.expires_in } : {}),
+            }),
+          },
           z.object({ connected: z.boolean(), account_name: z.string().optional() }), 60_000);
         try {
           const db = ctx.db<typeof schema>();
@@ -1738,6 +1750,86 @@ export const Actions = {
         return { ok: true, connected: res.connected, account_name: res.account_name ?? null, error: null };
       } catch (error) {
         return { ok: false, connected: false, account_name: null, error: pilotRequestErrorText(error) };
+      }
+    },
+  }),
+
+  getSpotifyTokenRefreshParams: defineAction({
+    request: z.object({}),
+    response: z.object({
+      ok: z.boolean(),
+      connected: z.boolean(),
+      needs_refresh: z.boolean(),
+      client_id: z.string().nullable(),
+      refresh_token: z.string().nullable(),
+      expires_at: z.number().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, connected: false, needs_refresh: false, client_id: null, refresh_token: null, expires_at: null };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(
+          baseUrl,
+          "/spotify/token-refresh-params",
+          { method: "GET" },
+          z.object({
+            connected: z.boolean(),
+            needs_refresh: z.boolean(),
+            client_id: z.string().nullable().optional(),
+            refresh_token: z.string().nullable().optional(),
+            expires_at: z.number().nullable().optional(),
+          }),
+        );
+        return {
+          ok: true,
+          connected: res.connected,
+          needs_refresh: res.needs_refresh,
+          client_id: res.client_id ?? null,
+          refresh_token: res.refresh_token ?? null,
+          expires_at: res.expires_at ?? null,
+        };
+      } catch {
+        return { ok: false, connected: false, needs_refresh: false, client_id: null, refresh_token: null, expires_at: null };
+      }
+    },
+  }),
+
+  refreshSpotifyToken: defineAction({
+    request: z.object({
+      access_token: z.string().trim().min(1).max(4096),
+      refresh_token: z.string().trim().min(1).max(4096).optional(),
+      expires_in: z.number().int().positive().max(86400 * 30).optional(),
+    }).strict(),
+    response: z.object({
+      ok: z.boolean(),
+      expires_at: z.number().nullable(),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, expires_at: null, error: denied };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(
+          baseUrl,
+          "/spotify/token",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              access_token: args.access_token,
+              ...(args.refresh_token ? { refresh_token: args.refresh_token } : {}),
+              ...(args.expires_in !== undefined ? { expires_in: args.expires_in } : {}),
+            }),
+          },
+          z.object({ ok: z.boolean(), expires_at: z.number().optional() }),
+        );
+        ctx.invalidateQueries({ queryKey: ["spotify-status"] });
+        return { ok: res.ok, expires_at: res.expires_at ?? null, error: null };
+      } catch (error) {
+        return { ok: false, expires_at: null, error: pilotRequestErrorText(error) };
       }
     },
   }),

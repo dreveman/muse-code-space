@@ -245,3 +245,42 @@ test("disconnect deletes the config and status reports disconnected", async () =
     await assert.rejects(h.client.devices(), /not connected/);
   } finally { h.cleanup(); }
 });
+
+test("browser-supplied tokens complete setup and refresh without hitting accounts.spotify.com/api/token from the pilot", async () => {
+  const h = harness();
+  try {
+    const { state, code_verifier } = await h.client.startSetup(START);
+    assert.ok(typeof code_verifier === "string" && code_verifier.length >= 43);
+    h.state.apiHandler = async () => ({ status: 200, json: { display_name: "Browser User" } });
+
+    // No tokenResponses queued: any pilot call to accounts.spotify.com/api/token would throw.
+    const completed = await h.client.completeSetup({
+      state,
+      accessToken: "browser-at-1",
+      refreshToken: "browser-rt-1",
+      expiresIn: 3600,
+    });
+    assert.deepEqual(completed, { connected: true, account_name: "Browser User" });
+    assert.equal(h.calls.filter((c) => c.url.includes("/api/token")).length, 0);
+
+    const refreshBefore = h.client.tokenRefreshParams();
+    assert.equal(refreshBefore.connected, true);
+    assert.equal(refreshBefore.needs_refresh, false);
+    assert.equal(refreshBefore.client_id, "client-123");
+    assert.equal(refreshBefore.refresh_token, "browser-rt-1");
+
+    // Advance into the 5-minute browser refresh window.
+    h.setNow(1_700_000_000_000 + (3600 - 120) * 1000);
+    assert.equal(h.client.tokenRefreshParams().needs_refresh, true);
+
+    await h.client.updateTokens({
+      accessToken: "browser-at-2",
+      refreshToken: "browser-rt-2",
+      expiresIn: 3600,
+    });
+    assert.equal(h.client.tokenRefreshParams().needs_refresh, false);
+    assert.equal(h.client.tokenRefreshParams().refresh_token, "browser-rt-2");
+    assert.equal(h.calls.filter((c) => c.url.includes("/api/token")).length, 0);
+  } finally { h.cleanup(); }
+});
+
