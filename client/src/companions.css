@@ -790,6 +790,11 @@
 .spotify-setup-menu .repo-setup-identity small {
   white-space: normal;
 }
+.spotify-setup-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .spotify-setup-menu .repo-manage-field-label {
   flex: 0 0 72px;
 }

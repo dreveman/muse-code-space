@@ -107,12 +107,29 @@ export function SpotifySetupMenu({
 }) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
+  const uiStateQuery = useQuery({
+    queryKey: ["ui-state"],
+    queryFn: () => api.getUiState({}),
+    staleTime: Infinity,
+    retry: false,
+  });
   const connected = statusQuery.data?.connected === true;
-  const [clientId, setClientIdState] = useState(() => savedSetupClientId);
-  const [startedState, setStartedStateLocal] = useState<string | null>(() => savedStartedState);
+  const [clientId, setClientIdState] = useState(() => savedSetupClientId || uiStateQuery.data?.spotify_client_id || "");
+  const [startedState, setStartedStateLocal] = useState<string | null>(() => savedStartedState ?? uiStateQuery.data?.spotify_started_state ?? null);
+  useEffect(() => {
+    if (!clientId && uiStateQuery.data?.spotify_client_id) {
+      savedSetupClientId = uiStateQuery.data.spotify_client_id;
+      setClientIdState(uiStateQuery.data.spotify_client_id);
+    }
+    if (!startedState && uiStateQuery.data?.spotify_started_state) {
+      savedStartedState = uiStateQuery.data.spotify_started_state;
+      setStartedStateLocal(uiStateQuery.data.spotify_started_state);
+    }
+  }, [uiStateQuery.data, clientId, startedState]);
   const setClientId = (next: string) => {
     savedSetupClientId = next;
     setClientIdState(next);
+    void api.setUiState({ spotify_client_id: next }).catch(() => undefined);
   };
   const setStartedState = (next: string | null) => {
     savedStartedState = next;
@@ -189,10 +206,10 @@ export function SpotifySetupMenu({
         return;
       }
       setStartedState(res.state);
+      await queryClient.invalidateQueries({ queryKey: ["ui-state"] });
       if (!res.auth_url.startsWith("#")) {
         if (shouldOpenSpotifyAuthInNewTab(window, detectIosDevice())) {
-          const opened = window.open(res.auth_url, "_blank", "noopener,noreferrer");
-          if (!opened) window.location.assign(res.auth_url);
+          window.open(res.auth_url, "_blank");
         } else {
           window.location.assign(res.auth_url);
         }
@@ -205,12 +222,12 @@ export function SpotifySetupMenu({
   const completeFromPaste = async () => {
     const code = extractSpotifyAuthCode(pasteValue);
     if (!code) {
-      setError("Paste the full URL Spotify sent you back to (it contains a code), or the code itself.");
+      setError("Paste the full Completion URL from Spotify (it contains a code), or the code itself.");
       return;
     }
     const stateToUse = extractSpotifyAuthState(pasteValue) ?? startedState;
     if (!stateToUse) {
-      setError("Click Connect first, approve in Spotify, then paste the redirect URL here.");
+      setError("Click Connect first, approve in Spotify, then paste the Completion URL here.");
       return;
     }
     setBusy(true);
@@ -222,7 +239,10 @@ export function SpotifySetupMenu({
         return;
       }
       setStartedState(null);
-      await queryClient.invalidateQueries({ queryKey: ["spotify-status"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["spotify-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["ui-state"] }),
+      ]);
       onClose();
     } finally {
       setBusy(false);
@@ -275,7 +295,18 @@ export function SpotifySetupMenu({
             <span className="repo-setup-status" aria-hidden="true">1</span>
             <div className="repo-setup-identity">
               <strong>Spotify Developer app</strong>
-              <small>Create an app at developer.spotify.com/dashboard and add this Redirect URI</small>
+              <small>
+                Create an app at{" "}
+                <a
+                  href="https://developer.spotify.com/dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="spotify-setup-link"
+                >
+                  developer.spotify.com/dashboard
+                </a>{" "}
+                and add this Redirect URI
+              </small>
             </div>
           </li>
           <li className="repo-setup-form">
@@ -336,10 +367,10 @@ export function SpotifySetupMenu({
             {startedState && (
               <>
                 <label className="repo-setup-field">
-                  <span>Redirect URL</span>
+                  <span>Completion URL</span>
                   <input
                     type="text"
-                    aria-label="Spotify redirect URL or code"
+                    aria-label="Spotify completion URL or code"
                     value={pasteValue}
                     placeholder="https://…/?code=…"
                     autoComplete="off"
@@ -360,7 +391,7 @@ export function SpotifySetupMenu({
                   disabled={busy || !pasteValue.trim()}
                   onClick={() => void completeFromPaste()}
                 >
-                  Complete with pasted code
+                  Complete with URL
                 </button>
               </>
             )}
@@ -392,8 +423,31 @@ export function SpotifyIcon() {
 export function CompanionMusicSection({ companion }: { companion: MusicCompanion }) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
+  const uiStateQuery = useQuery({
+    queryKey: ["ui-state"],
+    queryFn: () => api.getUiState({}),
+    staleTime: Infinity,
+    retry: false,
+  });
   const { tunedIn, isPlaying } = useCompanionTunedState(companion.music);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpenState] = useState(false);
+  const setMenuOpen = (next: boolean | ((prev: boolean) => boolean)) => {
+    setMenuOpenState((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      void api.setUiState({ spotify_setup_open: resolved })
+        .then(() => queryClient.invalidateQueries({ queryKey: ["ui-state"] }))
+        .catch(() => undefined);
+      return resolved;
+    });
+  };
+  const restoredOpenRef = useRef(false);
+  useEffect(() => {
+    if (restoredOpenRef.current || !uiStateQuery.data) return;
+    restoredOpenRef.current = true;
+    if (!statusQuery.data?.connected && (uiStateQuery.data.spotify_setup_open || uiStateQuery.data.spotify_started_state)) {
+      setMenuOpenState(true);
+    }
+  }, [uiStateQuery.data, statusQuery.data?.connected]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);

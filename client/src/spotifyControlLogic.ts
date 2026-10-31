@@ -10,16 +10,14 @@
 // redirect. Spotify only exchanges the code for tokens when presented with
 // the matching verifier, so a bare code from a log is useless. Pending
 // setups are single-use and expire.
-export const DEFAULT_SPOTIFY_REDIRECT_URI = "https://github.com/dreveman/muse-code-space";
+export const DEFAULT_SPOTIFY_REDIRECT_URI = "https://dreveman.github.io/muse-code-space/spotify/";
 
 /**
  * The exact redirect URI to register in the Spotify Developer app.
  * When the Space is loaded inside a non-HTTP custom WebView scheme (such as
- * `hatch-space://...` in the iOS app), falls back to a real HTTPS URL
- * (`https://github.com/dreveman/muse-code-space`) so Spotify accepts it,
- * mobile Safari loads a real page without a connection error, and the
- * redirected `?code=...&state=...` URL in Safari's address bar can be copied
- * into Step 2.
+ * `hatch-space://...` in the iOS app), falls back to the hosted HTTPS callback
+ * page (`https://dreveman.github.io/muse-code-space/spotify/`) which copies the
+ * Completion URL to the clipboard and guides the user back to Code Space.
  */
 export function spotifyRedirectUri(location: { origin: string; pathname: string; href?: string }): string {
   if (typeof location.origin === "string" && /^https?:\/\//i.test(location.origin)) {

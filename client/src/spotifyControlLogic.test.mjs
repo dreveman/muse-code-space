@@ -22,11 +22,11 @@ test("spotifyRedirectUri is the exact app origin + path to register in the Spoti
   assert.equal(spotifyRedirectUri({ origin: "http://127.0.0.1:4173", pathname: "" }), "http://127.0.0.1:4173/");
   assert.equal(
     spotifyRedirectUri({ origin: "hatch-space://12344", pathname: "/", href: "hatch-space://12344/" }),
-    "https://github.com/dreveman/muse-code-space",
+    "https://dreveman.github.io/muse-code-space/spotify/",
   );
   assert.equal(
     spotifyRedirectUri({ origin: "null", pathname: "", href: "hatch-space://12344/?viewer_assertion=tok#top" }),
-    "https://github.com/dreveman/muse-code-space",
+    "https://dreveman.github.io/muse-code-space/spotify/",
   );
 });
 
@@ -86,4 +86,12 @@ test("music section renders genre and playlist, and Tune in needs a playlist and
   assert.ok(!music.includes("localStorage"), "no client-side token/playback storage");
   const comp = readFileSync(new URL("./Companions.tsx", import.meta.url), "utf8");
   assert.ok(comp.includes("CompanionMusicSection"), "the companion card details render the music section");
+  assert.ok(music.includes('href="https://developer.spotify.com/dashboard"'), "developer.spotify.com/dashboard is a clickable link");
+  assert.ok(music.includes("<span>Completion URL</span>"), "second field is labelled Completion URL");
+  assert.ok(music.includes("Complete with URL"), "completion button is labelled Complete with URL");
+  assert.ok(music.includes('window.open(res.auth_url, "_blank")'), "opens a single Safari tab without duplicate location.assign after noopener");
+  assert.ok(app.includes("getUiState") && app.includes("setUiState"), "App persists and restores UI state via server actions");
+  const landing = readFileSync(new URL("../../docs/spotify/index.html", import.meta.url), "utf8");
+  assert.ok(landing.includes("Copy Completion URL"), "callback landing page offers Copy Completion URL button");
+  assert.ok(landing.includes("Complete with URL"), "callback landing page explains Complete with URL step");
 });

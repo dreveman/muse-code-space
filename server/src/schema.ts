@@ -202,3 +202,22 @@ export const outputEvents = sqliteTable("output_events", {
   startedAt: integer("started_at", { mode: "timestamp_ms" }),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 });
+
+// Durable UI navigation and setup state (singleton row id = "current") so
+// switching out of the iOS WebView (e.g. to Safari for Spotify OAuth or to
+// the Muse assistant) and returning restores the exact card/session/dialog.
+export const uiState = sqliteTable("ui_state", {
+  id: text("id").primaryKey(),
+  selectedSessionId: text("selected_session_id"),
+  selectedCompanionId: text("selected_companion_id"),
+  mobileListOpen: integer("mobile_list_open", { mode: "boolean" }).notNull().default(true),
+  detailsOpen: integer("details_open", { mode: "boolean" }).notNull().default(false),
+  soulOpen: integer("soul_open", { mode: "boolean" }).notNull().default(false),
+  spotifySetupOpen: integer("spotify_setup_open", { mode: "boolean" }).notNull().default(false),
+  spotifyClientId: text("spotify_client_id"),
+  spotifyStartedState: text("spotify_started_state"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
