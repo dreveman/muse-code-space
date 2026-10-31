@@ -15,10 +15,8 @@ import { companionForName } from "./companionRoster";
 import type { CompanionMusic } from "../../server/src/companionMusic";
 import {
   DEFAULT_SPOTIFY_REDIRECT_URI,
-  decodeSpotifyStatePkce,
   extractSpotifyAuthCode,
   extractSpotifyAuthState,
-  extractSpotifyTokens,
   isCompanionBusyInSessions,
   shouldOpenSpotifyAuthInNewTab,
   spotifyRedirectUri,
@@ -33,6 +31,11 @@ type SpotifyTokenResponse = {
 
 let tokenBridgeIframe: HTMLIFrameElement | null = null;
 let tokenBridgeReadyPromise: Promise<Window> | null = null;
+
+// The token bridge iframe always loads the Spotify callback page, so pin
+// postMessage traffic to its origin instead of "*". The bridge carries the
+// Spotify refresh token (and, during setup, the auth code + PKCE verifier).
+const SPOTIFY_BRIDGE_ORIGIN = new URL(DEFAULT_SPOTIFY_REDIRECT_URI).origin;
 
 function ensureTokenBridgeWindow(): Promise<Window> {
   if (typeof document === "undefined") {
@@ -104,6 +107,7 @@ export async function requestSpotifyTokenInBrowser(params: Record<string, string
       window.removeEventListener("message", onMessage);
     };
     const onMessage = (event: MessageEvent) => {
+      if (event.origin !== SPOTIFY_BRIDGE_ORIGIN) return;
       const data = event.data;
       if (!data || typeof data !== "object" || data.type !== "muse-spotify-token-response" || data.requestId !== requestId) {
         return;
@@ -128,7 +132,7 @@ export async function requestSpotifyTokenInBrowser(params: Record<string, string
       reject(new Error(`Spotify: ${msg}`));
     };
     window.addEventListener("message", onMessage);
-    bridgeWin.postMessage({ type: "muse-spotify-token-request", requestId, params }, "*");
+    bridgeWin.postMessage({ type: "muse-spotify-token-request", requestId, params }, SPOTIFY_BRIDGE_ORIGIN);
   });
 }
 
@@ -171,28 +175,21 @@ export async function completeSpotifyOAuthInBrowser({
   state: string;
   redirectUri: string;
 }) {
-  const preExchanged = pasteOrUrl ? extractSpotifyTokens(pasteOrUrl) : null;
-  if (preExchanged) {
-    return api.completeSpotifySetup({
-      state: preExchanged.state ?? state,
-      access_token: preExchanged.access_token,
-      refresh_token: preExchanged.refresh_token,
-      expires_in: preExchanged.expires_in,
-    });
-  }
   const cleanCode = code ?? (pasteOrUrl ? extractSpotifyAuthCode(pasteOrUrl) : null);
   if (!cleanCode) {
     return { ok: false, connected: false, account_name: null, error: "Paste the full Completion URL from Spotify (it contains a code), or the code itself." };
   }
   if (!state.startsWith("fake-spotify-")) {
-    const pkce = decodeSpotifyStatePkce(state);
-    if (pkce) {
+    // The PKCE verifier is held by the pilot (never in the URL); fetch it
+    // over the authenticated action channel using the opaque state.
+    const params = await api.getSpotifySetupParams({ state }).catch(() => null);
+    if (params?.ok && params.code_verifier && params.client_id) {
       const exchanged = await requestSpotifyTokenInBrowser({
         grant_type: "authorization_code",
         code: cleanCode,
-        redirect_uri: redirectUri,
-        client_id: pkce.clientId,
-        code_verifier: pkce.verifier,
+        redirect_uri: params.redirect_uri ?? redirectUri,
+        client_id: params.client_id,
+        code_verifier: params.code_verifier,
       });
       if (exchanged.access_token && exchanged.refresh_token) {
         return api.completeSpotifySetup({
@@ -412,13 +409,12 @@ export function SpotifySetupMenu({
   };
 
   const completeFromPaste = async () => {
-    const preExchanged = extractSpotifyTokens(pasteValue);
-    const code = preExchanged ? null : extractSpotifyAuthCode(pasteValue);
-    if (!preExchanged && !code) {
+    const code = extractSpotifyAuthCode(pasteValue);
+    if (!code) {
       setError("Paste the full Completion URL from Spotify (it contains a code), or the code itself.");
       return;
     }
-    const stateToUse = preExchanged?.state ?? extractSpotifyAuthState(pasteValue) ?? startedState;
+    const stateToUse = extractSpotifyAuthState(pasteValue) ?? startedState;
     if (!stateToUse) {
       setError("Click Connect first, approve in Spotify, then paste the Completion URL here.");
       return;

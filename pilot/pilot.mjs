@@ -2427,6 +2427,9 @@ const server = createServer(async (req, res) => {
         if (path === "/spotify/token-refresh-params" && req.method === "GET") {
           return json(res, 200, spotify.tokenRefreshParams());
         }
+        if (path === "/spotify/setup-params" && req.method === "GET") {
+          return json(res, 200, spotify.setupParams({ state: url.searchParams.get("state") }));
+        }
         if (path === "/spotify/token" && req.method === "POST") {
           return json(res, 200, await spotify.updateTokens({
             accessToken: body.access_token,
