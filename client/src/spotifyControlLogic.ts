@@ -2,14 +2,16 @@
 // Playback state is global to the Spotify account and is never stored
 // client-side; these helpers only shape what the components render.
 
-export const DEFAULT_SPOTIFY_REDIRECT_URI = "http://127.0.0.1:4173/";
+export const DEFAULT_SPOTIFY_REDIRECT_URI = "https://github.com/dreveman/muse-code-space";
 
 /**
  * The exact redirect URI to register in the Spotify Developer app.
  * When the Space is loaded inside a non-HTTP custom WebView scheme (such as
- * `hatch-space://...` in the iOS app), falls back to the standard loopback
- * HTTP redirect URI with an explicit port (`http://127.0.0.1:4173/`) as
- * required by Spotify's loopback redirect URI validator.
+ * `hatch-space://...` in the iOS app), falls back to a real HTTPS URL
+ * (`https://github.com/dreveman/muse-code-space`) so Spotify accepts it,
+ * mobile Safari loads a real page without a connection error, and the
+ * redirected `?code=...&state=...` URL in Safari's address bar can be copied
+ * into Step 2.
  */
 export function spotifyRedirectUri(location: { origin: string; pathname: string; href?: string }): string {
   if (typeof location.origin === "string" && /^https?:\/\//i.test(location.origin)) {
