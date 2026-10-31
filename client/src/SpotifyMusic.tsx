@@ -129,7 +129,6 @@ export function SpotifySetupMenu({
   const setClientId = (next: string) => {
     savedSetupClientId = next;
     setClientIdState(next);
-    void api.setUiState({ spotify_client_id: next }).catch(() => undefined);
   };
   const setStartedState = (next: string | null) => {
     savedStartedState = next;
@@ -200,7 +199,13 @@ export function SpotifySetupMenu({
     setBusy(true);
     setError(null);
     try {
-      const res = await api.startSpotifySetup({ client_id: clientId, redirect_uri: redirectUri });
+      let res: Awaited<ReturnType<typeof api.startSpotifySetup>>;
+      try {
+        res = await api.startSpotifySetup({ client_id: clientId, redirect_uri: redirectUri });
+      } catch {
+        await new Promise((r) => setTimeout(r, 700));
+        res = await api.startSpotifySetup({ client_id: clientId, redirect_uri: redirectUri });
+      }
       if (!res.ok || !res.auth_url) {
         setError(res.error ?? "Could not start the Spotify connection.");
         return;
@@ -214,6 +219,8 @@ export function SpotifySetupMenu({
           window.location.assign(res.auth_url);
         }
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not start the Spotify connection. Try again.");
     } finally {
       setBusy(false);
     }
@@ -233,7 +240,15 @@ export function SpotifySetupMenu({
     setBusy(true);
     setError(null);
     try {
-      const res = await api.completeSpotifySetup({ code, state: stateToUse });
+      let res: Awaited<ReturnType<typeof api.completeSpotifySetup>>;
+      try {
+        res = await api.completeSpotifySetup({ code, state: stateToUse });
+      } catch {
+        // After switching back from Safari on iOS, the Space auth session may
+        // still be refreshing; wait briefly and retry once automatically.
+        await new Promise((r) => setTimeout(r, 700));
+        res = await api.completeSpotifySetup({ code, state: stateToUse });
+      }
       if (!res.ok) {
         setError(res.error ?? "Spotify did not accept that code.");
         return;
@@ -244,6 +259,8 @@ export function SpotifySetupMenu({
         queryClient.invalidateQueries({ queryKey: ["ui-state"] }),
       ]);
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Session was still reconnecting — tap Complete with URL again.");
     } finally {
       setBusy(false);
     }
@@ -260,6 +277,8 @@ export function SpotifySetupMenu({
       }
       await queryClient.invalidateQueries({ queryKey: ["spotify-status"] });
       onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not disconnect Spotify.");
     } finally {
       setBusy(false);
     }
