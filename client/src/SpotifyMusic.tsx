@@ -329,13 +329,40 @@ export function SpotifySetupMenu({
       if (!trigger) return;
       const rect = trigger.getBoundingClientRect();
       const margin = 12;
-      const viewportW = window.innerWidth;
+      const vv = window.visualViewport;
+      const viewportW = vv ? vv.width : window.innerWidth;
       const viewportH = window.innerHeight;
+      const visibleTop = vv ? vv.offsetTop : 0;
+      const visibleHeight = vv ? vv.height : viewportH;
+      const visibleBottom = visibleTop + visibleHeight;
       const width = Math.min(360, Math.max(220, viewportW - margin * 2));
       const maxLeft = Math.max(margin, viewportW - margin - width);
       const left = Math.min(Math.max(rect.right - width, margin), maxLeft);
-      const spaceAbove = rect.top - margin - 6;
-      const spaceBelow = viewportH - rect.bottom - margin - 6;
+      const inputFocused = Boolean(
+        menuRef.current &&
+        document.activeElement instanceof HTMLElement &&
+        menuRef.current.contains(document.activeElement) &&
+        document.activeElement.tagName === "INPUT",
+      );
+      const keyboardOpen = inputFocused || visibleHeight < viewportH - 80;
+      if (keyboardOpen) {
+        // Keep the bottom of the dialog (where the Client ID and Completion URL
+        // inputs and submit buttons live) pinned above the virtual keyboard,
+        // allowing the top of the dialog to extend above the top of the screen.
+        setMenuStyle({
+          position: "fixed",
+          left: `${left}px`,
+          bottom: `${Math.max(margin, viewportH - visibleBottom + margin)}px`,
+          top: "auto",
+          right: "auto",
+          width: `${width}px`,
+          maxHeight: "none",
+          zIndex: 10000,
+        });
+        return;
+      }
+      const spaceAbove = rect.top - visibleTop - margin - 6;
+      const spaceBelow = visibleBottom - rect.bottom - margin - 6;
       const openAbove = spaceAbove >= 240 || spaceAbove >= spaceBelow;
       if (openAbove) {
         setMenuStyle({
@@ -352,7 +379,7 @@ export function SpotifySetupMenu({
         setMenuStyle({
           position: "fixed",
           left: `${left}px`,
-          top: `${Math.max(margin, rect.bottom + 6)}px`,
+          top: `${Math.max(visibleTop + margin, rect.bottom + 6)}px`,
           bottom: "auto",
           right: "auto",
           width: `${width}px`,
@@ -362,13 +389,22 @@ export function SpotifySetupMenu({
       }
     };
     updatePosition();
+    const vv = window.visualViewport;
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("focusin", updatePosition);
+    document.addEventListener("focusout", updatePosition);
+    vv?.addEventListener("resize", updatePosition);
+    vv?.addEventListener("scroll", updatePosition);
     return () => {
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("focusin", updatePosition);
+      document.removeEventListener("focusout", updatePosition);
+      vv?.removeEventListener("resize", updatePosition);
+      vv?.removeEventListener("scroll", updatePosition);
     };
-  }, [triggerRef, startedState, error]);
+  }, [triggerRef, menuRef, startedState, error]);
 
   const copyRedirectUri = async () => {
     if (await copyTextToClipboard(redirectUri)) {
@@ -686,6 +722,10 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
     };
   }, [menuOpen]);
 
+  useEffect(() => {
+    if (tunedIn && isPlaying) setError(null);
+  }, [tunedIn, isPlaying]);
+
   if (!music) return null;
 
   const connected = statusQuery.data?.connected === true;
@@ -696,10 +736,31 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
       setStoppedContextUri(null);
       const res = await runWithBrowserTokenRefresh(() => api.playCompanionMusic({ companion_id: companion.id }));
       if (!res.ok) {
-        setError(res.error ?? "Spotify could not start that playlist.");
+        const raw = res.error ?? "";
+        const friendly = /no active.*device|device.*not found|player command failed/i.test(raw)
+          ? "Spotify isn’t open on any device. Open the Spotify app on your phone or computer, play a song once to wake it up, then tap Tune in."
+          : raw || "Spotify could not start that playlist.";
+        setError(friendly);
         return;
       }
+      // Verify that a Spotify device actually started playing (dormant devices
+      // can accept PUT /play without waking up when the Spotify app is closed).
+      let started = false;
+      for (const delayMs of [350, 900]) {
+        await new Promise((r) => setTimeout(r, delayMs));
+        const check = await api.getSpotifyPlayback({}).catch(() => null);
+        if (check?.ok && check.playback) {
+          queryClient.setQueryData(["spotify-playback"], check);
+          if (check.playback.is_playing || check.playback.context_uri === music.playlist?.uri) {
+            started = true;
+            break;
+          }
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ["spotify-playback"] });
+      if (!started) {
+        setError("Spotify didn’t start playing. Make sure the Spotify app is open on your phone or computer (play a song once if it was asleep), then tap Tune in again.");
+      }
     } finally {
       setBusy(false);
     }
@@ -750,6 +811,115 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
         />
       )}
     </section>
+  );
+}
+
+export function WelcomeSpotifyCard() {
+  const queryClient = useQueryClient();
+  const statusQuery = useSpotifyStatus();
+  const connected = statusQuery.data?.connected === true;
+  const accountName = statusQuery.data?.account_name ?? null;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (cardRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const disconnect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.disconnectSpotify({});
+      if (!res.ok) {
+        setError(res.error ?? "Could not disconnect Spotify.");
+        return;
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["spotify-status"] }),
+        queryClient.invalidateQueries({ queryKey: ["spotify-playback"] }),
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not disconnect Spotify.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div ref={cardRef} className="welcome-callout welcome-spotify-callout">
+      <div className="welcome-callout-body">
+        <h3>Tune in to your companion’s playlist</h3>
+        <p>
+          Listen along on Spotify while your companion works — volume adjusts automatically as they work.
+        </p>
+        <div className="welcome-callout-actions welcome-spotify-actions">
+          {connected ? (
+            <div className="welcome-spotify-connected-row">
+              <span className="welcome-spotify-connected-pill">
+                <SpotifyIcon />
+                <span>Connected to Spotify{accountName ? ` · ${accountName}` : ""}</span>
+              </span>
+              <button
+                type="button"
+                className="welcome-spotify-disconnect-btn"
+                disabled={busy}
+                onClick={() => void disconnect()}
+                aria-label="Disconnect Spotify"
+                title="Disconnect Spotify"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                  <polyline points="16 17 21 12 16 7" />
+                  <line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <button
+              ref={triggerRef}
+              type="button"
+              className="companion-music-connect welcome-spotify-connect-btn"
+              aria-haspopup="dialog"
+              aria-expanded={menuOpen}
+              aria-controls={menuOpen ? menuId : undefined}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <SpotifyIcon /> Connect Spotify
+            </button>
+          )}
+        </div>
+        {error && <span className="companion-music-error" role="alert">{error}</span>}
+      </div>
+      {menuOpen && (
+        <SpotifySetupMenu
+          id={menuId}
+          triggerRef={triggerRef}
+          menuRef={menuRef}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 

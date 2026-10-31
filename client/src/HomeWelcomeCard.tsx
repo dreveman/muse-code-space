@@ -6,6 +6,7 @@ import { companions } from "./Companions";
 import { PreviewTabIcon } from "./PreviewPanel";
 import { sessionTaskTitle } from "./sessionList";
 import { SmartLogIcon } from "./SmartLogPanel";
+import { WelcomeSpotifyCard } from "./SpotifyMusic";
 
 type Session = ApiResponse<typeof api, "listSessions">["sessions"][number];
 
@@ -264,7 +265,7 @@ export function HomeWelcomeCard({
   const [hovered, setHovered] = useState(false);
   const [animCompanionIdx, setAnimCompanionIdx] = useState(1);
 
-  const recentSessions = sessions.slice(0, 5);
+  const recentSessions = sessions.filter((session) => !session.archived).slice(0, 5);
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
   const resolvedAssistantName = assistantName?.trim() || "Jolly";
@@ -369,6 +370,8 @@ export function HomeWelcomeCard({
               </div>
             </div>
           </div>
+
+          <WelcomeSpotifyCard />
         </div>
 
         <aside

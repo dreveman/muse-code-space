@@ -108,4 +108,20 @@ test("music section renders genre and playlist, and Tune in needs a playlist and
   const logic = readFileSync(new URL("./spotifyControlLogic.ts", import.meta.url), "utf8");
   assert.ok(!logic.includes("decodeSpotifyStatePkce"), "no state-embedded PKCE decoder remains");
   assert.ok(!logic.includes("extractSpotifyTokens"), "no token-bundle URL parser remains");
+
+  assert.ok(music.includes("WelcomeSpotifyCard"), "WelcomeSpotifyCard is exported from SpotifyMusic.tsx");
+  assert.ok(music.includes("Tune in to your companion’s playlist"), "Welcome card includes Spotify playlist heading");
+  assert.ok(music.includes("Connected to Spotify"), "Welcome card shows Connected to Spotify state");
+  assert.ok(music.includes('aria-label="Disconnect Spotify"'), "Welcome card includes Disconnect Spotify button");
+  assert.ok(music.includes("window.visualViewport"), "SpotifySetupMenu pins input area above virtual keyboard via visualViewport");
+  assert.ok(music.includes("Spotify didn’t start playing"), "tuneIn surfaces a helpful error if no Spotify device started playing");
+
+  const welcome = readFileSync(new URL("./HomeWelcomeCard.tsx", import.meta.url), "utf8");
+  assert.ok(welcome.includes("<WelcomeSpotifyCard />"), "HomeWelcomeCard renders WelcomeSpotifyCard");
+  assert.ok(welcome.includes("sessions.filter((session) => !session.archived).slice(0, 5)"), "HomeWelcomeCard only shows active (non-archived) conversations");
+
+  const themeCss = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
+  assert.ok(themeCss.includes("opacity 380ms cubic-bezier(0.22, 1, 0.36, 1)"), "transcript companion card uses slower 380ms animation");
+  const closeBtnIdx = themeCss.indexOf(".transcript-companion-close-btn {");
+  assert.ok(closeBtnIdx >= 0 && themeCss.slice(closeBtnIdx, closeBtnIdx + 200).includes("right: 12px;"), "close button is positioned on the right side of the card");
 });
