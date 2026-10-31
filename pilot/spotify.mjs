@@ -470,7 +470,18 @@ export function createSpotifyClient(deps = {}) {
         throw new Error("A valid Spotify context URI is required to start playback.");
       }
       const query = typeof deviceId === "string" && deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
-      await api("PUT", `/v1/me/player/play${query}`, { context_uri: contextUri });
+      try {
+        await api("PUT", `/v1/me/player/play${query}`, { context_uri: contextUri });
+      } catch (err) {
+        if (deviceId) throw err;
+        const list = await this.devices().catch(() => []);
+        const target =
+          list.find((d) => d.is_active) ??
+          list.find((d) => typeof d.type === "string" && d.type.toLowerCase() === "smartphone") ??
+          list[0];
+        if (!target) throw err;
+        await api("PUT", `/v1/me/player/play?device_id=${encodeURIComponent(target.id)}`, { context_uri: contextUri });
+      }
       return { ok: true };
     },
 
@@ -481,7 +492,18 @@ export function createSpotifyClient(deps = {}) {
 
     async resume({ deviceId } = {}) {
       const query = typeof deviceId === "string" && deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : "";
-      await api("PUT", `/v1/me/player/play${query}`);
+      try {
+        await api("PUT", `/v1/me/player/play${query}`);
+      } catch (err) {
+        if (deviceId) throw err;
+        const list = await this.devices().catch(() => []);
+        const target =
+          list.find((d) => d.is_active) ??
+          list.find((d) => typeof d.type === "string" && d.type.toLowerCase() === "smartphone") ??
+          list[0];
+        if (!target) throw err;
+        await api("PUT", `/v1/me/player/play?device_id=${encodeURIComponent(target.id)}`);
+      }
       return { ok: true };
     },
 

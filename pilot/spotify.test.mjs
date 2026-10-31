@@ -192,6 +192,44 @@ test("volume is validated to 0-100 before any Spotify call", async () => {
   } finally { h.cleanup(); }
 });
 
+test("play falls back to an available smartphone device when no device is currently active", async () => {
+  const h = harness();
+  try {
+    const { state } = await h.client.startSetup(START);
+    h.state.tokenResponses.push({ status: 200, json: { access_token: "at", refresh_token: "rt", expires_in: 3600 } });
+    await h.client.completeSetup({ code: "c", state });
+
+    const playUrls = [];
+    h.state.apiHandler = async (method, url) => {
+      if (url.endsWith("/v1/me/player/play")) {
+        playUrls.push(url);
+        return { status: 404, json: { error: { message: "Player command failed: No active device found" } } };
+      }
+      if (url.endsWith("/v1/me/player/devices")) {
+        return {
+          status: 200,
+          json: {
+            devices: [
+              { id: "mac-1", name: "MacBook", type: "Computer", is_active: false, volume_percent: 50 },
+              { id: "iphone-1", name: "iPhone", type: "Smartphone", is_active: false, volume_percent: 60 },
+            ],
+          },
+        };
+      }
+      if (url.includes("/v1/me/player/play?device_id=")) {
+        playUrls.push(url);
+        return { status: 204, json: null };
+      }
+      return { status: 204, json: null };
+    };
+
+    const res = await h.client.play({ contextUri: "spotify:playlist:37i9dQZF1DX8Uebhn9wzrS" });
+    assert.deepEqual(res, { ok: true });
+    assert.equal(playUrls.length, 2);
+    assert.ok(playUrls[1].endsWith("?device_id=iphone-1"), "prefers Smartphone device when none is active");
+  } finally { h.cleanup(); }
+});
+
 test("disconnect deletes the config and status reports disconnected", async () => {
   const h = harness();
   try {
