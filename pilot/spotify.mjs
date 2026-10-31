@@ -435,9 +435,11 @@ export function createSpotifyClient(deps = {}) {
       prunePending();
       const verifier = Buffer.from(randomBytes(32)).toString("base64url");
       const challenge = createHash("sha256").update(verifier).digest("base64url");
-      const nonce = Buffer.from(randomBytes(16)).toString("base64url");
-      const pkceMeta = Buffer.from(JSON.stringify({ c: cleanClientId, v: verifier })).toString("base64url");
-      const state = `${nonce}.${pkceMeta}`;
+      // State is an opaque nonce. The PKCE verifier is held only in
+      // pendingSetups (memory + disk) and fetched by the browser over the
+      // authenticated action channel — it never travels in the
+      // authorize/redirect URLs.
+      const state = Buffer.from(randomBytes(16)).toString("base64url");
       pendingSetups.set(state, {
         verifier,
         clientId: cleanClientId,
@@ -514,6 +516,22 @@ export function createSpotifyClient(deps = {}) {
         client_id: config.client_id,
         refresh_token: config.refresh_token,
         expires_at: active ? active.expiresAt : null,
+      };
+    },
+
+    // Read-only lookup of a pending OAuth setup's PKCE parameters, for the
+    // browser to complete the code exchange after the redirect round-trip.
+    // The pending entry is consumed only by completeSetup.
+    setupParams({ state } = {}) {
+      prunePending();
+      const cleanState = typeof state === "string" ? state.trim() : "";
+      const pending = cleanState ? pendingSetups.get(cleanState) : null;
+      if (!pending) return { ok: false, client_id: null, code_verifier: null, redirect_uri: null };
+      return {
+        ok: true,
+        client_id: pending.clientId,
+        code_verifier: pending.verifier,
+        redirect_uri: pending.redirectUri,
       };
     },
 

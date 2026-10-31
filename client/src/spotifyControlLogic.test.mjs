@@ -3,11 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  decodeSpotifyStatePkce,
   deriveSpotifyControlState,
   extractSpotifyAuthCode,
   extractSpotifyAuthState,
-  extractSpotifyTokens,
   isCompanionBusyInSessions,
   shouldOpenSpotifyAuthInNewTab,
   SPOTIFY_BUSY_VOLUME,
@@ -98,21 +96,16 @@ test("music section renders genre and playlist, and Tune in needs a playlist and
   assert.ok(landing.includes("Complete with URL"), "callback landing page explains Complete with URL step");
   assert.ok(landing.includes("https://accounts.spotify.com/api/token"), "callback landing page exchanges code for tokens in the browser");
 
-  const meta = Buffer.from(JSON.stringify({ c: "client-abc", v: "verifier-xyz" })).toString("base64url");
-  const state = `nonce123.${meta}`;
-  assert.deepEqual(decodeSpotifyStatePkce(state), { clientId: "client-abc", verifier: "verifier-xyz" });
-
-  const tokenBundle = Buffer.from(JSON.stringify({
-    access_token: "at-99",
-    refresh_token: "rt-99",
-    expires_in: 3600,
-    state,
-  })).toString("base64url");
-  const completionUrl = `https://dreveman.github.io/muse-code-space/spotify/?state=${encodeURIComponent(state)}#spotify_tokens=${tokenBundle}`;
-  assert.deepEqual(extractSpotifyTokens(completionUrl), {
-    access_token: "at-99",
-    refresh_token: "rt-99",
-    expires_in: 3600,
-    state,
-  });
+  // Secrets never travel in URLs or wildcard postMessages: the PKCE verifier
+  // is held by the pilot and fetched over the authenticated action channel,
+  // and the token bridge is pinned to the callback page origin.
+  assert.ok(!landing.includes("decodeStatePkce"), "callback page never decodes PKCE from state");
+  assert.ok(!landing.includes("spotify_tokens"), "no token bundles in URLs");
+  assert.ok(!landing.includes("code_verifier"), "callback page never sees the PKCE verifier");
+  assert.ok(music.includes("SPOTIFY_BRIDGE_ORIGIN"), "token bridge pins the callback page origin");
+  assert.ok(music.includes("event.origin !== SPOTIFY_BRIDGE_ORIGIN"), "bridge replies are origin-checked");
+  assert.ok(music.includes("getSpotifySetupParams"), "browser fetches the verifier via the setup-params action");
+  const logic = readFileSync(new URL("./spotifyControlLogic.ts", import.meta.url), "utf8");
+  assert.ok(!logic.includes("decodeSpotifyStatePkce"), "no state-embedded PKCE decoder remains");
+  assert.ok(!logic.includes("extractSpotifyTokens"), "no token-bundle URL parser remains");
 });

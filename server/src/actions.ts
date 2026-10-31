@@ -1796,6 +1796,43 @@ export const Actions = {
     },
   }),
 
+  getSpotifySetupParams: defineAction({
+    request: z.object({ state: z.string().trim().min(1).max(500) }),
+    response: z.object({
+      ok: z.boolean(),
+      client_id: z.string().nullable(),
+      code_verifier: z.string().nullable(),
+      redirect_uri: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const denied = terminalAccessError(ctx.viewer);
+      if (denied) return { ok: false, client_id: null, code_verifier: null, redirect_uri: null };
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const res = await pilotRequest(
+          baseUrl,
+          `/spotify/setup-params?state=${encodeURIComponent(args.state)}`,
+          { method: "GET" },
+          z.object({
+            ok: z.boolean(),
+            client_id: z.string().nullable().optional(),
+            code_verifier: z.string().nullable().optional(),
+            redirect_uri: z.string().nullable().optional(),
+          }),
+        );
+        return {
+          ok: res.ok,
+          client_id: res.client_id ?? null,
+          code_verifier: res.code_verifier ?? null,
+          redirect_uri: res.redirect_uri ?? null,
+        };
+      } catch {
+        return { ok: false, client_id: null, code_verifier: null, redirect_uri: null };
+      }
+    },
+  }),
+
   refreshSpotifyToken: defineAction({
     request: z.object({
       access_token: z.string().trim().min(1).max(4096),
