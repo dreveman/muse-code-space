@@ -871,7 +871,7 @@ export function WelcomeSpotifyCard() {
       <div className="welcome-callout-body">
         <h3>Tune in to your companion’s playlist</h3>
         <p>
-          Listen along on Spotify while your companion works — volume adjusts automatically as they work.
+          Volume lowers when they’re idle so you know when they finish or need you.
         </p>
         <div className="welcome-callout-actions welcome-spotify-actions">
           {connected ? (
