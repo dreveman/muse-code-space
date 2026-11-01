@@ -3959,6 +3959,13 @@ export function App() {
         return;
       }
       setScratchpadTargetStep((curr) => (curr?.userInputId === userInputId ? null : curr));
+      setRichStepAttachments((curr) => {
+        const next: Record<string, ScratchpadAttachmentPayload> = {};
+        for (const [k, v] of Object.entries(curr)) {
+          if (!k.startsWith(`${userInputId}:`)) next[k] = v;
+        }
+        return next;
+      });
       await Promise.all([pendingInputsQuery.refetch(), sessionsQuery.refetch(), detailQuery.refetch()]);
     } catch {
       setInputError({ userInputId, error: "Answer could not be sent. Try again." });
@@ -3977,6 +3984,14 @@ export function App() {
         setInputError({ userInputId, error: response.error ?? "Answer could not be skipped." });
         return;
       }
+      setScratchpadTargetStep((curr) => (curr?.userInputId === userInputId ? null : curr));
+      setRichStepAttachments((curr) => {
+        const next: Record<string, ScratchpadAttachmentPayload> = {};
+        for (const [k, v] of Object.entries(curr)) {
+          if (!k.startsWith(`${userInputId}:`)) next[k] = v;
+        }
+        return next;
+      });
       await Promise.all([pendingInputsQuery.refetch(), sessionsQuery.refetch(), detailQuery.refetch()]);
     } catch {
       setInputError({ userInputId, error: "Answer could not be skipped. Try again." });
@@ -4202,7 +4217,10 @@ export function App() {
       }
       if (isNarrow) setMobileSideOpen(true);
       if (existing) {
-        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+        const tabs = background
+          ? state.tabs.map((tab) => (tab.key === existing.key && tab.kind === "scratchpad" ? { ...tab, background } : tab))
+          : state.tabs;
+        return { ...current, [sessionId]: { ...state, tabs, activeKey: existing.key } };
       }
       const tab: SideTab = { key: "scratchpad", kind: "scratchpad", ...(background ? { background } : {}) };
       return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };

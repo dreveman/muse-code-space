@@ -41,6 +41,9 @@ export function questionAnswered(
   freeText: string,
   hasAttachment = false,
 ): boolean {
+  if (question.kind === "sketch" || question.kind === "image") {
+    return hasAttachment || question.required === false;
+  }
   if (hasAttachment) return true;
   if (freeText.trim().length > 0) return true;
   if (picked.length > 0) {

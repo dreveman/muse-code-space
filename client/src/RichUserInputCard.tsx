@@ -79,10 +79,8 @@ export function RichUserInputCard({
 
   const readiness = userInputReadiness(input.questions, picked, free, stepAttachments);
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>, questionId: string) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file || !file.type.startsWith("image/")) return;
+  const handleFile = async (file: File, questionId: string) => {
+    if (!file.type.startsWith("image/")) return;
     try {
       const encoded = await fileToBase64(file);
       const base64Data = encoded.dataBase64;
@@ -94,6 +92,13 @@ export function RichUserInputCard({
         dataUrl,
       });
     } catch { /* ignore unreadable file */ }
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>, questionId: string) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    await handleFile(file, questionId);
   };
 
   const submit = () => {
@@ -134,7 +139,19 @@ export function RichUserInputCard({
   const hintId = `rich-user-input-hint-${input.userInputId}-${question.id}`;
 
   return (
-    <div className="user-input-card rich-user-input-card" role="group" aria-label={input.title || "Companion multi-step input"}>
+    <div
+      className="user-input-card rich-user-input-card"
+      role="group"
+      aria-label={input.title || "Companion multi-step input"}
+      onPaste={(event) => {
+        if (busy || (kind !== "sketch" && kind !== "image")) return;
+        const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+        if (files[0]) {
+          event.preventDefault();
+          void handleFile(files[0], question.id);
+        }
+      }}
+    >
       <div className="rich-user-input-header">
         <p className="eyebrow">{input.title || "Rich input needed"}</p>
         {totalSteps > 1 && (
