@@ -317,9 +317,9 @@ export function buildUserInputAnswers(
       answers.push(answer);
       continue;
     }
-    if (question.kind === "sketch" || question.kind === "image") {
+    if (question.kind === "file" || question.kind === "sketch" || question.kind === "image") {
       if (question.required !== false && (!attachment || typeof attachment.base64Data !== "string" || !attachment.base64Data)) {
-        return { ok: false, error: `Question "${question.id}" requires a sketch or image` };
+        return { ok: false, error: `Question "${question.id}" requires a file or sketch` };
       }
       if (!attachment) {
         answers.push({ questionId: question.id, freeText });
@@ -337,7 +337,7 @@ export function buildUserInputAnswers(
       return { ok: false, error: `Question "${question.id}" was not answered` };
     }
     if (freeText) {
-      const maxLen = question.kind === "text" ? 2000 : 500;
+      const maxLen = question.kind === "text" || question.kind === "embed" ? 2000 : 500;
       if (freeText.length > maxLen) return { ok: false, error: `Answer to "${question.id}" is over ${maxLen} characters` };
       const answer: WireUserInputAnswer = { questionId: question.id, freeText };
       if (selection.note?.trim()) answer.note = selection.note.trim().slice(0, 500);

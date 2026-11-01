@@ -96,22 +96,24 @@ test("request_user_input gets a friendly label, first-question detail and answer
 
   const richArgs = JSON.stringify({
     title: "Design your component",
-    steps: [
-      { id: "sketch", header: "Layout sketch", question: "Sketch the layout", kind: "sketch" },
-      { id: "style", header: "Style", question: "Pick a style", kind: "choice", options: [{ label: "Minimal" }] },
+    questions: [
+      { question: "Sketch the layout", kind: "embed", embed: { type: "scratchpad" } },
+      { question: "Pick a style", kind: "choice", options: [{ label: "Minimal" }, { label: "Bold" }] },
     ],
   });
   const richOutput = JSON.stringify({
-    answers: [
-      { questionId: "sketch", filePath: ".code-space/inputs/sketch-1.png" },
-      { questionId: "style", selectedLabel: "Minimal" },
-    ],
+    answered: true,
+    answers: {
+      "Sketch the layout": ".code-space/inputs/q-1-1730000000.png",
+      "Pick a style": "Minimal",
+    },
   });
-  const richPreview = userInputPreviewForTool(details("mcp__code_space__ask_rich_user_input", richArgs, "completed", richOutput));
+  const richPreview = userInputPreviewForTool(details("mcp__code_space__AskUserRichForm", richArgs, "completed", richOutput));
   assert.ok(richPreview);
   assert.equal(richPreview.total, 2);
   assert.equal(richPreview.answered, 2);
-  assert.ok(richPreview.questions[0].answer?.freeText?.includes(".code-space/inputs/sketch-1.png"));
+  assert.ok(richPreview.questions[0].answer?.freeText?.includes(".code-space/inputs/q-1-1730000000.png"));
+  assert.deepEqual(richPreview.questions[1].answer?.labels, ["Minimal"]);
 });
 
 test("the user-input view renders questions and answers in the tool row", () => {

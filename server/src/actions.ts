@@ -279,6 +279,10 @@ const pilotUserInputQuestionSchema = z.object({
   kind: z.string().optional(),
   required: z.boolean().optional(),
   placeholder: z.string().optional(),
+  embed: z.object({
+    type: z.string().optional(),
+    background: z.enum(["grid", "dots", "blank"]).optional(),
+  }).optional(),
   canvasPreset: z.object({
     background: z.enum(["grid", "dots", "blank"]).optional(),
   }).optional(),
@@ -311,7 +315,7 @@ const userInputAnswerSchema = z.object({
   note: z.string().max(500).optional(),
   attachment: z.object({
     name: z.string().trim().min(1).max(260),
-    mediaType: z.string().trim().regex(/^image\/[a-z0-9.+-]+$/i),
+    mediaType: z.string().trim().regex(/^(?:(?:image|text)\/[a-z0-9.+-]+|application\/(?:pdf|json|octet-stream))$/i),
     base64Data: z.string().min(1).max(15_000_000),
   }).optional(),
 });

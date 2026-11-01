@@ -88,31 +88,39 @@ export const MCP_TOOLS = [
     },
   },
   {
-    name: "ask_rich_user_input",
-    title: "AskRichUserInput",
+    name: "AskUserRichForm",
+    title: "AskUserRichForm",
     description:
-      "Ask the user a multi-step sequence of rich inputs (single/multiple choice, free-form text, image upload, or a hand-drawn sketch/wireframe from the Scratchpad) and wait for their answers.",
+      "Ask the user 1–4 mixed-input questions (choice with 2–4 options plus Other, free-form text, a file upload [image, PDF, or text file], or a client embed such as 'scratchpad' for drawing) and wait for their response. " +
+      "Use only when blocked on a decision that is the user's to make — something you cannot work out from the code, the conversation, or a sensible default. " +
+      "Default timeout is 3 minutes (set timeout to null to wait forever, but only if the user asked you to wait). " +
+      "On submit, returns {\"answered\": true, \"answers\": {\"<question text>\": \"<pick, text, or saved workspace file path>\"}}. " +
+      "On timeout, returns {\"answered\": false, \"timedOut\": true, \"answers\": {}} — go ahead on your best judgment and do not ask again.",
     inputSchema: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Optional heading for the multi-step input wizard." },
-        steps: {
+        title: { type: "string", description: "Optional heading for the form." },
+        timeout: {
+          anyOf: [{ type: "number" }, { type: "null" }],
+          description: "Timeout in seconds (or ms if > 3600). Defaults to 180 (3 minutes). Set to null to wait forever only if the user asked you to wait.",
+        },
+        questions: {
           type: "array",
           minItems: 1,
-          maxItems: 8,
+          maxItems: 4,
           items: {
             type: "object",
             properties: {
-              id: { type: "string", description: "Unique step identifier." },
-              header: { type: "string", description: "Short step label (e.g. 'Layout sketch', 'Style')." },
-              question: { type: "string", description: "Detailed prompt for this step." },
+              id: { type: "string", description: "Optional question identifier." },
+              header: { type: "string", description: "Optional short step/question label." },
+              question: { type: "string", description: "The question text shown to the user (used as the key in the returned `answers` map)." },
               kind: {
                 type: "string",
-                enum: ["choice", "text", "image", "sketch"],
-                description: "Step input kind: 'choice' (options), 'text' (multi-line text), 'image' (upload/paste photo or screenshot), or 'sketch' (draw in the Scratchpad).",
+                enum: ["choice", "text", "file", "embed"],
+                description: "Question kind: 'choice' (2–4 options plus Other), 'text' (free-form written answer), 'file' (one uploaded image, PDF, or text file), or 'embed' (custom client UI such as {type: 'scratchpad'}, falling back to plain text on clients that don't know it).",
               },
-              required: { type: "boolean", description: "Whether this step must be answered (default true)." },
-              placeholder: { type: "string", description: "Optional placeholder text for text/notes input." },
+              required: { type: "boolean", description: "Whether this question must be answered (default true)." },
+              placeholder: { type: "string", description: "Optional placeholder text." },
               selection: {
                 type: "object",
                 properties: {
@@ -123,6 +131,8 @@ export const MCP_TOOLS = [
               },
               options: {
                 type: "array",
+                minItems: 2,
+                maxItems: 4,
                 items: {
                   type: "object",
                   properties: {
@@ -133,18 +143,20 @@ export const MCP_TOOLS = [
                   required: ["label"],
                 },
               },
-              canvasPreset: {
+              embed: {
                 type: "object",
+                description: "Custom UI descriptor for kind='embed' (e.g. {\"type\": \"scratchpad\", \"background\": \"grid\"}).",
                 properties: {
+                  type: { type: "string" },
                   background: { type: "string", enum: ["grid", "dots", "blank"] },
                 },
               },
             },
-            required: ["id", "question"],
+            required: ["question", "kind"],
           },
         },
       },
-      required: ["steps"],
+      required: ["questions"],
       additionalProperties: false,
     },
   },
@@ -216,12 +228,12 @@ export async function handleMcpRequest(token, message, deps) {
       if (!result.ok) return ok(id, toolText(result.error ?? "Failed to capture preview screenshot.", true));
       return ok(id, toolText(result.text));
     }
-    if (name === "ask_rich_user_input") {
-      if (typeof deps.askRichUserInput !== "function") {
-        return ok(id, toolText("ask_rich_user_input is not available in this pilot.", true));
+    if (name === "AskUserRichForm" || name === "ask_user_rich_form" || name === "ask_rich_user_input") {
+      if (typeof deps.askUserRichForm !== "function") {
+        return ok(id, toolText("AskUserRichForm is not available in this pilot.", true));
       }
-      const result = await deps.askRichUserInput(entry, args);
-      if (!result.ok) return ok(id, toolText(result.error ?? "Rich user input was cancelled or failed.", true));
+      const result = await deps.askUserRichForm(entry, args);
+      if (!result.ok) return ok(id, toolText(result.error ?? "AskUserRichForm failed.", true));
       return ok(id, toolText(result.text));
     }
     if (isGitHubTool(name)) {

@@ -20,7 +20,14 @@ export type RichUserInputAnswerSelection = {
 export function isRichUserInput(input: PendingUserInput): boolean {
   if (input.rich === true) return true;
   return input.questions.some(
-    (q) => q.kind === "sketch" || q.kind === "image" || q.kind === "text" || q.canvasPreset !== undefined,
+    (q) =>
+      q.kind === "file" ||
+      q.kind === "embed" ||
+      q.kind === "sketch" ||
+      q.kind === "image" ||
+      q.kind === "text" ||
+      q.embed !== undefined ||
+      q.canvasPreset !== undefined,
   );
 }
 
@@ -80,14 +87,24 @@ export function RichUserInputCard({
   const readiness = userInputReadiness(input.questions, picked, free, stepAttachments);
 
   const handleFile = async (file: File, questionId: string) => {
-    if (!file.type.startsWith("image/")) return;
+    const isAllowed =
+      file.type.startsWith("image/") ||
+      file.type.startsWith("text/") ||
+      file.type === "application/pdf" ||
+      file.type === "application/json" ||
+      /\.(png|jpe?g|gif|webp|svg|pdf|txt|md|json|csv|ts|tsx|js|jsx|py|rs|go|html|css)$/i.test(file.name);
+    if (!isAllowed) return;
     try {
       const encoded = await fileToBase64(file);
       const base64Data = encoded.dataBase64;
-      const dataUrl = `data:${encoded.mimeType || file.type};base64,${base64Data}`;
+      const mimeType =
+        encoded.mimeType ||
+        file.type ||
+        (/\.pdf$/i.test(file.name) ? "application/pdf" : /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name) ? "image/png" : "text/plain");
+      const dataUrl = `data:${mimeType};base64,${base64Data}`;
       onAttachStepImage(questionId, {
-        name: file.name || `image-${Date.now()}.png`,
-        mediaType: "image/png",
+        name: file.name || `upload-${Date.now()}`,
+        mediaType: mimeType,
         base64Data,
         dataUrl,
       });
@@ -127,7 +144,12 @@ export function RichUserInputCard({
 
   if (!question) return null;
 
-  const kind = question.kind ?? ((question.options ?? []).length > 0 ? "choice" : "text");
+  const rawKind = question.kind ?? ((question.options ?? []).length > 0 ? "choice" : "text");
+  const isKnownScratchpadEmbed =
+    rawKind === "sketch" ||
+    (rawKind === "embed" && (!question.embed?.type || question.embed.type === "scratchpad" || Boolean(question.canvasPreset)));
+  const isUnknownEmbed = rawKind === "embed" && !isKnownScratchpadEmbed;
+  const isFileKind = rawKind === "file" || rawKind === "image";
   const multiple = question.selection.mode === "multiple";
   const currentAttachment = stepAttachments[question.id] ?? null;
   const currentAnswered = questionAnswered(
@@ -142,10 +164,10 @@ export function RichUserInputCard({
     <div
       className="user-input-card rich-user-input-card"
       role="group"
-      aria-label={input.title || "Companion multi-step input"}
+      aria-label={input.title || "Companion rich form"}
       onPaste={(event) => {
-        if (busy || (kind !== "sketch" && kind !== "image")) return;
-        const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+        if (busy || (!isFileKind && !isKnownScratchpadEmbed)) return;
+        const files = Array.from(event.clipboardData?.files ?? []);
         if (files[0]) {
           event.preventDefault();
           void handleFile(files[0], question.id);
@@ -153,7 +175,7 @@ export function RichUserInputCard({
       }}
     >
       <div className="rich-user-input-header">
-        <p className="eyebrow">{input.title || "Rich input needed"}</p>
+        <p className="eyebrow">{input.title || "Input needed"}</p>
         {totalSteps > 1 && (
           <div className="rich-user-input-steps" role="tablist" aria-label="Input steps">
             {input.questions.map((q, idx) => {
@@ -195,7 +217,7 @@ export function RichUserInputCard({
             {currentAnswered ? " · Answered" : ""}
           </p>
 
-          {(kind === "sketch" || kind === "image") && (
+          {(isFileKind || isKnownScratchpadEmbed) && (
             <div className="rich-user-input-media-box">
               <div className="rich-user-input-media-actions">
                 <button
@@ -209,7 +231,7 @@ export function RichUserInputCard({
                         questionId: question.id,
                         header: question.header || `Step ${clampedIndex + 1}`,
                       },
-                      question.canvasPreset?.background,
+                      question.embed?.background ?? question.canvasPreset?.background,
                     )
                   }
                 >
@@ -218,13 +240,13 @@ export function RichUserInputCard({
                 </button>
 
                 <label htmlFor={fileInputId} className="rich-image-upload-btn">
-                  <span>{currentAttachment ? "Replace image…" : "Upload image…"}</span>
+                  <span>{currentAttachment ? "Replace file…" : isFileKind ? "Upload image, PDF, or text…" : "Upload image…"}</span>
                 </label>
                 <input
                   ref={fileInputRef}
                   id={fileInputId}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf,text/*,.md,.txt,.json,.csv,.ts,.tsx,.js,.jsx,.py,.rs,.go,.html,.css"
                   style={{ display: "none" }}
                   disabled={busy}
                   onChange={(e) => void handleFileChange(e, question.id)}
@@ -233,9 +255,11 @@ export function RichUserInputCard({
 
               {currentAttachment && (
                 <div className="rich-user-input-preview">
-                  <img src={currentAttachment.dataUrl} alt={currentAttachment.name} />
+                  {currentAttachment.mediaType.startsWith("image/") && (
+                    <img src={currentAttachment.dataUrl} alt={currentAttachment.name} />
+                  )}
                   <div className="rich-user-input-preview-meta">
-                    <span>{currentAttachment.name}</span>
+                    <span>{currentAttachment.name} ({currentAttachment.mediaType})</span>
                     <button
                       type="button"
                       className="rich-user-input-remove-btn"
@@ -249,10 +273,10 @@ export function RichUserInputCard({
               )}
 
               <label className={`user-input-other${(free[question.id] ?? "").trim() ? " is-selected" : ""}`}>
-                <span className="user-input-other-label">Notes or caption (optional)</span>
+                <span className="user-input-other-label">{isKnownScratchpadEmbed ? "Or write your answer / notes" : "Notes or caption (optional)"}</span>
                 <input
                   className="user-input-free"
-                  placeholder={question.placeholder || "Add context about your sketch or image…"}
+                  placeholder={question.placeholder || "Add context or write your answer…"}
                   value={free[question.id] ?? ""}
                   onChange={(event) => {
                     const value = event.target.value;
@@ -265,7 +289,7 @@ export function RichUserInputCard({
             </div>
           )}
 
-          {kind === "choice" && (question.options ?? []).length > 0 && (
+          {rawKind === "choice" && (question.options ?? []).length > 0 && (
             <>
               <div className="user-input-options" role={multiple ? "group" : "radiogroup"} aria-label={question.header || question.question || question.id}>
                 {(question.options ?? []).map((option) => {
@@ -307,7 +331,7 @@ export function RichUserInputCard({
             </>
           )}
 
-          {kind === "text" && (
+          {(rawKind === "text" || isUnknownEmbed) && (
             <label className={`user-input-other is-multiline${(free[question.id] ?? "").trim() ? " is-selected" : ""}`}>
               <textarea
                 className="user-input-free rich-user-input-textarea"

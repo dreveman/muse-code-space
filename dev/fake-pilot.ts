@@ -87,6 +87,7 @@ type PendingInput = {
     kind?: string;
     required?: boolean;
     placeholder?: string;
+    embed?: { type?: string; background?: "grid" | "dots" | "blank" };
     canvasPreset?: { background?: "grid" | "dots" | "blank" };
     selection: { mode: string; minSelections: number; maxSelections: number };
     options: Array<{ label: string; description?: string }>;
@@ -1033,7 +1034,7 @@ const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> =
   { section: "Turn behaviour", trigger: "slow", does: "Wait ~10s between steps (override with MUSE_CODE_SPACE_FAKE_PILOT_SLOW_STEP_MS) — exercise spinners and Stop/interrupt. Combines with other triggers." },
   { section: "Turn behaviour", trigger: "thinking", does: "Emit reasoning-summary revisions (empty → partial → completed) before the tool call. Raw reasoning text is never shown." },
   { section: "Turn behaviour", trigger: "ask", does: "Ask a user-input question the UI must answer before the turn ends, then reply with your pick." },
-  { section: "Turn behaviour", trigger: "rich-ask / ask-rich", does: "Launch a multi-step `AskRichUserInput` wizard (sketch in Scratchpad, choice, and text notes) before the turn ends." },
+  { section: "Turn behaviour", trigger: "rich-ask / ask-rich", does: "Launch a multi-step `AskUserRichForm` wizard (embed scratchpad, choice, file, and text) before the turn ends." },
   { section: "Turn behaviour", trigger: "workflow", does: "Launch a fake workflow: the turn ends, two child agents progress in the background, then a host-started turn delivers the combined answer." },
   { section: "Turn behaviour", trigger: "markdown-table", does: "Reply with a GFM pipe table (left/centre/right alignment, inline formatting, escaped pipe, pipe in a code span) followed by a pipe-containing paragraph that must stay plain text." },
   { section: "Turn behaviour", trigger: "code-fence / markdown-code", does: "Reply with fenced code blocks: `bash`, `ts`, and `python` (syntax-highlighted), an unsupported tag and an untagged fence (both stay plain)." },
@@ -1476,15 +1477,15 @@ async function runTurn(session: Session, text: string) {
       steps.push(async () => {
         const userInputId = `rich-${crypto.randomUUID()}`;
         const toolItemId = crypto.randomUUID();
-        const richSteps = [
+        const richQuestions = [
           {
             id: "layout",
             header: "Layout sketch",
-            question: "Sketch the layout in the Scratchpad (or upload a reference image).",
-            kind: "sketch",
+            question: "Sketch the layout in the Scratchpad (or write a description).",
+            kind: "embed",
+            embed: { type: "scratchpad", background: "grid" as const },
             required: true,
-            placeholder: "Optional caption for your sketch…",
-            canvasPreset: { background: "grid" as const },
+            placeholder: "Or describe the layout in plain text…",
             selection: { mode: "single", minSelections: 1, maxSelections: 1 },
             options: [],
           },
@@ -1512,12 +1513,12 @@ async function runTurn(session: Session, text: string) {
             options: [],
           },
         ];
-        const toolArgs = JSON.stringify({ title: "Design your component", steps: richSteps });
+        const toolArgs = JSON.stringify({ title: "Design your component", questions: richQuestions });
         push(session, "item", {
           item: {
             kind: "toolCall",
             itemId: toolItemId,
-            tool: "mcp__code_space__ask_rich_user_input",
+            tool: "mcp__code_space__AskUserRichForm",
             status: "inProgress",
             recordedAt: new Date().toISOString(),
             args: toolArgs,
@@ -1529,7 +1530,7 @@ async function runTurn(session: Session, text: string) {
             turnId,
             title: "Design your component",
             rich: true,
-            questions: richSteps,
+            questions: richQuestions,
             resolve,
           };
           session.inputs.set(userInputId, input);
@@ -1545,24 +1546,21 @@ async function runTurn(session: Session, text: string) {
           item: {
             kind: "toolCall",
             itemId: toolItemId,
-            tool: "mcp__code_space__ask_rich_user_input",
+            tool: "mcp__code_space__AskUserRichForm",
             status: "completed",
             recordedAt: new Date().toISOString(),
             args: toolArgs,
             visibleOutput: answerJson,
           },
         });
-        let summaryLines = ["Received your multi-step rich input:"];
+        const summaryLines = ["Received your `AskUserRichForm` response:"];
         try {
           const parsed = JSON.parse(answerJson) as {
-            answers?: Array<{ questionId?: string; selectedLabel?: string; selectedLabels?: string[]; freeText?: string; filePath?: string }>;
+            answered?: boolean;
+            answers?: Record<string, unknown>;
           };
-          for (const ans of parsed.answers ?? []) {
-            const val = ans.selectedLabel ?? ans.selectedLabels?.join(", ") ?? ans.freeText ?? "(answered)";
-            summaryLines.push(`- **${ans.questionId}**: ${val}${ans.filePath ? ` (\`${ans.filePath}\`)` : ""}`);
-            if (ans.filePath) {
-              summaryLines.push(`\n![Sketch for ${ans.questionId}](${ans.filePath})`);
-            }
+          for (const [qText, val] of Object.entries(parsed.answers ?? {})) {
+            summaryLines.push(`- **${qText}**: ${typeof val === "string" ? val : JSON.stringify(val)}`);
           }
         } catch {
           summaryLines.push(answerJson);
@@ -2683,7 +2681,10 @@ Bun.serve({
       }>;
       if (input.rich) {
         const wsDir = session.workspaceRoot;
-        const enriched = answers.map((ans) => {
+        const answersMap: Record<string, unknown> = {};
+        for (const ans of answers) {
+          const qObj = input.questions.find((q) => q.id === ans.questionId);
+          const qKey = qObj?.question || qObj?.header || String(ans.questionId ?? "question");
           let filePath: string | undefined;
           if (ans.attachment?.base64Data && wsDir) {
             try {
@@ -2696,15 +2697,17 @@ Bun.serve({
               filePath = `${relDir}/${fileName}`;
             } catch { /* best-effort */ }
           }
-          return {
-            questionId: ans.questionId,
-            ...(ans.selectedLabel ? { selectedLabel: ans.selectedLabel } : {}),
-            ...(ans.selectedLabels ? { selectedLabels: ans.selectedLabels } : {}),
-            ...(ans.freeText ? { freeText: ans.freeText } : {}),
-            ...(filePath ? { filePath } : {}),
-          };
-        });
-        input.resolve(JSON.stringify({ answers: enriched }));
+          if (filePath) {
+            answersMap[qKey] = ans.freeText ? `${filePath} (${ans.freeText})` : filePath;
+          } else if (ans.selectedLabel) {
+            answersMap[qKey] = ans.selectedLabel;
+          } else if (ans.selectedLabels && ans.selectedLabels.length > 0) {
+            answersMap[qKey] = ans.selectedLabels;
+          } else {
+            answersMap[qKey] = ans.freeText ?? "";
+          }
+        }
+        input.resolve(JSON.stringify({ answered: true, answers: answersMap }));
       } else {
         const first = answers[0];
         input.resolve(first?.selectedLabel || first?.selectedLabels?.join(", ") || first?.freeText || "(no answer)");
