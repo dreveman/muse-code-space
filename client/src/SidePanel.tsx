@@ -3,6 +3,7 @@
 // its local view.
 import "@wterm/react/css";
 import { Suspense, lazy, memo, useEffect, useRef, useState } from "react";
+import { FileBrowserIcon, FileBrowserView, NewFileBrowserButton } from "./FileBrowserPanel";
 import { FileTab } from "./FileTab";
 import { ImageTab } from "./ImageTab";
 import { NewPreviewButton, PreviewTabIcon, PreviewView } from "./PreviewPanel";
@@ -17,7 +18,7 @@ import {
 import { SmartLogIcon, SmartLogView } from "./SmartLogPanel";
 import type { SessionVcsStatus } from "./smartlogLayout";
 
-export { NewPreviewButton, NewScratchpadButton };
+export { NewFileBrowserButton, NewPreviewButton, NewScratchpadButton };
 export type { ScratchpadAttachmentPayload, ScratchpadBackground, ScratchpadTargetStep };
 
 const LazyTerminalView = lazy(() =>
@@ -67,7 +68,8 @@ export type SideTab =
   | { key: string; kind: "image"; title: string; src: string; path?: string | null }
   | { key: string; kind: "smartlog" }
   | { key: string; kind: "preview" }
-  | { key: string; kind: "scratchpad"; background?: ScratchpadBackground };
+  | { key: string; kind: "scratchpad"; background?: ScratchpadBackground }
+  | { key: string; kind: "files" };
 
 export type SidePanelState = { tabs: SideTab[]; activeKey: string | null };
 
@@ -95,6 +97,7 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
 });
 
 export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
+  if (tab.kind === "files") return "Files";
   if (tab.kind === "scratchpad") return "Scratchpad";
   if (tab.kind === "preview") return "Preview";
   if (tab.kind === "smartlog") return "Smart Log";
@@ -117,6 +120,7 @@ export function SidePanel({
   onAttachScratchpadToComposer,
   onRefreshVcs,
   onOpenFile,
+  onOpenImage,
   onSelect,
   onClose,
   onTerminalOpened,
@@ -133,6 +137,7 @@ export function SidePanel({
   onAttachScratchpadToComposer?: (attachment: ScratchpadAttachmentPayload) => void;
   onRefreshVcs?: () => void;
   onOpenFile?: (path: string) => void;
+  onOpenImage?: (spec: { title: string; src: string; path: string }) => void;
   onSelect: (key: string) => void;
   onClose: (tab: SideTab) => void;
   onTerminalOpened: (key: string, terminalId: string, number: number) => void;
@@ -167,6 +172,7 @@ export function SidePanel({
                 {tab.kind === "smartlog" && <SmartLogIcon />}
                 {tab.kind === "preview" && <PreviewTabIcon />}
                 {tab.kind === "scratchpad" && <ScratchpadTabIcon />}
+                {tab.kind === "files" && <FileBrowserIcon />}
                 {(tab.kind === "file" || tab.kind === "image") && <FileTabIcon />}
                 <span>{label}</span>
               </button>
@@ -226,6 +232,13 @@ export function SidePanel({
                   initialBackground={tab.background ?? "grid"}
                   onAttachToStep={onAttachScratchpadToStep}
                   onAttachToComposer={onAttachScratchpadToComposer}
+                />
+              ) : tab.kind === "files" ? (
+                <FileBrowserView
+                  sessionId={sessionId}
+                  workspacePath={workspacePath}
+                  onOpenFile={onOpenFile}
+                  onOpenImage={onOpenImage}
                 />
               ) : tab.kind === "image" ? (
                 <ImageTab

@@ -49,7 +49,7 @@ import { createHash, randomFillSync } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "./terminals.mjs";
-import { readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
+import { listWorkspaceDirectory, readWorkspaceFile, readWorkspaceImage } from "./files.mjs";
 import { attachSessionMcp, handleMcpRequest, requireSessionMcp } from "./mcp.mjs";
 import { createGitHubToolset } from "./githubTools.mjs";
 import { runGithubAppSetup } from "./githubAppSetup.mjs";
@@ -3017,6 +3017,16 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req).catch(() => ({}));
       if (!entry.meta?.workspaceRoot) return json(res, 409, { error: "Companion working directory is unavailable." });
       const result = readWorkspaceImage(entry.meta.workspaceRoot, body.path);
+      return json(res, result.ok ? 200 : result.code, result);
+    }
+
+    const mFilesList = path.match(/^\/sessions\/([^/]+)\/files\/list$/);
+    if (req.method === "POST" && mFilesList) {
+      const entry = resolveEntry(decodeURIComponent(mFilesList[1]));
+      if (!entry) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      const body = await readBody(req).catch(() => ({}));
+      if (!entry.meta?.workspaceRoot) return json(res, 409, { error: "Companion working directory is unavailable." });
+      const result = listWorkspaceDirectory(entry.meta.workspaceRoot, typeof body.path === "string" ? body.path : "");
       return json(res, result.ok ? 200 : result.code, result);
     }
 
