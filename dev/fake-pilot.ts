@@ -78,10 +78,16 @@ type Event = { seq: number; type: string; at: string; [key: string]: unknown };
 type PendingInput = {
   userInputId: string;
   turnId: string;
+  title?: string;
+  rich?: boolean;
   questions: Array<{
     id: string;
     header: string;
     question: string;
+    kind?: string;
+    required?: boolean;
+    placeholder?: string;
+    canvasPreset?: { background?: "grid" | "dots" | "blank" };
     selection: { mode: string; minSelections: number; maxSelections: number };
     options: Array<{ label: string; description?: string }>;
   }>;
@@ -1027,6 +1033,7 @@ const FAKE_TRIGGERS: Array<{ section: string; trigger: string; does: string }> =
   { section: "Turn behaviour", trigger: "slow", does: "Wait ~10s between steps (override with MUSE_CODE_SPACE_FAKE_PILOT_SLOW_STEP_MS) — exercise spinners and Stop/interrupt. Combines with other triggers." },
   { section: "Turn behaviour", trigger: "thinking", does: "Emit reasoning-summary revisions (empty → partial → completed) before the tool call. Raw reasoning text is never shown." },
   { section: "Turn behaviour", trigger: "ask", does: "Ask a user-input question the UI must answer before the turn ends, then reply with your pick." },
+  { section: "Turn behaviour", trigger: "rich-ask / ask-rich", does: "Launch a multi-step `AskRichUserInput` wizard (sketch in Scratchpad, choice, and text notes) before the turn ends." },
   { section: "Turn behaviour", trigger: "workflow", does: "Launch a fake workflow: the turn ends, two child agents progress in the background, then a host-started turn delivers the combined answer." },
   { section: "Turn behaviour", trigger: "markdown-table", does: "Reply with a GFM pipe table (left/centre/right alignment, inline formatting, escaped pipe, pipe in a code span) followed by a pipe-containing paragraph that must stay plain text." },
   { section: "Turn behaviour", trigger: "code-fence / markdown-code", does: "Reply with fenced code blocks: `bash`, `ts`, and `python` (syntax-highlighted), an unsupported tag and an untagged fence (both stay plain)." },
@@ -1465,7 +1472,110 @@ async function runTurn(session: Session, text: string) {
         () => push(session, "item", { item: reasoning("completed", ["Checking the project structure…", "The next step is to run the tests."]) }),
       );
     }
-    if (/\bask\b/i.test(text)) {
+    if (/\b(?:rich-ask|ask-rich)\b/i.test(text)) {
+      steps.push(async () => {
+        const userInputId = `rich-${crypto.randomUUID()}`;
+        const toolItemId = crypto.randomUUID();
+        const richSteps = [
+          {
+            id: "layout",
+            header: "Layout sketch",
+            question: "Sketch the layout in the Scratchpad (or upload a reference image).",
+            kind: "sketch",
+            required: true,
+            placeholder: "Optional caption for your sketch…",
+            canvasPreset: { background: "grid" as const },
+            selection: { mode: "single", minSelections: 1, maxSelections: 1 },
+            options: [],
+          },
+          {
+            id: "style",
+            header: "Visual style",
+            question: "Which visual direction should we use?",
+            kind: "choice",
+            required: true,
+            selection: { mode: "single", minSelections: 1, maxSelections: 1 },
+            options: [
+              { label: "Clean & minimal", description: "Generous whitespace and subtle borders" },
+              { label: "Liquid Glass", description: "Translucent surfaces with directional rim highlights" },
+              { label: "Bold editorial", description: "High-contrast typography and crisp dividers" },
+            ],
+          },
+          {
+            id: "notes",
+            header: "Notes",
+            question: "Any extra details or constraints?",
+            kind: "text",
+            required: false,
+            placeholder: "Optional notes…",
+            selection: { mode: "single", minSelections: 0, maxSelections: 1 },
+            options: [],
+          },
+        ];
+        const toolArgs = JSON.stringify({ title: "Design your component", steps: richSteps });
+        push(session, "item", {
+          item: {
+            kind: "toolCall",
+            itemId: toolItemId,
+            tool: "mcp__code_space__ask_rich_user_input",
+            status: "inProgress",
+            recordedAt: new Date().toISOString(),
+            args: toolArgs,
+          },
+        });
+        const answerJson = await new Promise<string>((resolve) => {
+          const input: PendingInput = {
+            userInputId,
+            turnId,
+            title: "Design your component",
+            rich: true,
+            questions: richSteps,
+            resolve,
+          };
+          session.inputs.set(userInputId, input);
+          push(session, "user_input_requested", {
+            userInputId,
+            title: "Design your component",
+            rich: true,
+            questions: input.questions,
+          });
+        });
+        push(session, "user_input_answered", { userInputId });
+        push(session, "item", {
+          item: {
+            kind: "toolCall",
+            itemId: toolItemId,
+            tool: "mcp__code_space__ask_rich_user_input",
+            status: "completed",
+            recordedAt: new Date().toISOString(),
+            args: toolArgs,
+            visibleOutput: answerJson,
+          },
+        });
+        let summaryLines = ["Received your multi-step rich input:"];
+        try {
+          const parsed = JSON.parse(answerJson) as {
+            answers?: Array<{ questionId?: string; selectedLabel?: string; selectedLabels?: string[]; freeText?: string; filePath?: string }>;
+          };
+          for (const ans of parsed.answers ?? []) {
+            const val = ans.selectedLabel ?? ans.selectedLabels?.join(", ") ?? ans.freeText ?? "(answered)";
+            summaryLines.push(`- **${ans.questionId}**: ${val}${ans.filePath ? ` (\`${ans.filePath}\`)` : ""}`);
+            if (ans.filePath) {
+              summaryLines.push(`\n![Sketch for ${ans.questionId}](${ans.filePath})`);
+            }
+          }
+        } catch {
+          summaryLines.push(answerJson);
+        }
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text: summaryLines.join("\n"),
+          },
+        });
+      });
+    } else if (/\bask\b/i.test(text)) {
       steps.push(async () => {
         const userInputId = crypto.randomUUID();
         const answer = await new Promise<string>((resolve) => {
@@ -2545,9 +2655,41 @@ Bun.serve({
       const input = session.inputs.get(String(body.userInputId));
       if (!input) return json(404, { error: "unknown user input" });
       session.inputs.delete(input.userInputId);
-      const answers = (body.answers ?? []) as Array<{ selectedLabel?: string; selectedLabels?: string[]; freeText?: string }>;
-      const first = answers[0];
-      input.resolve(first?.selectedLabel || first?.selectedLabels?.join(", ") || first?.freeText || "(no answer)");
+      const answers = (body.answers ?? []) as Array<{
+        questionId?: string;
+        selectedLabel?: string;
+        selectedLabels?: string[];
+        freeText?: string;
+        attachment?: { name?: string; mediaType?: string; base64Data?: string };
+      }>;
+      if (input.rich) {
+        const wsDir = session.workspaceRoot;
+        const enriched = answers.map((ans) => {
+          let filePath: string | undefined;
+          if (ans.attachment?.base64Data && wsDir) {
+            try {
+              const relDir = ".code-space/inputs";
+              const absDir = resolve(wsDir, relDir);
+              mkdirSync(absDir, { recursive: true });
+              const safeId = String(ans.questionId ?? "sketch").replace(/[^A-Za-z0-9_-]/g, "_");
+              const fileName = `${safeId}-${Date.now()}.png`;
+              writeFileSync(resolve(absDir, fileName), Buffer.from(ans.attachment.base64Data, "base64"));
+              filePath = `${relDir}/${fileName}`;
+            } catch { /* best-effort */ }
+          }
+          return {
+            questionId: ans.questionId,
+            ...(ans.selectedLabel ? { selectedLabel: ans.selectedLabel } : {}),
+            ...(ans.selectedLabels ? { selectedLabels: ans.selectedLabels } : {}),
+            ...(ans.freeText ? { freeText: ans.freeText } : {}),
+            ...(filePath ? { filePath } : {}),
+          };
+        });
+        input.resolve(JSON.stringify({ answers: enriched }));
+      } else {
+        const first = answers[0];
+        input.resolve(first?.selectedLabel || first?.selectedLabels?.join(", ") || first?.freeText || "(no answer)");
+      }
       return json(200, { ok: true, userInputId: input.userInputId });
     }
     if (sub === "/user-inputs/cancel" && req.method === "POST") {

@@ -87,6 +87,67 @@ export const MCP_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: "ask_rich_user_input",
+    title: "AskRichUserInput",
+    description:
+      "Ask the user a multi-step sequence of rich inputs (single/multiple choice, free-form text, image upload, or a hand-drawn sketch/wireframe from the Scratchpad) and wait for their answers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Optional heading for the multi-step input wizard." },
+        steps: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string", description: "Unique step identifier." },
+              header: { type: "string", description: "Short step label (e.g. 'Layout sketch', 'Style')." },
+              question: { type: "string", description: "Detailed prompt for this step." },
+              kind: {
+                type: "string",
+                enum: ["choice", "text", "image", "sketch"],
+                description: "Step input kind: 'choice' (options), 'text' (multi-line text), 'image' (upload/paste photo or screenshot), or 'sketch' (draw in the Scratchpad).",
+              },
+              required: { type: "boolean", description: "Whether this step must be answered (default true)." },
+              placeholder: { type: "string", description: "Optional placeholder text for text/notes input." },
+              selection: {
+                type: "object",
+                properties: {
+                  mode: { type: "string", enum: ["single", "multiple"] },
+                  minSelections: { type: "integer" },
+                  maxSelections: { type: "integer" },
+                },
+              },
+              options: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string" },
+                    description: { type: "string" },
+                    preview: { type: "string" },
+                  },
+                  required: ["label"],
+                },
+              },
+              canvasPreset: {
+                type: "object",
+                properties: {
+                  background: { type: "string", enum: ["grid", "dots", "blank"] },
+                },
+              },
+            },
+            required: ["id", "question"],
+          },
+        },
+      },
+      required: ["steps"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const ok = (id, result) => ({ jsonrpc: "2.0", id, result });
@@ -153,6 +214,14 @@ export async function handleMcpRequest(token, message, deps) {
         title: typeof args.title === "string" ? args.title : "Live preview",
       });
       if (!result.ok) return ok(id, toolText(result.error ?? "Failed to capture preview screenshot.", true));
+      return ok(id, toolText(result.text));
+    }
+    if (name === "ask_rich_user_input") {
+      if (typeof deps.askRichUserInput !== "function") {
+        return ok(id, toolText("ask_rich_user_input is not available in this pilot.", true));
+      }
+      const result = await deps.askRichUserInput(entry, args);
+      if (!result.ok) return ok(id, toolText(result.error ?? "Rich user input was cancelled or failed.", true));
       return ok(id, toolText(result.text));
     }
     if (isGitHubTool(name)) {

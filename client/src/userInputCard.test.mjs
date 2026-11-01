@@ -32,6 +32,17 @@ test("readiness counts answered questions and finds the first unanswered one", (
   assert.deepEqual(userInputReadiness(questions, { q1: ["A"] }, {}), { ready: false, answered: 1, total: 2, firstUnanswered: 1 });
   assert.deepEqual(userInputReadiness(questions, { q1: ["A"], q2: ["A", "B"] }, {}), { ready: true, answered: 2, total: 2, firstUnanswered: -1 });
   assert.deepEqual(userInputReadiness(questions, { q2: ["A", "B"] }, { q1: "custom" }), { ready: true, answered: 2, total: 2, firstUnanswered: -1 });
+
+  const sketchStep = { id: "sketch-1", kind: "sketch", required: true, selection: { mode: "single" }, options: [] };
+  const optionalStep = { id: "opt-1", kind: "text", required: false, selection: { mode: "single" }, options: [] };
+  assert.equal(questionSelectionHint(sketchStep), "Draw in the Scratchpad or upload an image");
+  assert.equal(questionAnswered(sketchStep, [], "", false), false);
+  assert.equal(questionAnswered(sketchStep, [], "", true), true, "attachment satisfies sketch step");
+  assert.equal(questionAnswered(optionalStep, [], "", false), true, "optional step is ready when blank");
+  assert.deepEqual(
+    userInputReadiness([sketchStep, optionalStep], {}, {}, { "sketch-1": { name: "sketch.png" } }),
+    { ready: true, answered: 2, total: 2, firstUnanswered: -1 },
+  );
 });
 
 test("a card taller than the screen scrolls its questions and keeps Send reachable", () => {
@@ -73,4 +84,11 @@ test("the card wires readiness, selected states and per-question structure", () 
   const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
   assert.ok(css.includes(".user-input-option.is-selected"), "selected option styling exists");
   assert.ok(css.includes(".user-input-status"), "footer readiness styling exists");
+
+  const richCard = readFileSync(new URL("./RichUserInputCard.tsx", import.meta.url), "utf8");
+  const scratchpad = readFileSync(new URL("./ScratchpadPanel.tsx", import.meta.url), "utf8");
+  const sidePanel = readFileSync(new URL("./SidePanel.tsx", import.meta.url), "utf8");
+  assert.ok(richCard.includes("Open Scratchpad to draw"), "RichUserInputCard offers Scratchpad button for sketch/image steps");
+  assert.ok(scratchpad.includes("getCoalescedEvents") && scratchpad.includes("Pen only"), "Scratchpad supports coalesced pointer events and Pen only palm rejection");
+  assert.ok(sidePanel.includes('tab.kind === "scratchpad"'), "SidePanel renders the Scratchpad tab");
 });

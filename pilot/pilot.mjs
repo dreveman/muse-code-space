@@ -1444,6 +1444,8 @@ if (typeof relayProber.unref === "function") relayProber.unref();
 // answer back via `userInput/answer` (or `userInput/cancel`).
 // userInputId -> stable logId, for settled detection.
 const surfacedInputs = new Map();
+// userInputId -> { userInputId, logId, entry, title, questions, resolve } for mcp__code_space__ask_rich_user_input.
+const pendingRichInputs = new Map();
 
 // UUIDv7 for the SS3.1.1 idempotency handle the answer/cancel verbs require.
 function uuidv7() {
@@ -1472,10 +1474,16 @@ function summarizeUserInput(input) {
     userInputId: input?.userInputId,
     turnId: input?.turnId ?? null,
     autoResolutionMs: typeof input?.autoResolutionMs === "number" ? input.autoResolutionMs : null,
+    ...(typeof input?.title === "string" && input.title ? { title: truncate(input.title, 200) } : {}),
+    ...(input?.rich === true ? { rich: true } : {}),
     questions: questions.map((q) => ({
       id: q?.id,
       header: truncate(q?.header, 120),
       question: truncate(q?.question, 2000),
+      ...(typeof q?.kind === "string" ? { kind: q.kind } : {}),
+      ...(typeof q?.required === "boolean" ? { required: q.required } : {}),
+      ...(typeof q?.placeholder === "string" ? { placeholder: truncate(q.placeholder, 500) } : {}),
+      ...(q?.canvasPreset && typeof q.canvasPreset === "object" ? { canvasPreset: q.canvasPreset } : {}),
       selection: q?.selection ?? { mode: "single" },
       options: (Array.isArray(q?.options) ? q.options.slice(0, 10) : []).map((o) => ({
         label: truncate(o?.label, 500),
@@ -1495,11 +1503,12 @@ function userInputAlreadyLogged(logId, userInputId) {
 }
 
 function liveUserInputs(entry) {
+  const richForEntry = [...pendingRichInputs.values()].filter((r) => r.logId === entry.logId);
   try {
     const pending = entry.session.fold.pendingUserInputs();
-    return Array.isArray(pending) ? pending : [];
+    return [...(Array.isArray(pending) ? pending : []), ...richForEntry];
   } catch {
-    return [];
+    return [...richForEntry];
   }
 }
 
@@ -1841,6 +1850,45 @@ const mcpDeps = {
   },
   userName() {
     return assistant.user_name;
+  },
+  askRichUserInput(self, args) {
+    const rawSteps = Array.isArray(args?.steps) ? args.steps.slice(0, 8) : [];
+    if (rawSteps.length === 0) {
+      return Promise.resolve({ ok: false, error: "ask_rich_user_input requires at least one step in `steps`." });
+    }
+    const questions = rawSteps.map((step, idx) => {
+      const kind = ["choice", "text", "image", "sketch"].includes(step?.kind)
+        ? step.kind
+        : Array.isArray(step?.options) && step.options.length > 0
+          ? "choice"
+          : "text";
+      return {
+        id: typeof step?.id === "string" && step.id.trim() ? step.id.trim() : `step-${idx + 1}`,
+        header: typeof step?.header === "string" && step.header.trim() ? step.header.trim() : `Step ${idx + 1}`,
+        question: typeof step?.question === "string" && step.question.trim() ? step.question.trim() : "Provide input",
+        kind,
+        required: step?.required !== false,
+        ...(typeof step?.placeholder === "string" ? { placeholder: step.placeholder } : {}),
+        ...(step?.canvasPreset && typeof step.canvasPreset === "object" ? { canvasPreset: step.canvasPreset } : {}),
+        selection: step?.selection ?? { mode: "single" },
+        options: Array.isArray(step?.options) ? step.options : [],
+      };
+    });
+    const userInputId = `rich-${uuidv7()}`;
+    return new Promise((resolve) => {
+      pendingRichInputs.set(userInputId, {
+        userInputId,
+        turnId: null,
+        autoResolutionMs: null,
+        rich: true,
+        title: typeof args?.title === "string" ? args.title.trim() : null,
+        logId: self.logId,
+        entry: self,
+        questions,
+        resolve,
+      });
+      pollUserInputs();
+    });
   },
   github: githubToolset,
 };
@@ -2745,6 +2793,38 @@ const server = createServer(async (req, res) => {
       if (!live) {
         return json(res, 404, { error: "no pending input with that id (answered, cancelled, or timed out)", code: "input_not_pending" });
       }
+      if (pendingRichInputs.has(userInputId)) {
+        const rich = pendingRichInputs.get(userInputId);
+        pendingRichInputs.delete(userInputId);
+        const wsDir = entry.meta?.workspaceRoot ?? null;
+        const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
+        const enrichedAnswers = rawAnswers.map((ans) => {
+          const out = {
+            questionId: ans?.questionId,
+            ...(Array.isArray(ans?.selectedLabels) && ans.selectedLabels.length > 0 ? { selectedLabels: ans.selectedLabels } : {}),
+            ...(typeof ans?.selectedLabel === "string" && ans.selectedLabel ? { selectedLabel: ans.selectedLabel } : {}),
+            ...(typeof ans?.freeText === "string" && ans.freeText ? { freeText: ans.freeText } : {}),
+          };
+          const att = ans?.attachment;
+          if (att && typeof att.base64Data === "string" && att.base64Data && wsDir && existsSync(wsDir)) {
+            try {
+              const safeId = String(ans?.questionId ?? "step").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) || "step";
+              const ext = typeof att.mediaType === "string" && att.mediaType.includes("jpeg") ? "jpg" : "png";
+              const relDir = ".code-space/inputs";
+              const absDir = join(wsDir, relDir);
+              mkdirSync(absDir, { recursive: true });
+              const fileName = `${safeId}-${Date.now()}.${ext}`;
+              writeFileSync(join(absDir, fileName), Buffer.from(att.base64Data, "base64"));
+              out.filePath = `${relDir}/${fileName}`;
+            } catch { /* best-effort workspace file write */ }
+          }
+          return out;
+        });
+        rich.resolve({ ok: true, text: JSON.stringify({ answers: enrichedAnswers }) });
+        broadcast(entry.logId, { type: "user_input_answered", userInputId });
+        pollUserInputs();
+        return json(res, 200, { ok: true, userInputId });
+      }
       if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });
       try {
         await connection.command("userInput/answer", {
@@ -2776,6 +2856,14 @@ const server = createServer(async (req, res) => {
       const live = liveUserInputs(entry).find((input) => input?.userInputId === userInputId);
       if (!live) {
         return json(res, 404, { error: "no pending input with that id (answered, cancelled, or timed out)", code: "input_not_pending" });
+      }
+      if (pendingRichInputs.has(userInputId)) {
+        const rich = pendingRichInputs.get(userInputId);
+        pendingRichInputs.delete(userInputId);
+        rich.resolve({ ok: false, error: "User skipped the input request." });
+        broadcast(entry.logId, { type: "user_input_answered", userInputId });
+        pollUserInputs();
+        return json(res, 200, { ok: true, userInputId });
       }
       if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });
       try {

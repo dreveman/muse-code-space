@@ -5,6 +5,8 @@
 
 export type UserInputQuestionLike = {
   id: string;
+  kind?: string;
+  required?: boolean;
   selection: { mode: string; minSelections?: number; maxSelections?: number };
   options?: Array<{ label: string }> | null;
 };
@@ -19,6 +21,8 @@ function selectionBounds(question: UserInputQuestionLike): { min: number; max: n
 }
 
 export function questionSelectionHint(question: UserInputQuestionLike): string {
+  if (question.kind === "sketch") return "Draw in the Scratchpad or upload an image";
+  if (question.kind === "image") return "Upload or paste an image (or draw in Scratchpad)";
   const options = question.options ?? [];
   if (options.length === 0) return "Write your answer";
   if (question.selection.mode !== "multiple") return "Pick one";
@@ -35,22 +39,27 @@ export function questionAnswered(
   question: UserInputQuestionLike,
   picked: readonly string[],
   freeText: string,
+  hasAttachment = false,
 ): boolean {
+  if (hasAttachment) return true;
   if (freeText.trim().length > 0) return true;
-  if (picked.length === 0) return false;
-  const { min, max } = selectionBounds(question);
-  return picked.length >= min && picked.length <= max;
+  if (picked.length > 0) {
+    const { min, max } = selectionBounds(question);
+    return picked.length >= min && picked.length <= max;
+  }
+  return question.required === false;
 }
 
 export function userInputReadiness(
   questions: readonly UserInputQuestionLike[],
   picked: Record<string, string[]>,
   free: Record<string, string>,
+  attachments: Record<string, unknown> = {},
 ): { ready: boolean; answered: number; total: number; firstUnanswered: number } {
   let answered = 0;
   let firstUnanswered = -1;
   questions.forEach((question, index) => {
-    if (questionAnswered(question, picked[question.id] ?? [], free[question.id] ?? "")) {
+    if (questionAnswered(question, picked[question.id] ?? [], free[question.id] ?? "", Boolean(attachments[question.id]))) {
       answered += 1;
     } else if (firstUnanswered === -1) {
       firstUnanswered = index;

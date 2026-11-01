@@ -257,8 +257,16 @@ export function pilotSystemText(event: PilotStreamEvent | undefined): string | n
   }
 }
 
+export type UserInputAttachmentShape = {
+  name: string;
+  mediaType: string;
+  base64Data: string;
+};
+
 export type UserInputQuestionShape = {
   id: string;
+  kind?: string;
+  required?: boolean;
   selection: { mode: string; minSelections?: number; maxSelections?: number };
   options: Array<{ label: string }>;
 };
@@ -268,6 +276,7 @@ export type UserInputSelectionShape = {
   selectedLabels?: string[];
   freeText?: string;
   note?: string;
+  attachment?: UserInputAttachmentShape;
 };
 
 export type WireUserInputAnswer = {
@@ -276,6 +285,7 @@ export type WireUserInputAnswer = {
   selectedLabels?: string[];
   freeText?: string;
   note?: string;
+  attachment?: UserInputAttachmentShape;
 };
 
 // Shape a user's answers into the wire form the serve host accepts
@@ -290,13 +300,31 @@ export function buildUserInputAnswers(
   const answers: WireUserInputAnswer[] = [];
   for (const question of questions) {
     const selection = byId.get(question.id);
-    if (!selection) return { ok: false, error: `Question "${question.id}" was not answered` };
+    if (!selection) {
+      if (question.required === false) continue;
+      return { ok: false, error: `Question "${question.id}" was not answered` };
+    }
     const labels = (selection.selectedLabels ?? []).filter((l) => l.trim().length > 0);
     const freeText = (selection.freeText ?? "").trim();
+    const attachment = selection.attachment;
+    if (attachment && typeof attachment.base64Data === "string" && attachment.base64Data) {
+      const answer: WireUserInputAnswer = {
+        questionId: question.id,
+        attachment,
+        ...(freeText ? { freeText: freeText.slice(0, 2000) } : {}),
+        ...(selection.note?.trim() ? { note: selection.note.trim().slice(0, 500) } : {}),
+      };
+      answers.push(answer);
+      continue;
+    }
     if (labels.length > 0 && freeText) {
       return { ok: false, error: `Question "${question.id}": pick options or write text, not both` };
     }
     if (labels.length === 0 && !freeText) {
+      if (question.required === false) {
+        answers.push({ questionId: question.id, freeText: "" });
+        continue;
+      }
       return { ok: false, error: `Question "${question.id}" was not answered` };
     }
     if (freeText) {
