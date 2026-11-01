@@ -48,7 +48,19 @@ import { ConfirmDeleteDialog, TextPromptDialog, type TextPromptSpec } from "./Di
 import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { PrMonitorEvent, PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { parsePrMonitor } from "./prMonitor";
-import { NewPreviewButton, NewTerminalButton, OwnedArtifactMenu, SidePanel, type SidePanelState, type SideTab } from "./SidePanel";
+import {
+  NewPreviewButton,
+  NewScratchpadButton,
+  NewTerminalButton,
+  OwnedArtifactMenu,
+  SidePanel,
+  type ScratchpadAttachmentPayload,
+  type ScratchpadBackground,
+  type ScratchpadTargetStep,
+  type SidePanelState,
+  type SideTab,
+} from "./SidePanel";
+import { isRichUserInput, RichUserInputCard, type RichUserInputAnswerSelection } from "./RichUserInputCard";
 import { PreviewTabIcon } from "./PreviewPanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
 import { formatToolDuration, toolElapsedMs } from "./toolDuration";
@@ -3931,7 +3943,7 @@ export function App() {
 
   const submitUserInputAnswer = async (
     userInputId: string,
-    selections: Array<{ questionId: string; selectedLabels?: string[]; freeText?: string }>,
+    selections: RichUserInputAnswerSelection[],
   ) => {
     if (!detailSession) return;
     setInputBusyId(userInputId);
@@ -3946,6 +3958,7 @@ export function App() {
         setInputError({ userInputId, error: response.error ?? "Answer could not be sent." });
         return;
       }
+      setScratchpadTargetStep((curr) => (curr?.userInputId === userInputId ? null : curr));
       await Promise.all([pendingInputsQuery.refetch(), sessionsQuery.refetch(), detailQuery.refetch()]);
     } catch {
       setInputError({ userInputId, error: "Answer could not be sent. Try again." });
@@ -4173,6 +4186,54 @@ export function App() {
     );
     void api.setPreviewPort({ session_id: sessionId, port: null }).catch(() => undefined);
   }, [queryClient]);
+  const [scratchpadTargetStep, setScratchpadTargetStep] = useState<ScratchpadTargetStep | null>(null);
+  const [richStepAttachments, setRichStepAttachments] = useState<Record<string, ScratchpadAttachmentPayload>>({});
+
+  const toggleScratchpadTab = useCallback((sessionId: string, background?: ScratchpadBackground) => {
+    setSidePanels((current) => {
+      const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing = state.tabs.find((tab) => tab.kind === "scratchpad");
+      const currentlyShowing = existing && state.activeKey === existing.key && (!isNarrow || mobileSideOpen);
+      if (currentlyShowing && !background) {
+        const tabs = state.tabs.filter((tab) => tab.key !== existing.key);
+        const activeKey = tabs.at(-1)?.key ?? null;
+        if (tabs.length === 0) setMobileSideOpen(false);
+        return { ...current, [sessionId]: { ...state, tabs, activeKey } };
+      }
+      if (isNarrow) setMobileSideOpen(true);
+      if (existing) {
+        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: "scratchpad", kind: "scratchpad", ...(background ? { background } : {}) };
+      return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [isNarrow, mobileSideOpen]);
+
+  const openScratchpadForStep = useCallback((target: ScratchpadTargetStep, background?: ScratchpadBackground) => {
+    if (!detailSession?.id) return;
+    setScratchpadTargetStep(target);
+    toggleScratchpadTab(detailSession.id, background ?? "grid");
+  }, [detailSession?.id, toggleScratchpadTab]);
+
+  const handleAttachScratchpadToStep = useCallback((target: ScratchpadTargetStep, payload: ScratchpadAttachmentPayload) => {
+    setRichStepAttachments((curr) => ({ ...curr, [`${target.userInputId}:${target.questionId}`]: payload }));
+    if (isNarrow) setMobileSideOpen(false);
+  }, [isNarrow]);
+
+  const handleAttachScratchpadToComposer = useCallback((payload: ScratchpadAttachmentPayload) => {
+    setAttachments((curr) => [
+      ...curr,
+      {
+        id: randomUuid(),
+        name: payload.name,
+        mediaType: payload.mediaType,
+        base64Data: payload.base64Data,
+        previewUrl: payload.dataUrl,
+      },
+    ]);
+    if (isNarrow) setMobileSideOpen(false);
+  }, [isNarrow]);
+
   const togglePreviewTab = useCallback((sessionId: string) => {
     let closedPreview = false;
     setSidePanels((current) => {
@@ -4902,6 +4963,10 @@ export function App() {
     (!isNarrow || mobileSideOpen) &&
       detailSidePanelState?.tabs.some((tab) => tab.kind === "preview" && tab.key === detailSidePanelState.activeKey),
   );
+  const scratchpadTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailSidePanelState?.tabs.some((tab) => tab.kind === "scratchpad" && tab.key === detailSidePanelState.activeKey),
+  );
   const detailPreviewPort = effectiveDetailPreviewPort;
   const detailMenuSession = selectedSession ?? detailSession;
   const detailCompanionActive = (!detailSession?.archived && (sessionActive || workflowRunning)) || sendingDirection || pendingEcho !== null;
@@ -4938,6 +5003,7 @@ export function App() {
                         visible={detailCompanionVisible} />
                       <div className="chat-floating-actions">
                         <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                        <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
                         <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
                         <SessionMenu
@@ -4965,6 +5031,8 @@ export function App() {
     detailCompanionVisible,
     ownedFiles,
     openFileTabForDetail,
+    scratchpadTabActive,
+    toggleScratchpadTab,
     previewTabActive,
     togglePreviewTab,
     colorMode,
@@ -5036,6 +5104,9 @@ export function App() {
         vcsStatus={vcsStatusQuery.data ?? null}
         vcsLoading={vcsStatusQuery.isPending}
         workspacePath={detailWorkspaceShort}
+        scratchpadTargetStep={scratchpadTargetStep}
+        onAttachScratchpadToStep={handleAttachScratchpadToStep}
+        onAttachScratchpadToComposer={handleAttachScratchpadToComposer}
         onRefreshVcs={refreshDetailVcs}
         onOpenFile={openFileTabForDetail}
         onBack={() => setMobileSideOpen(false)}
@@ -5057,6 +5128,9 @@ export function App() {
     vcsStatusQuery.data,
     vcsStatusQuery.isPending,
     detailWorkspaceShort,
+    scratchpadTargetStep,
+    handleAttachScratchpadToStep,
+    handleAttachScratchpadToComposer,
     refreshDetailVcs,
     openFileTabForDetail,
   ]);
@@ -5306,16 +5380,43 @@ export function App() {
                       </button>
                     </div>
 
-                    {pendingInputs.map((input) => (
-                      <UserInputCard
-                        key={input.userInputId}
-                        input={input}
-                        busy={inputBusyId === input.userInputId}
-                        error={inputError?.userInputId === input.userInputId ? inputError.error : null}
-                        onAnswer={submitUserInputAnswer}
-                        onCancel={skipUserInput}
-                      />
-                    ))}
+                    {pendingInputs.map((input) =>
+                      isRichUserInput(input) ? (
+                        <RichUserInputCard
+                          key={input.userInputId}
+                          input={input}
+                          busy={inputBusyId === input.userInputId}
+                          error={inputError?.userInputId === input.userInputId ? inputError.error : null}
+                          stepAttachments={Object.fromEntries(
+                            input.questions
+                              .map((q) => [q.id, richStepAttachments[`${input.userInputId}:${q.id}`]])
+                              .filter((entry): entry is [string, ScratchpadAttachmentPayload] => Boolean(entry[1])),
+                          )}
+                          onAttachStepImage={(questionId, payload) =>
+                            setRichStepAttachments((curr) => ({ ...curr, [`${input.userInputId}:${questionId}`]: payload }))
+                          }
+                          onClearStepImage={(questionId) =>
+                            setRichStepAttachments((curr) => {
+                              const next = { ...curr };
+                              delete next[`${input.userInputId}:${questionId}`];
+                              return next;
+                            })
+                          }
+                          onOpenScratchpadForStep={openScratchpadForStep}
+                          onAnswer={submitUserInputAnswer}
+                          onCancel={skipUserInput}
+                        />
+                      ) : (
+                        <UserInputCard
+                          key={input.userInputId}
+                          input={input}
+                          busy={inputBusyId === input.userInputId}
+                          error={inputError?.userInputId === input.userInputId ? inputError.error : null}
+                          onAnswer={submitUserInputAnswer}
+                          onCancel={skipUserInput}
+                        />
+                      )
+                    )}
                     {awaitingPilot || failedPilotStart ? (
                       <div className="pilot-start-panel" role="status">
                         <span>{awaitingPilot

@@ -160,15 +160,25 @@ function optionPreviewText(value: unknown): string | null {
 // render its questions from the args (meaningful while the agent is still
 // waiting) and mark the answers once the completed output carries them.
 // Anything malformed fails the whole preview closed to the generic view.
+const USER_INPUT_TOOLS = new Set([
+  "request_user_input",
+  "ask_rich_user_input",
+  "askrichuserinput",
+  "mcp__code_space__ask_rich_user_input",
+]);
+
 export function userInputPreviewForTool(details: ToolDetails | null): UserInputPreview | null {
   if (!details || details.failureReason) return null;
-  if (details.tool?.toLowerCase() !== "request_user_input") return null;
+  const toolName = details.tool?.toLowerCase() ?? "";
+  if (!USER_INPUT_TOOLS.has(toolName)) return null;
   const status = (details.status ?? "").toLowerCase();
   if (status !== "completed" && status !== "inprogress") return null;
   if (!details.args || details.args.length > 200_000) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(details.args); } catch { return null; }
-  const rawQuestions = (parsed as { questions?: unknown })?.questions;
+  const rawQuestions =
+    (parsed as { questions?: unknown })?.questions ??
+    (parsed as { steps?: unknown })?.steps;
   if (!Array.isArray(rawQuestions) || rawQuestions.length === 0 || rawQuestions.length > 10) return null;
 
   const questions: UserInputQuestionPreview[] = [];
@@ -226,7 +236,11 @@ export function userInputPreviewForTool(details: ToolDetails | null): UserInputP
         }
         const known = new Set(question.options.map((option) => option.label));
         const validLabels = question.options.length > 0 ? labels.filter((label) => known.has(label)) : labels;
-        const freeText = cleanPreviewText(entry.freeText ?? entry.text ?? entry.value, 500);
+        const filePath = cleanPreviewText(entry.filePath, 260);
+        const rawFree = cleanPreviewText(entry.freeText ?? entry.text ?? entry.value, 500);
+        const freeText = filePath
+          ? [rawFree, `Sketch/image saved to ${filePath}`].filter(Boolean).join(" · ")
+          : rawFree;
         const note = cleanPreviewText(entry.note, 500);
         if (validLabels.length > 0) question.answer = { labels: validLabels, freeText: null, note };
         else if (freeText) question.answer = { labels: [], freeText, note };
@@ -318,8 +332,16 @@ const todosStat = (ctx: ToolContext) => {
   return preview ? `${preview.done}/${preview.total} done` : null;
 };
 function userInputDetail(args: Record<string, unknown> | null): string | null {
-  if (!Array.isArray(args?.questions)) return null;
-  const first = args.questions[0] as Record<string, unknown> | null;
+  if (typeof args?.title === "string" && args.title.trim()) {
+    return shortDetail(args.title);
+  }
+  const list = Array.isArray(args?.questions)
+    ? args.questions
+    : Array.isArray(args?.steps)
+      ? args.steps
+      : null;
+  if (!list) return null;
+  const first = list[0] as Record<string, unknown> | null;
   return shortDetail(first?.header) ?? shortDetail(first?.question);
 }
 const userInputStat = (ctx: ToolContext) => {
@@ -395,7 +417,7 @@ const adapters: readonly ToolAdapter[] = [
   { id: "search", tools: new Set(["search"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Searching" : failed ? "Search failed" : "Searched", detail: searchPattern(args?.pattern) }), view: "search", metric: (ctx) => { const preview = searchPreviewForTool(ctx.details); return preview ? searchMetric(preview) : null; } },
   { id: "skill", tools: new Set(["read_skill"]), label: (ctx, args) => ({ name: ctx.running ? "Reading skill" : ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "") ? "Read skill failed" : "Read skill", detail: skillDetail(args) }), view: "skill", showDuration: false, metric: skillStat },
   { id: "todos", tools: new Set(["write_todos"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Updating plan" : failed ? "Plan update failed" : "Updated plan", detail: todosDetail(args) }), view: "todos", showDuration: false, metric: todosStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
-  { id: "user-input", tools: new Set(["request_user_input"]), label: (ctx, args, failed) => ({ name: ctx.running ? "Asking you" : failed ? "Question failed" : "Asked you", detail: userInputDetail(args) }), view: "user-input", metric: userInputStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
+  { id: "user-input", tools: USER_INPUT_TOOLS, label: (ctx, args, failed) => ({ name: ctx.running ? "Asking you" : failed ? "Question failed" : "Asked you", detail: userInputDetail(args) }), view: "user-input", metric: userInputStat, emphasizeName: (ctx) => !ctx.running && (!!ctx.details?.failureReason || /^(failed|rejected|cancelled|canceled)$/i.test(ctx.details?.status ?? "")) },
   { id: "message", tools: new Set(["mcp__code_space__send_message"]), label: (ctx) => ({ name: ctx.running ? "Sending message" : messageFailed(ctx) ? "Message failed" : "Sent message", detail: null }), view: "plain", emphasizeName: messageFailed },
   { id: "agents", tools: new Set(["mcp__code_space__list_agents"]), label: (ctx) => actionLabel("Listing agents", "Listed agents", "Listing agents failed", ctx, null), view: "agent-list", showDuration: false },
   { id: "github-create-pr", tools: new Set(["mcp__code_space__github_create_pr"]), label: (ctx, args, failed) => githubAction("Creating pull request", "Created pull request", shortDetail(args?.title), ctx, failed), view: "plain" },

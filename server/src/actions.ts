@@ -276,6 +276,12 @@ const pilotUserInputQuestionSchema = z.object({
   id: z.string(),
   header: z.string().optional(),
   question: z.string().optional(),
+  kind: z.string().optional(),
+  required: z.boolean().optional(),
+  placeholder: z.string().optional(),
+  canvasPreset: z.object({
+    background: z.enum(["grid", "dots", "blank"]).optional(),
+  }).optional(),
   selection: z.object({
     mode: z.string(),
     minSelections: z.number().int().optional(),
@@ -292,6 +298,8 @@ const pilotUserInputsResponseSchema = z.object({
     userInputId: z.string(),
     turnId: z.string().nullable().optional(),
     autoResolutionMs: z.number().nullable().optional(),
+    title: z.string().nullable().optional(),
+    rich: z.boolean().optional(),
     questions: z.array(pilotUserInputQuestionSchema),
   })),
 });
@@ -299,8 +307,13 @@ const pilotUserInputsResponseSchema = z.object({
 const userInputAnswerSchema = z.object({
   questionId: z.string().min(1).max(200),
   selectedLabels: z.array(z.string().max(500)).max(20).optional(),
-  freeText: z.string().max(500).optional(),
+  freeText: z.string().max(2000).optional(),
   note: z.string().max(500).optional(),
+  attachment: z.object({
+    name: z.string().trim().min(1).max(260),
+    mediaType: z.string().trim().regex(/^image\/[a-z0-9.+-]+$/i),
+    base64Data: z.string().min(1).max(15_000_000),
+  }).optional(),
 });
 
 const syncPilotEventsResponseSchema = z.object({
@@ -4554,6 +4567,8 @@ export const Actions = {
         userInputId: z.string(),
         turnId: z.string().nullable().optional(),
         autoResolutionMs: z.number().nullable().optional(),
+        title: z.string().nullable().optional(),
+        rich: z.boolean().optional(),
         questions: z.array(pilotUserInputQuestionSchema),
       })),
       error: z.string().nullable(),
@@ -4620,6 +4635,8 @@ export const Actions = {
       }
       const questions: UserInputQuestionShape[] = pending.questions.map((q) => ({
         id: q.id,
+        kind: q.kind,
+        required: q.required,
         selection: {
           mode: q.selection.mode,
           minSelections: q.selection.minSelections,
@@ -4634,6 +4651,7 @@ export const Actions = {
           selectedLabels: a.selectedLabels,
           freeText: a.freeText,
           note: a.note,
+          attachment: a.attachment,
         })),
       );
       if (!shaped.ok) return { ok: false, error: shaped.error };
@@ -4652,8 +4670,10 @@ export const Actions = {
         .map((answer) => {
           const question = pending.questions.find((q) => q.id === answer.questionId);
           const title = question?.header?.trim() || question?.question?.trim() || answer.questionId;
+          const attachmentNote = answer.attachment ? `[attached ${answer.attachment.name}]` : "";
           const choice = answer.selectedLabel ?? answer.selectedLabels?.join(", ") ?? answer.freeText ?? "";
-          return `You answered "${title}": ${choice}`;
+          const combined = [choice, attachmentNote].filter(Boolean).join(" ") || "(skipped)";
+          return `You answered "${title}": ${combined}`;
         })
         .join("\n")
         .slice(0, 2000);

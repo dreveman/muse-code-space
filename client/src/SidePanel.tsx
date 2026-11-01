@@ -6,10 +6,19 @@ import { Suspense, lazy, memo, useEffect, useRef, useState } from "react";
 import { FileTab } from "./FileTab";
 import { ImageTab } from "./ImageTab";
 import { NewPreviewButton, PreviewTabIcon, PreviewView } from "./PreviewPanel";
+import {
+  NewScratchpadButton,
+  ScratchpadTabIcon,
+  ScratchpadView,
+  type ScratchpadAttachmentPayload,
+  type ScratchpadBackground,
+  type ScratchpadTargetStep,
+} from "./ScratchpadPanel";
 import { SmartLogIcon, SmartLogView } from "./SmartLogPanel";
 import type { SessionVcsStatus } from "./smartlogLayout";
 
-export { NewPreviewButton };
+export { NewPreviewButton, NewScratchpadButton };
+export type { ScratchpadAttachmentPayload, ScratchpadBackground, ScratchpadTargetStep };
 
 const LazyTerminalView = lazy(() =>
   import("./TerminalPanel").then((m) => ({ default: m.TerminalView })),
@@ -57,7 +66,8 @@ export type SideTab =
   | { key: string; kind: "file"; path: string }
   | { key: string; kind: "image"; title: string; src: string; path?: string | null }
   | { key: string; kind: "smartlog" }
-  | { key: string; kind: "preview" };
+  | { key: string; kind: "preview" }
+  | { key: string; kind: "scratchpad"; background?: ScratchpadBackground };
 
 export type SidePanelState = { tabs: SideTab[]; activeKey: string | null };
 
@@ -85,6 +95,7 @@ export const OwnedArtifactMenu = memo(function OwnedArtifactMenu({ paths, onOpen
 });
 
 export function sideTabLabel(tab: SideTab, terminalCount = 1): string {
+  if (tab.kind === "scratchpad") return "Scratchpad";
   if (tab.kind === "preview") return "Preview";
   if (tab.kind === "smartlog") return "Smart Log";
   if (tab.kind === "image") return tab.title.split("/").at(-1) || tab.title;
@@ -101,6 +112,9 @@ export function SidePanel({
   vcsStatus = null,
   vcsLoading = false,
   workspacePath = null,
+  scratchpadTargetStep = null,
+  onAttachScratchpadToStep,
+  onAttachScratchpadToComposer,
   onRefreshVcs,
   onOpenFile,
   onSelect,
@@ -114,6 +128,9 @@ export function SidePanel({
   vcsStatus?: SessionVcsStatus | null;
   vcsLoading?: boolean;
   workspacePath?: string | null;
+  scratchpadTargetStep?: ScratchpadTargetStep | null;
+  onAttachScratchpadToStep?: (target: ScratchpadTargetStep, attachment: ScratchpadAttachmentPayload) => void;
+  onAttachScratchpadToComposer?: (attachment: ScratchpadAttachmentPayload) => void;
   onRefreshVcs?: () => void;
   onOpenFile?: (path: string) => void;
   onSelect: (key: string) => void;
@@ -149,6 +166,7 @@ export function SidePanel({
                 {tab.kind === "terminal" && <TerminalTabIcon />}
                 {tab.kind === "smartlog" && <SmartLogIcon />}
                 {tab.kind === "preview" && <PreviewTabIcon />}
+                {tab.kind === "scratchpad" && <ScratchpadTabIcon />}
                 {(tab.kind === "file" || tab.kind === "image") && <FileTabIcon />}
                 <span>{label}</span>
               </button>
@@ -199,6 +217,15 @@ export function SidePanel({
                   sessionId={sessionId}
                   active={selected}
                   initialPort={previewPort}
+                />
+              ) : tab.kind === "scratchpad" ? (
+                <ScratchpadView
+                  sessionId={sessionId}
+                  active={selected}
+                  targetStep={scratchpadTargetStep}
+                  initialBackground={tab.background ?? "grid"}
+                  onAttachToStep={onAttachScratchpadToStep}
+                  onAttachToComposer={onAttachScratchpadToComposer}
                 />
               ) : tab.kind === "image" ? (
                 <ImageTab
