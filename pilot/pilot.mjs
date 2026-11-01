@@ -44,7 +44,7 @@ import { MuseClient, spawnMspConnection, readSessionDurability } from "@muse-cod
 import { createServer } from "node:http";
 import { get as httpsGet, request as httpsRequest } from "node:https";
 import { execFile, spawn } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, unlinkSync, readdirSync, rmSync, lstatSync } from "node:fs";
 import { createHash, randomFillSync } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -994,6 +994,7 @@ async function pumpTurn(sessionId, turn, { hostStarted = false } = {}) {
     broadcast(sessionId, { type: "turn_error", error: String(e).slice(0, 500) });
   } finally {
     clearTimeout(timer);
+    cancelPendingRichInputsForSession(sessionId, "The turn ended before input was submitted.");
     if (state.turnId) {
       openTurns.delete(state.turnId);
       // Late revisions of this turn's long-lived items (a workflow still
@@ -1444,8 +1445,21 @@ if (typeof relayProber.unref === "function") relayProber.unref();
 // answer back via `userInput/answer` (or `userInput/cancel`).
 // userInputId -> stable logId, for settled detection.
 const surfacedInputs = new Map();
-// userInputId -> { userInputId, logId, entry, title, questions, resolve } for mcp__code_space__ask_rich_user_input.
+// userInputId -> { userInputId, logId, entry, title, questions, timer, resolve } for mcp__code_space__ask_rich_user_input.
 const pendingRichInputs = new Map();
+
+function cancelPendingRichInputsForSession(logId, reason = "Input request cancelled.") {
+  let cancelledAny = false;
+  for (const [userInputId, rich] of pendingRichInputs) {
+    if (!logId || rich.logId === logId) {
+      clearTimeout(rich.timer);
+      pendingRichInputs.delete(userInputId);
+      rich.resolve({ ok: false, error: reason });
+      cancelledAny = true;
+    }
+  }
+  if (cancelledAny) pollUserInputs();
+}
 
 // UUIDv7 for the SS3.1.1 idempotency handle the answer/cancel verbs require.
 function uuidv7() {
@@ -1574,6 +1588,7 @@ async function boot() {
       if (shuttingDown) break; // our own clean close, not a death — stay down
       log("serve host exited:", safeJson(exit).slice(0, 200));
       bootReady = false;
+      cancelPendingRichInputsForSession(null, "The pilot host restarted.");
       mcpTokens.clear(); // only freshly resumed sessions may use MCP tokens
       broadcastAll({ type: "host_restarted" });
       await new Promise((r) => setTimeout(r, 2000));
@@ -1876,6 +1891,15 @@ const mcpDeps = {
     });
     const userInputId = `rich-${uuidv7()}`;
     return new Promise((resolve) => {
+      const timeoutMs = Math.max(60_000, turnToolIdleMs());
+      const timer = setTimeout(() => {
+        if (pendingRichInputs.has(userInputId)) {
+          pendingRichInputs.delete(userInputId);
+          resolve({ ok: false, error: "Rich user input timed out waiting for an answer." });
+          pollUserInputs();
+        }
+      }, timeoutMs);
+      if (typeof timer.unref === "function") timer.unref();
       pendingRichInputs.set(userInputId, {
         userInputId,
         turnId: null,
@@ -1885,6 +1909,7 @@ const mcpDeps = {
         logId: self.logId,
         entry: self,
         questions,
+        timer,
         resolve,
       });
       pollUserInputs();
@@ -1906,6 +1931,7 @@ function isOwnedWorkspacePath(wsDir) {
 }
 
 function deleteSession(id, requestedWorkspaceRoot = null) {
+  cancelPendingRichInputsForSession(id, "Session was deleted.");
   const entry = resolveEntry(id);
   const logId = entry?.logId ?? id;
   for (const t of openTurns.values()) {
@@ -2795,6 +2821,7 @@ const server = createServer(async (req, res) => {
       }
       if (pendingRichInputs.has(userInputId)) {
         const rich = pendingRichInputs.get(userInputId);
+        clearTimeout(rich.timer);
         pendingRichInputs.delete(userInputId);
         const wsDir = entry.meta?.workspaceRoot ?? null;
         const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
@@ -2808,14 +2835,32 @@ const server = createServer(async (req, res) => {
           const att = ans?.attachment;
           if (att && typeof att.base64Data === "string" && att.base64Data && wsDir && existsSync(wsDir)) {
             try {
-              const safeId = String(ans?.questionId ?? "step").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) || "step";
-              const ext = typeof att.mediaType === "string" && att.mediaType.includes("jpeg") ? "jpg" : "png";
-              const relDir = ".code-space/inputs";
-              const absDir = join(wsDir, relDir);
-              mkdirSync(absDir, { recursive: true });
-              const fileName = `${safeId}-${Date.now()}.${ext}`;
-              writeFileSync(join(absDir, fileName), Buffer.from(att.base64Data, "base64"));
-              out.filePath = `${relDir}/${fileName}`;
+              const decoded = Buffer.from(att.base64Data, "base64");
+              if (decoded.byteLength > 0 && decoded.byteLength <= 10 * 1024 * 1024 && !lstatSync(wsDir).isSymbolicLink()) {
+                const csDir = join(wsDir, ".code-space");
+                mkdirSync(csDir, { recursive: true });
+                if (!lstatSync(csDir).isSymbolicLink()) {
+                  const ignorePath = join(csDir, ".gitignore");
+                  if (!existsSync(ignorePath)) writeFileSync(ignorePath, "*\n");
+                  const relDir = ".code-space/inputs";
+                  const absDir = join(wsDir, relDir);
+                  mkdirSync(absDir, { recursive: true });
+                  if (!lstatSync(absDir).isSymbolicLink()) {
+                    const safeId = String(ans?.questionId ?? "step").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) || "step";
+                    const mime = typeof att.mediaType === "string" ? att.mediaType.toLowerCase() : "image/png";
+                    const ext = mime.includes("jpeg") || mime.includes("jpg")
+                      ? "jpg"
+                      : mime.includes("webp")
+                        ? "webp"
+                        : mime.includes("gif")
+                          ? "gif"
+                          : "png";
+                    const fileName = `${safeId}-${Date.now()}.${ext}`;
+                    writeFileSync(join(absDir, fileName), decoded);
+                    out.filePath = `${relDir}/${fileName}`;
+                  }
+                }
+              }
             } catch { /* best-effort workspace file write */ }
           }
           return out;
@@ -2859,6 +2904,7 @@ const server = createServer(async (req, res) => {
       }
       if (pendingRichInputs.has(userInputId)) {
         const rich = pendingRichInputs.get(userInputId);
+        clearTimeout(rich.timer);
         pendingRichInputs.delete(userInputId);
         rich.resolve({ ok: false, error: "User skipped the input request." });
         broadcast(entry.logId, { type: "user_input_answered", userInputId });
@@ -2890,6 +2936,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && mInterrupt) {
       const entry = resolveEntry(mInterrupt[1]);
       if (!entry) return json(res, 404, { error: "unknown session", code: "unknown_session" });
+      cancelPendingRichInputsForSession(entry.logId, "Turn was interrupted by the user.");
       if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });
       // Prefer the explicit turn id when the session has an open turn under
       // pump; otherwise the backend resolves the foreground turn at admission.

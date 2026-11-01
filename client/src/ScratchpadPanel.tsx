@@ -264,6 +264,10 @@ export const ScratchpadView = memo(function ScratchpadView({
   });
 
   useEffect(() => {
+    setBackground((curr) => (initialBackground && initialBackground !== curr ? initialBackground : curr));
+  }, [initialBackground]);
+
+  useEffect(() => {
     sessionStrokesCache.set(sessionId, { strokes, redo: redoStack, background });
   }, [sessionId, strokes, redoStack, background]);
 
@@ -433,6 +437,9 @@ export const ScratchpadView = memo(function ScratchpadView({
   const finishStroke = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (activePointerIdRef.current !== event.pointerId || !activeStrokeRef.current) return;
     event.preventDefault();
+    try {
+      inkCanvasRef.current?.releasePointerCapture(event.pointerId);
+    } catch { /* ignore */ }
     const finished = activeStrokeRef.current;
     activeStrokeRef.current = null;
     activePointerIdRef.current = null;
