@@ -2189,6 +2189,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   /* The chat column takes all leftover width, but its reading content stays
      centered at a fixed measure no matter how wide the window grows. */
   .output-stream, .terminal-prompt, .transcript-empty { width: 100%; max-width: 700px; margin-inline: auto; }
+  .user-input-card { width: 100%; max-width: 700px; margin-inline: auto; }
   .transcript { container: transcript / inline-size; }
   .companion-welcome { container: companion-welcome / inline-size; }
   .working-indicator { margin-left: 20px; }
@@ -2364,6 +2365,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 .output-event.user, .output-event.tool, .output-event.agents, .output-event.message { border-radius: var(--chat-round, 0); }
 .output-event.stdout { border-radius: var(--chat-round, 0); }
+.transcript > .user-input-card {
+  width: 100%;
+  max-width: 700px;
+  margin-inline: auto;
+  border-left-width: var(--chat-side-border, 0px);
+  border-right-width: var(--chat-side-border, 0px);
+  border-radius: var(--chat-round, 0);
+}
 
 /* Permanent-delete confirmation. */
 .dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .38); }

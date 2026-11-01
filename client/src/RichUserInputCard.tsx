@@ -352,49 +352,47 @@ export function RichUserInputCard({
 
       {error && <p className="form-error" role="alert">{error}</p>}
 
-      <div className="user-input-actions rich-user-input-actions">
+      <div className="user-input-actions">
         <span className="user-input-status" role="status">
-          {readiness.ready ? "All steps ready" : `${readiness.answered} of ${readiness.total} steps answered`}
+          {readiness.ready ? "Ready to send" : `${readiness.answered} of ${readiness.total} answered`}
         </span>
-        <div className="rich-user-input-nav">
+        {clampedIndex > 0 && (
           <button
             type="button"
             className="user-input-skip"
-            onClick={() => onCancel(input.userInputId)}
+            onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
             disabled={busy}
           >
-            Skip
+            Back
           </button>
-          {clampedIndex > 0 && (
-            <button
-              type="button"
-              className="user-input-skip"
-              onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-              disabled={busy}
-            >
-              Back
-            </button>
-          )}
-          {clampedIndex < totalSteps - 1 ? (
-            <button
-              type="button"
-              className="user-input-submit"
-              onClick={() => setStepIndex((i) => Math.min(totalSteps - 1, i + 1))}
-              disabled={busy}
-            >
-              Next step
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="user-input-submit"
-              onClick={submit}
-              disabled={busy || !readiness.ready}
-            >
-              {busy ? "Sending…" : "Send answers"}
-            </button>
-          )}
-        </div>
+        )}
+        {clampedIndex < totalSteps - 1 ? (
+          <button
+            type="button"
+            className="user-input-submit"
+            onClick={() => setStepIndex((i) => Math.min(totalSteps - 1, i + 1))}
+            disabled={busy}
+          >
+            Next
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="user-input-submit"
+            onClick={submit}
+            disabled={busy || !readiness.ready}
+          >
+            {busy ? "Sending…" : "Send answer"}
+          </button>
+        )}
+        <button
+          type="button"
+          className="user-input-skip"
+          onClick={() => onCancel(input.userInputId)}
+          disabled={busy}
+        >
+          Skip
+        </button>
       </div>
     </div>
   );
