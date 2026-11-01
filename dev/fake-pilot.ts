@@ -6,7 +6,7 @@ import { relative, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
-import { readWorkspaceImage } from "../pilot/files.mjs";
+import { listWorkspaceDirectory, readWorkspaceImage } from "../pilot/files.mjs";
 import {
   capturePreviewScreenshot,
   createPreviewWsManager,
@@ -2571,6 +2571,25 @@ Bun.serve({
       if (!session.workspaceRoot) return json(409, { error: "Companion working directory is unavailable." });
       const result = readWorkspaceImage(session.workspaceRoot, requestedPath);
       return json(result.ok ? 200 : ("code" in result ? Number(result.code) : 400), result);
+    }
+    if (sub === "/files/list" && req.method === "POST") {
+      const requestedPath = typeof body.path === "string" ? body.path : "";
+      if (session.workspaceRoot && existsSync(session.workspaceRoot)) {
+        const result = listWorkspaceDirectory(session.workspaceRoot, requestedPath);
+        if (result.ok) return json(200, result);
+      }
+      if (!requestedPath) {
+        return json(200, {
+          ok: true,
+          path: "",
+          entries: [
+            { name: "alpha.ts", path: "alpha.ts", kind: "file", size: 36, isImage: false },
+            { name: "test.rs", path: "test.rs", kind: "file", size: 17, isImage: false },
+            { name: "notes.unknown", path: "notes.unknown", kind: "file", size: 12, isImage: false },
+          ],
+        });
+      }
+      return json(404, { error: "Directory not found in this agent's working directory." });
     }
 
     if (sub === "/poll") {

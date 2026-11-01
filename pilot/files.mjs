@@ -1,11 +1,14 @@
 // Bounded read-only file access for Code Space file tabs. Never accept a
 // browser-supplied workspace root: the pilot session's saved root is the only
 // authority. Refuse symlink components rather than trying to win path races.
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 export const MAX_VIEW_FILE_BYTES = 256 * 1024;
 export const MAX_VIEW_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_DIR_ENTRIES = 500;
 const fail = (code, error) => ({ ok: false, code, error });
+
+const IGNORED_DIR_NAMES = new Set([".git", "node_modules", ".code-space"]);
 
 const IMAGE_MEDIA_TYPES = new Map([
   [".png", "image/png"],
@@ -139,3 +142,85 @@ export function readWorkspaceFile(workspaceRoot, requested) {
     return fail(400, "File cannot be opened.");
   }
 }
+
+export function listWorkspaceDirectory(workspaceRoot, requestedDir = "") {
+  const cleaned = normalizeRelativeWorkspacePath(requestedDir);
+  if (
+    cleaned.length > 2000 ||
+    isAbsolute(cleaned) ||
+    cleaned.includes("\\") ||
+    /[\x00-\x1f\x7f]/.test(cleaned) ||
+    cleaned.split("/").includes("..")
+  ) {
+    return fail(400, "Enter a relative directory path inside this agent's working directory.");
+  }
+  try {
+    const root = realpathSync(workspaceRoot);
+    const target = cleaned && cleaned !== "." ? resolve(root, cleaned) : root;
+    const relPath = relative(root, target);
+    if (relPath.startsWith(`..${sep}`) || relPath === ".." || isAbsolute(relPath)) {
+      return fail(400, "Directory must be inside the working directory.");
+    }
+    if (relPath) {
+      let current = root;
+      for (const part of relPath.split(sep)) {
+        current = join(current, part);
+        if (lstatSync(current).isSymbolicLink()) {
+          return fail(400, "Directory links are not available in the file browser.");
+        }
+      }
+    }
+    const dirStat = lstatSync(target);
+    if (!dirStat.isDirectory() || dirStat.isSymbolicLink()) {
+      return fail(400, "Only regular directories can be listed.");
+    }
+    const dirents = readdirSync(target, { withFileTypes: true });
+    const entries = [];
+    for (const dirent of dirents) {
+      const name = dirent.name;
+      if (!name || IGNORED_DIR_NAMES.has(name)) continue;
+      if (dirent.isSymbolicLink()) continue;
+      const entryAbs = join(target, name);
+      const entryRel = relPath ? `${relPath.split(sep).join("/")}/${name}` : name;
+      try {
+        const st = lstatSync(entryAbs);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          entries.push({
+            name,
+            path: entryRel,
+            kind: "directory",
+            size: null,
+            isImage: false,
+          });
+        } else if (st.isFile()) {
+          const dot = name.lastIndexOf(".");
+          const ext = dot >= 0 ? name.slice(dot).toLowerCase() : "";
+          entries.push({
+            name,
+            path: entryRel,
+            kind: "file",
+            size: st.size,
+            isImage: IMAGE_MEDIA_TYPES.has(ext),
+          });
+        }
+      } catch {
+        // Skip unreadable or racing entries.
+      }
+    }
+    entries.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    });
+    return {
+      ok: true,
+      path: relPath ? relPath.split(sep).join("/") : "",
+      entries: entries.slice(0, MAX_DIR_ENTRIES),
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") return fail(404, "Directory not found in this agent's working directory.");
+    if (error?.code === "EACCES" || error?.code === "EPERM") return fail(403, "Directory cannot be read.");
+    return fail(400, "Directory cannot be opened.");
+  }
+}
+

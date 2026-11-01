@@ -49,6 +49,7 @@ import { AgentsEvent, agentStatusRunning, parseAgentsRow } from "./AgentsEvent";
 import { PrMonitorEvent, PrMonitoringSyncIcon, PullRequestIcon } from "./PrMonitorEvent";
 import { parsePrMonitor } from "./prMonitor";
 import {
+  NewFileBrowserButton,
   NewPreviewButton,
   NewScratchpadButton,
   NewTerminalButton,
@@ -4204,6 +4205,26 @@ export function App() {
   const [scratchpadTargetStep, setScratchpadTargetStep] = useState<ScratchpadTargetStep | null>(null);
   const [richStepAttachments, setRichStepAttachments] = useState<Record<string, ScratchpadAttachmentPayload>>({});
 
+  const toggleFilesTab = useCallback((sessionId: string) => {
+    setSidePanels((current) => {
+      const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing = state.tabs.find((tab) => tab.kind === "files");
+      const currentlyShowing = existing && state.activeKey === existing.key && (!isNarrow || mobileSideOpen);
+      if (currentlyShowing) {
+        const tabs = state.tabs.filter((tab) => tab.key !== existing.key);
+        const activeKey = tabs.at(-1)?.key ?? null;
+        if (tabs.length === 0) setMobileSideOpen(false);
+        return { ...current, [sessionId]: { ...state, tabs, activeKey } };
+      }
+      if (isNarrow) setMobileSideOpen(true);
+      if (existing) {
+        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: "files", kind: "files" };
+      return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [isNarrow, mobileSideOpen]);
+
   const toggleScratchpadTab = useCallback((sessionId: string, background?: ScratchpadBackground) => {
     setSidePanels((current) => {
       const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
@@ -4985,6 +5006,10 @@ export function App() {
     (!isNarrow || mobileSideOpen) &&
       detailSidePanelState?.tabs.some((tab) => tab.kind === "scratchpad" && tab.key === detailSidePanelState.activeKey),
   );
+  const filesTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailSidePanelState?.tabs.some((tab) => tab.kind === "files" && tab.key === detailSidePanelState.activeKey),
+  );
   const detailPreviewPort = effectiveDetailPreviewPort;
   const detailMenuSession = selectedSession ?? detailSession;
   const detailCompanionActive = (!detailSession?.archived && (sessionActive || workflowRunning)) || sendingDirection || pendingEcho !== null;
@@ -5021,6 +5046,7 @@ export function App() {
                         visible={detailCompanionVisible} />
                       <div className="chat-floating-actions">
                         <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                        <NewFileBrowserButton active={filesTabActive} onOpen={() => toggleFilesTab(detailSession.id)} />
                         <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
                         <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
                         <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
@@ -5049,6 +5075,8 @@ export function App() {
     detailCompanionVisible,
     ownedFiles,
     openFileTabForDetail,
+    filesTabActive,
+    toggleFilesTab,
     scratchpadTabActive,
     toggleScratchpadTab,
     previewTabActive,
@@ -5127,6 +5155,7 @@ export function App() {
         onAttachScratchpadToComposer={handleAttachScratchpadToComposer}
         onRefreshVcs={refreshDetailVcs}
         onOpenFile={openFileTabForDetail}
+        onOpenImage={openImageTabForDetail}
         onBack={() => setMobileSideOpen(false)}
         onSelect={(key) => updateSidePanel(detailSessionIdForFiles, (state) => ({ ...state, activeKey: key }))}
         onClose={(tab) => closeSideTab(detailSessionIdForFiles, tab)}
@@ -5151,6 +5180,7 @@ export function App() {
     handleAttachScratchpadToComposer,
     refreshDetailVcs,
     openFileTabForDetail,
+    openImageTabForDetail,
   ]);
 
   return (

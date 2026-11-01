@@ -2311,6 +2311,57 @@ export const Actions = {
     },
   }),
 
+  listSessionDirectory: defineAction({
+    request: z.object({
+      session_id: z.string().min(1).max(200),
+      path: z.string().max(2000).optional(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      path: z.string().nullable(),
+      entries: z.array(z.object({
+        name: z.string(),
+        path: z.string(),
+        kind: z.enum(["directory", "file"]),
+        size: z.number().int().nonnegative().nullable(),
+        isImage: z.boolean(),
+      })),
+      error: z.string().nullable(),
+    }),
+    privileged: [privileged.resolvePilotUrl],
+    async handler(ctx, args) {
+      const empty = (error: string) => ({ ok: false, path: null, entries: [], error });
+      const denied = terminalAccessError(ctx.viewer, "file");
+      if (denied) return empty(denied);
+      const db = ctx.db<typeof schema>();
+      const session = (await db.select({ pilotSessionId: schema.sessions.pilotSessionId })
+        .from(schema.sessions).where(eq(schema.sessions.id, args.session_id)).limit(1))[0];
+      if (!session?.pilotSessionId) return empty("Agent connection unavailable.");
+      try {
+        const { baseUrl } = await ctx.executePrivileged(privileged.resolvePilotUrl, {});
+        const result = await pilotRequest(
+          baseUrl,
+          `/sessions/${encodeURIComponent(session.pilotSessionId)}/files/list`,
+          { method: "POST", body: JSON.stringify({ path: args.path ?? "" }) },
+          z.object({
+            ok: z.literal(true),
+            path: z.string(),
+            entries: z.array(z.object({
+              name: z.string(),
+              path: z.string(),
+              kind: z.enum(["directory", "file"]),
+              size: z.number().int().nonnegative().nullable(),
+              isImage: z.boolean(),
+            })),
+          }),
+        );
+        return { ok: true, path: result.path, entries: result.entries, error: null };
+      } catch (error) {
+        return empty(pilotRequestErrorText(error));
+      }
+    },
+  }),
+
   // Read a binary/SVG image from the session's workspace for inline Markdown
   // rendering (`![alt](relative/path.png)`) and preview screenshot cards.
   readSessionImage: defineAction({
