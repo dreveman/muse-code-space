@@ -24,7 +24,7 @@ export type ScratchpadTargetStep = {
 
 export type ScratchpadAttachmentPayload = {
   name: string;
-  mediaType: "image/png";
+  mediaType: string;
   base64Data: string;
   dataUrl: string;
 };

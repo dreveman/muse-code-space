@@ -162,6 +162,10 @@ function optionPreviewText(value: unknown): string | null {
 // Anything malformed fails the whole preview closed to the generic view.
 const USER_INPUT_TOOLS = new Set([
   "request_user_input",
+  "askuserrichform",
+  "ask_user_rich_form",
+  "mcp__code_space__askuserrichform",
+  "mcp__code_space__ask_user_rich_form",
   "ask_rich_user_input",
   "askrichuserinput",
   "mcp__code_space__ask_rich_user_input",
@@ -176,16 +180,19 @@ export function userInputPreviewForTool(details: ToolDetails | null): UserInputP
   if (!details.args || details.args.length > 200_000) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(details.args); } catch { return null; }
+  const isRichFormTool = toolName !== "request_user_input";
   const rawQuestions =
     (parsed as { questions?: unknown })?.questions ??
     (parsed as { steps?: unknown })?.steps;
   if (!Array.isArray(rawQuestions) || rawQuestions.length === 0 || rawQuestions.length > 10) return null;
 
   const questions: UserInputQuestionPreview[] = [];
+  let qIdx = 0;
   for (const raw of rawQuestions) {
+    qIdx += 1;
     if (!raw || typeof raw !== "object") return null;
     const record = raw as Record<string, unknown>;
-    const id = cleanPreviewText(record.id, 200);
+    const id = cleanPreviewText(record.id, 200) ?? (isRichFormTool ? `q-${qIdx}` : null);
     const questionText = cleanPreviewText(record.question, 2000);
     const header = record.header === undefined ? null : cleanPreviewText(record.header, 120);
     if (record.header !== undefined && header === null) return null;
@@ -209,41 +216,63 @@ export function userInputPreviewForTool(details: ToolDetails | null): UserInputP
   }
 
   // Answers, when the completed output carries them in any of the shapes
-  // the host returns. Unparseable output just leaves questions unmarked.
+  // the host returns (`{"answered": true, "answers": {"<question text>": ...}}`
+  // for AskUserRichForm, or array-shaped `answers` for request_user_input).
   if (details.output && details.output.length <= 200_000) {
     try {
       const out: unknown = JSON.parse(details.output);
-      const list = Array.isArray(out) ? out
-        : Array.isArray((out as { answers?: unknown })?.answers) ? (out as { answers: unknown[] }).answers
-        : Array.isArray((out as { selections?: unknown })?.selections) ? (out as { selections: unknown[] }).selections
-        : [];
-      const byId = new Map<string, Record<string, unknown>>();
-      for (const entry of list) {
-        if (!entry || typeof entry !== "object") continue;
-        const record = entry as Record<string, unknown>;
-        const qid = cleanPreviewText(record.questionId ?? record.id, 200);
-        if (qid) byId.set(qid, record);
-      }
-      for (const question of questions) {
-        const entry = byId.get(question.id);
-        if (!entry) continue;
-        const labels: string[] = [];
-        if (typeof entry.selectedLabel === "string" && entry.selectedLabel.trim()) labels.push(entry.selectedLabel.trim());
-        if (Array.isArray(entry.selectedLabels)) {
-          for (const label of entry.selectedLabels) {
-            if (typeof label === "string" && label.trim() && !labels.includes(label.trim())) labels.push(label.trim());
+      const rawAnswersField = (out as { answers?: unknown })?.answers;
+      if (rawAnswersField && typeof rawAnswersField === "object" && !Array.isArray(rawAnswersField)) {
+        const mapRecord = rawAnswersField as Record<string, unknown>;
+        for (const question of questions) {
+          const val = mapRecord[question.question] ?? (question.header ? mapRecord[question.header] : undefined) ?? mapRecord[question.id];
+          if (val === undefined || val === null) continue;
+          const known = new Set(question.options.map((o) => o.label));
+          if (Array.isArray(val)) {
+            const labels = val.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+            if (labels.length > 0) question.answer = { labels, freeText: null, note: null };
+          } else if (typeof val === "string" && val.trim()) {
+            const trimmed = val.trim();
+            if (known.has(trimmed)) {
+              question.answer = { labels: [trimmed], freeText: null, note: null };
+            } else {
+              question.answer = { labels: [], freeText: cleanPreviewText(trimmed, 500), note: null };
+            }
           }
         }
-        const known = new Set(question.options.map((option) => option.label));
-        const validLabels = question.options.length > 0 ? labels.filter((label) => known.has(label)) : labels;
-        const filePath = cleanPreviewText(entry.filePath, 260);
-        const rawFree = cleanPreviewText(entry.freeText ?? entry.text ?? entry.value, 500);
-        const freeText = filePath
-          ? [rawFree, `Sketch/image saved to ${filePath}`].filter(Boolean).join(" · ")
-          : rawFree;
-        const note = cleanPreviewText(entry.note, 500);
-        if (validLabels.length > 0) question.answer = { labels: validLabels, freeText: null, note };
-        else if (freeText) question.answer = { labels: [], freeText, note };
+      } else {
+        const list = Array.isArray(out) ? out
+          : Array.isArray(rawAnswersField) ? rawAnswersField
+          : Array.isArray((out as { selections?: unknown })?.selections) ? (out as { selections: unknown[] }).selections
+          : [];
+        const byId = new Map<string, Record<string, unknown>>();
+        for (const entry of list) {
+          if (!entry || typeof entry !== "object") continue;
+          const record = entry as Record<string, unknown>;
+          const qid = cleanPreviewText(record.questionId ?? record.id, 200);
+          if (qid) byId.set(qid, record);
+        }
+        for (const question of questions) {
+          const entry = byId.get(question.id);
+          if (!entry) continue;
+          const labels: string[] = [];
+          if (typeof entry.selectedLabel === "string" && entry.selectedLabel.trim()) labels.push(entry.selectedLabel.trim());
+          if (Array.isArray(entry.selectedLabels)) {
+            for (const label of entry.selectedLabels) {
+              if (typeof label === "string" && label.trim() && !labels.includes(label.trim())) labels.push(label.trim());
+            }
+          }
+          const known = new Set(question.options.map((option) => option.label));
+          const validLabels = question.options.length > 0 ? labels.filter((label) => known.has(label)) : labels;
+          const filePath = cleanPreviewText(entry.filePath, 260);
+          const rawFree = cleanPreviewText(entry.freeText ?? entry.text ?? entry.value, 500);
+          const freeText = filePath
+            ? [rawFree, `Saved to ${filePath}`].filter(Boolean).join(" · ")
+            : rawFree;
+          const note = cleanPreviewText(entry.note, 500);
+          if (validLabels.length > 0) question.answer = { labels: validLabels, freeText: null, note };
+          else if (freeText) question.answer = { labels: [], freeText, note };
+        }
       }
     } catch { /* keep the questions; the raw view still has the output */ }
   }

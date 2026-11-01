@@ -1497,6 +1497,7 @@ function summarizeUserInput(input) {
       ...(typeof q?.kind === "string" ? { kind: q.kind } : {}),
       ...(typeof q?.required === "boolean" ? { required: q.required } : {}),
       ...(typeof q?.placeholder === "string" ? { placeholder: truncate(q.placeholder, 500) } : {}),
+      ...(q?.embed && typeof q.embed === "object" ? { embed: q.embed } : {}),
       ...(q?.canvasPreset && typeof q.canvasPreset === "object" ? { canvasPreset: q.canvasPreset } : {}),
       selection: q?.selection ?? { mode: "single" },
       options: (Array.isArray(q?.options) ? q.options.slice(0, 10) : []).map((o) => ({
@@ -1866,44 +1867,73 @@ const mcpDeps = {
   userName() {
     return assistant.user_name;
   },
-  askRichUserInput(self, args) {
-    const rawSteps = Array.isArray(args?.steps) ? args.steps.slice(0, 8) : [];
-    if (rawSteps.length === 0) {
-      return Promise.resolve({ ok: false, error: "ask_rich_user_input requires at least one step in `steps`." });
+  askUserRichForm(self, args) {
+    const rawQuestions = Array.isArray(args?.questions)
+      ? args.questions.slice(0, 4)
+      : Array.isArray(args?.steps)
+        ? args.steps.slice(0, 4)
+        : [];
+    if (rawQuestions.length === 0) {
+      return Promise.resolve({ ok: false, error: "AskUserRichForm requires 1–4 questions in `questions`." });
     }
-    const questions = rawSteps.map((step, idx) => {
-      const kind = ["choice", "text", "image", "sketch"].includes(step?.kind)
-        ? step.kind
-        : Array.isArray(step?.options) && step.options.length > 0
-          ? "choice"
-          : "text";
+    const questions = rawQuestions.map((q, idx) => {
+      const rawKind = typeof q?.kind === "string" ? q.kind.toLowerCase() : "";
+      const kind = ["choice", "text", "file", "embed"].includes(rawKind)
+        ? rawKind
+        : rawKind === "image"
+          ? "file"
+          : rawKind === "sketch"
+            ? "embed"
+            : Array.isArray(q?.options) && q.options.length > 0
+              ? "choice"
+              : "text";
+      const embed =
+        q?.embed && typeof q.embed === "object"
+          ? q.embed
+          : rawKind === "sketch" || q?.canvasPreset
+            ? { type: "scratchpad", ...(q?.canvasPreset ?? {}) }
+            : undefined;
       return {
-        id: typeof step?.id === "string" && step.id.trim() ? step.id.trim() : `step-${idx + 1}`,
-        header: typeof step?.header === "string" && step.header.trim() ? step.header.trim() : `Step ${idx + 1}`,
-        question: typeof step?.question === "string" && step.question.trim() ? step.question.trim() : "Provide input",
+        id: typeof q?.id === "string" && q.id.trim() ? q.id.trim() : `q-${idx + 1}`,
+        header: typeof q?.header === "string" && q.header.trim() ? q.header.trim() : `Question ${idx + 1}`,
+        question: typeof q?.question === "string" && q.question.trim() ? q.question.trim() : "Provide input",
         kind,
-        required: step?.required !== false,
-        ...(typeof step?.placeholder === "string" ? { placeholder: step.placeholder } : {}),
-        ...(step?.canvasPreset && typeof step.canvasPreset === "object" ? { canvasPreset: step.canvasPreset } : {}),
-        selection: step?.selection ?? { mode: "single" },
-        options: Array.isArray(step?.options) ? step.options : [],
+        required: q?.required !== false,
+        ...(typeof q?.placeholder === "string" ? { placeholder: q.placeholder } : {}),
+        ...(embed ? { embed } : {}),
+        ...(q?.canvasPreset && typeof q.canvasPreset === "object" ? { canvasPreset: q.canvasPreset } : {}),
+        selection: q?.selection ?? { mode: "single" },
+        options: Array.isArray(q?.options) ? q.options.slice(0, 4) : [],
       };
     });
+    // Default timeout is 3 minutes (180_000 ms). Setting timeout to null waits forever.
+    const rawTimeout = args?.timeout;
+    const timeoutMs =
+      rawTimeout === null
+        ? null
+        : typeof rawTimeout === "number" && Number.isFinite(rawTimeout) && rawTimeout > 0
+          ? (rawTimeout <= 3600 ? rawTimeout * 1000 : rawTimeout)
+          : 180_000;
     const userInputId = `rich-${uuidv7()}`;
     return new Promise((resolve) => {
-      const timeoutMs = Math.max(60_000, turnToolIdleMs());
-      const timer = setTimeout(() => {
-        if (pendingRichInputs.has(userInputId)) {
-          pendingRichInputs.delete(userInputId);
-          resolve({ ok: false, error: "Rich user input timed out waiting for an answer." });
-          pollUserInputs();
-        }
-      }, timeoutMs);
-      if (typeof timer.unref === "function") timer.unref();
+      let timer = null;
+      if (timeoutMs !== null) {
+        timer = setTimeout(() => {
+          if (pendingRichInputs.has(userInputId)) {
+            pendingRichInputs.delete(userInputId);
+            resolve({
+              ok: true,
+              text: JSON.stringify({ answered: false, timedOut: true, answers: {} }),
+            });
+            pollUserInputs();
+          }
+        }, timeoutMs);
+        if (typeof timer.unref === "function") timer.unref();
+      }
       pendingRichInputs.set(userInputId, {
         userInputId,
         turnId: null,
-        autoResolutionMs: null,
+        autoResolutionMs: timeoutMs,
         rich: true,
         title: typeof args?.title === "string" ? args.title.trim() : null,
         logId: self.logId,
@@ -2821,17 +2851,15 @@ const server = createServer(async (req, res) => {
       }
       if (pendingRichInputs.has(userInputId)) {
         const rich = pendingRichInputs.get(userInputId);
-        clearTimeout(rich.timer);
+        if (rich.timer) clearTimeout(rich.timer);
         pendingRichInputs.delete(userInputId);
         const wsDir = entry.meta?.workspaceRoot ?? null;
         const rawAnswers = Array.isArray(body.answers) ? body.answers : [];
-        const enrichedAnswers = rawAnswers.map((ans) => {
-          const out = {
-            questionId: ans?.questionId,
-            ...(Array.isArray(ans?.selectedLabels) && ans.selectedLabels.length > 0 ? { selectedLabels: ans.selectedLabels } : {}),
-            ...(typeof ans?.selectedLabel === "string" && ans.selectedLabel ? { selectedLabel: ans.selectedLabel } : {}),
-            ...(typeof ans?.freeText === "string" && ans.freeText ? { freeText: ans.freeText } : {}),
-          };
+        const answersMap = {};
+        for (const ans of rawAnswers) {
+          const questionObj = rich.questions.find((q) => q.id === ans?.questionId);
+          const questionKey = questionObj?.question || questionObj?.header || String(ans?.questionId ?? "question");
+          let filePath = null;
           const att = ans?.attachment;
           if (att && typeof att.base64Data === "string" && att.base64Data && wsDir && existsSync(wsDir)) {
             try {
@@ -2846,26 +2874,42 @@ const server = createServer(async (req, res) => {
                   const absDir = join(wsDir, relDir);
                   mkdirSync(absDir, { recursive: true });
                   if (!lstatSync(absDir).isSymbolicLink()) {
-                    const safeId = String(ans?.questionId ?? "step").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) || "step";
-                    const mime = typeof att.mediaType === "string" ? att.mediaType.toLowerCase() : "image/png";
-                    const ext = mime.includes("jpeg") || mime.includes("jpg")
-                      ? "jpg"
-                      : mime.includes("webp")
-                        ? "webp"
-                        : mime.includes("gif")
-                          ? "gif"
-                          : "png";
+                    const safeId = String(ans?.questionId ?? "q").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 48) || "q";
+                    const mime = typeof att.mediaType === "string" ? att.mediaType.toLowerCase() : "application/octet-stream";
+                    const origExtMatch = typeof att.name === "string" ? att.name.match(/\.([A-Za-z0-9]{1,8})$/) : null;
+                    const ext = origExtMatch
+                      ? origExtMatch[1].toLowerCase()
+                      : mime.includes("pdf")
+                        ? "pdf"
+                        : mime.includes("text") || mime.includes("json")
+                          ? "txt"
+                          : mime.includes("jpeg") || mime.includes("jpg")
+                            ? "jpg"
+                            : mime.includes("webp")
+                              ? "webp"
+                              : mime.includes("gif")
+                                ? "gif"
+                                : "png";
                     const fileName = `${safeId}-${Date.now()}.${ext}`;
                     writeFileSync(join(absDir, fileName), decoded);
-                    out.filePath = `${relDir}/${fileName}`;
+                    filePath = `${relDir}/${fileName}`;
                   }
                 }
               }
             } catch { /* best-effort workspace file write */ }
           }
-          return out;
-        });
-        rich.resolve({ ok: true, text: JSON.stringify({ answers: enrichedAnswers }) });
+          const freeText = typeof ans?.freeText === "string" && ans.freeText.trim() ? ans.freeText.trim() : null;
+          if (filePath) {
+            answersMap[questionKey] = freeText ? `${filePath} (${freeText})` : filePath;
+          } else if (Array.isArray(ans?.selectedLabels) && ans.selectedLabels.length > 0) {
+            answersMap[questionKey] = questionObj?.selection?.mode === "multiple" ? ans.selectedLabels : ans.selectedLabels[0];
+          } else if (typeof ans?.selectedLabel === "string" && ans.selectedLabel) {
+            answersMap[questionKey] = ans.selectedLabel;
+          } else {
+            answersMap[questionKey] = freeText ?? "";
+          }
+        }
+        rich.resolve({ ok: true, text: JSON.stringify({ answered: true, answers: answersMap }) });
         broadcast(entry.logId, { type: "user_input_answered", userInputId });
         pollUserInputs();
         return json(res, 200, { ok: true, userInputId });
@@ -2904,11 +2948,22 @@ const server = createServer(async (req, res) => {
       }
       if (pendingRichInputs.has(userInputId)) {
         const rich = pendingRichInputs.get(userInputId);
-        clearTimeout(rich.timer);
+        if (rich.timer) clearTimeout(rich.timer);
         pendingRichInputs.delete(userInputId);
-        rich.resolve({ ok: false, error: "User skipped the input request." });
+        rich.resolve({ ok: false, error: "User declined the form — stop and wait for their next message." });
         broadcast(entry.logId, { type: "user_input_answered", userInputId });
         pollUserInputs();
+        // Declining/cancelling stops the turn so the companion waits for the user's next message.
+        if (connection) {
+          const open = [...openTurns.values()].find(
+            (state) => state && (state.logId === entry.logId || state.logId === entry.session.sessionId),
+          );
+          connection.command("turn/interrupt", {
+            sessionId: entry.session.sessionId,
+            commandId: uuidv7(),
+            ...(open?.turnId ? { turnId: open.turnId } : {}),
+          }).catch(() => {});
+        }
         return json(res, 200, { ok: true, userInputId });
       }
       if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });

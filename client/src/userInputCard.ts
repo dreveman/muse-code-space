@@ -7,6 +7,7 @@ export type UserInputQuestionLike = {
   id: string;
   kind?: string;
   required?: boolean;
+  embed?: { type?: string; background?: string } | null;
   selection: { mode: string; minSelections?: number; maxSelections?: number };
   options?: Array<{ label: string }> | null;
 };
@@ -21,6 +22,13 @@ function selectionBounds(question: UserInputQuestionLike): { min: number; max: n
 }
 
 export function questionSelectionHint(question: UserInputQuestionLike): string {
+  if (question.kind === "file") return "Upload an image, PDF, or text file (or draw in Scratchpad)";
+  if (question.kind === "embed") {
+    if (!question.embed?.type || question.embed.type === "scratchpad") {
+      return "Draw in the Scratchpad or write your answer below";
+    }
+    return "Write your answer";
+  }
   if (question.kind === "sketch") return "Draw in the Scratchpad or upload an image";
   if (question.kind === "image") return "Upload or paste an image (or draw in Scratchpad)";
   const options = question.options ?? [];
@@ -41,7 +49,7 @@ export function questionAnswered(
   freeText: string,
   hasAttachment = false,
 ): boolean {
-  if (question.kind === "sketch" || question.kind === "image") {
+  if (question.kind === "file" || question.kind === "sketch" || question.kind === "image") {
     return hasAttachment || question.required === false;
   }
   if (hasAttachment) return true;

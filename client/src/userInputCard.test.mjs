@@ -33,14 +33,19 @@ test("readiness counts answered questions and finds the first unanswered one", (
   assert.deepEqual(userInputReadiness(questions, { q1: ["A"], q2: ["A", "B"] }, {}), { ready: true, answered: 2, total: 2, firstUnanswered: -1 });
   assert.deepEqual(userInputReadiness(questions, { q2: ["A", "B"] }, { q1: "custom" }), { ready: true, answered: 2, total: 2, firstUnanswered: -1 });
 
-  const sketchStep = { id: "sketch-1", kind: "sketch", required: true, selection: { mode: "single" }, options: [] };
+  const fileStep = { id: "file-1", kind: "file", required: true, selection: { mode: "single" }, options: [] };
+  const embedScratchpad = { id: "emb-1", kind: "embed", embed: { type: "scratchpad" }, required: true, selection: { mode: "single" }, options: [] };
+  const embedUnknown = { id: "emb-2", kind: "embed", embed: { type: "server-picker" }, required: true, selection: { mode: "single" }, options: [] };
   const optionalStep = { id: "opt-1", kind: "text", required: false, selection: { mode: "single" }, options: [] };
-  assert.equal(questionSelectionHint(sketchStep), "Draw in the Scratchpad or upload an image");
-  assert.equal(questionAnswered(sketchStep, [], "", false), false);
-  assert.equal(questionAnswered(sketchStep, [], "", true), true, "attachment satisfies sketch step");
+  assert.equal(questionSelectionHint(fileStep), "Upload an image, PDF, or text file (or draw in Scratchpad)");
+  assert.equal(questionSelectionHint(embedScratchpad), "Draw in the Scratchpad or write your answer below");
+  assert.equal(questionSelectionHint(embedUnknown), "Write your answer");
+  assert.equal(questionAnswered(fileStep, [], "", false), false);
+  assert.equal(questionAnswered(fileStep, [], "", true), true, "attachment satisfies file step");
+  assert.equal(questionAnswered(embedUnknown, [], "picked item", false), true, "unknown embed falls back to plain text");
   assert.equal(questionAnswered(optionalStep, [], "", false), true, "optional step is ready when blank");
   assert.deepEqual(
-    userInputReadiness([sketchStep, optionalStep], {}, {}, { "sketch-1": { name: "sketch.png" } }),
+    userInputReadiness([fileStep, optionalStep], {}, {}, { "file-1": { name: "sketch.png" } }),
     { ready: true, answered: 2, total: 2, firstUnanswered: -1 },
   );
 });
