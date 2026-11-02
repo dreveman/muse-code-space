@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "./api";
 import { applyCspNonceToSrcdocHtml } from "./previewServiceWorker";
+import type { ScratchpadAttachmentPayload } from "./ScratchpadPanel";
 
 export function PreviewTabIcon() {
   return (
@@ -21,6 +22,283 @@ function RefreshIcon() {
       <path d="M13.476.516c.42 0 .762.34.762.762v2.744c0 .421-.341.762-.762.762H10.81a.762.762 0 1 1 0-1.524h.995a6.1 6.1 0 1 0 2.44 4.88.762.762 0 0 1 1.524 0 7.624 7.624 0 1 1-3.054-6.102v-.76c0-.421.341-.762.762-.762z" />
     </svg>
   );
+}
+
+function ScreenshotIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  );
+}
+
+function FullFrameIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+    </svg>
+  );
+}
+
+function CropRectIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+      <path d="M6 2v4H2" />
+      <path d="M18 22v-4h4" />
+      <rect x="6" y="6" width="12" height="12" strokeDasharray="3 2" />
+    </svg>
+  );
+}
+
+type CropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function parseCssRadius(raw: string | undefined, w: number, h: number): number {
+  if (!raw) return 0;
+  const first = raw.trim().split(/\s+/)[0] ?? "";
+  if (first.endsWith("%")) {
+    const pct = parseFloat(first);
+    return Number.isFinite(pct) ? Math.min(w, h) * (pct / 100) : 0;
+  }
+  const px = parseFloat(first);
+  return Number.isFinite(px) ? Math.min(Math.max(0, px), Math.min(w, h) / 2) : 0;
+}
+
+function isTransparentColor(color: string | undefined): boolean {
+  if (!color) return true;
+  const c = color.replace(/\s+/g, "").toLowerCase();
+  return c === "transparent" || c === "rgba(0,0,0,0)";
+}
+
+function paintDomToCanvas(
+  ctx: CanvasRenderingContext2D,
+  doc: Document,
+  win: Window,
+  viewW: number,
+  viewH: number,
+) {
+  const htmlStyle = win.getComputedStyle(doc.documentElement);
+  const bodyStyle = doc.body ? win.getComputedStyle(doc.body) : null;
+  const pageBg =
+    (!isTransparentColor(bodyStyle?.backgroundColor) ? bodyStyle?.backgroundColor : null) ??
+    (!isTransparentColor(htmlStyle?.backgroundColor) ? htmlStyle?.backgroundColor : null) ??
+    "#ffffff";
+  ctx.fillStyle = pageBg;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "script" || tag === "style" || tag === "head" || tag === "meta" || tag === "link") {
+        return;
+      }
+      const style = win.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") <= 0) {
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < viewH && rect.left < viewW) {
+        const r = parseCssRadius(style.borderRadius, rect.width, rect.height);
+        ctx.save();
+        const alpha = parseFloat(style.opacity || "1");
+        if (Number.isFinite(alpha) && alpha < 1) ctx.globalAlpha = alpha;
+
+        if (!isTransparentColor(style.backgroundColor)) {
+          ctx.fillStyle = style.backgroundColor;
+          ctx.beginPath();
+          if (r > 0 && typeof ctx.roundRect === "function") {
+            ctx.roundRect(rect.left, rect.top, rect.width, rect.height, r);
+          } else {
+            ctx.rect(rect.left, rect.top, rect.width, rect.height);
+          }
+          ctx.fill();
+        }
+
+        const bw = parseFloat(style.borderTopWidth || "0");
+        if (bw > 0 && style.borderTopStyle !== "none" && !isTransparentColor(style.borderTopColor)) {
+          ctx.strokeStyle = style.borderTopColor;
+          ctx.lineWidth = bw;
+          ctx.beginPath();
+          if (r > 0 && typeof ctx.roundRect === "function") {
+            ctx.roundRect(rect.left + bw / 2, rect.top + bw / 2, Math.max(0, rect.width - bw), Math.max(0, rect.height - bw), Math.max(0, r - bw / 2));
+          } else {
+            ctx.rect(rect.left + bw / 2, rect.top + bw / 2, Math.max(0, rect.width - bw), Math.max(0, rect.height - bw));
+          }
+          ctx.stroke();
+        }
+
+        if (tag === "img") {
+          const imgEl = el as HTMLImageElement;
+          if (imgEl.complete && imgEl.naturalWidth > 0) {
+            try {
+              ctx.drawImage(imgEl, rect.left, rect.top, rect.width, rect.height);
+            } catch { /* ignore cross-origin image */ }
+          }
+        } else if (tag === "canvas") {
+          try {
+            ctx.drawImage(el as HTMLCanvasElement, rect.left, rect.top, rect.width, rect.height);
+          } catch { /* ignore tainted canvas */ }
+        } else if (tag === "input" || tag === "textarea") {
+          const val = (el as HTMLInputElement | HTMLTextAreaElement).value || (el as HTMLInputElement | HTMLTextAreaElement).placeholder || "";
+          if (val) {
+            ctx.fillStyle = (el as HTMLInputElement).value ? style.color : "rgba(120,120,120,0.75)";
+            ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+            ctx.textBaseline = "middle";
+            const padL = parseFloat(style.paddingLeft || "8") || 8;
+            ctx.fillText(val, rect.left + padL, rect.top + rect.height / 2, Math.max(0, rect.width - padL * 2));
+          }
+        }
+        ctx.restore();
+      }
+      for (const child of Array.from(el.childNodes)) {
+        walk(child);
+      }
+      return;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue ?? "";
+      if (!text.trim()) return;
+      const parent = node.parentElement;
+      if (!parent) return;
+      const style = win.getComputedStyle(parent);
+      if (style.display === "none" || style.visibility === "hidden") return;
+      try {
+        const range = doc.createRange();
+        range.selectNodeContents(node);
+        const rects = Array.from(range.getClientRects());
+        if (rects.length === 0) return;
+        ctx.save();
+        ctx.fillStyle = style.color || "#111111";
+        ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        ctx.textBaseline = "Middle" as CanvasTextBaseline;
+        ctx.textBaseline = "middle";
+        const trimmed = text.replace(/\s+/g, " ").trim();
+        if (rects.length === 1) {
+          const r = rects[0]!;
+          ctx.fillText(trimmed, r.left, r.top + r.height / 2, r.width + 4);
+        } else {
+          const words = trimmed.split(" ");
+          const perLine = Math.max(1, Math.ceil(words.length / rects.length));
+          rects.forEach((r, idx) => {
+            const slice = words.slice(idx * perLine, (idx + 1) * perLine).join(" ");
+            if (slice) ctx.fillText(slice, r.left, r.top + r.height / 2, r.width + 8);
+          });
+        }
+        ctx.restore();
+      } catch { /* ignore range measurement error */ }
+    }
+  };
+
+  if (doc.body) {
+    walk(doc.body);
+  }
+}
+
+async function captureIframeScreenshot(
+  iframe: HTMLIFrameElement,
+  cropRect: CropRect | null,
+  port: number | null,
+): Promise<ScratchpadAttachmentPayload | null> {
+  const doc = iframe.contentDocument;
+  const win = iframe.contentWindow;
+  if (!doc || !win) return null;
+
+  const iframeBounds = iframe.getBoundingClientRect();
+  const viewW = Math.max(100, Math.floor(iframeBounds.width));
+  const viewH = Math.max(100, Math.floor(iframeBounds.height));
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  const fullCanvas = document.createElement("canvas");
+  fullCanvas.width = Math.floor(viewW * dpr);
+  fullCanvas.height = Math.floor(viewH * dpr);
+  const fullCtx = fullCanvas.getContext("2d");
+  if (!fullCtx) return null;
+  fullCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  let renderedViaForeignObject = false;
+  try {
+    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("script").forEach((s) => s.remove());
+    clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    const scrollX = win.scrollX || 0;
+    const scrollY = win.scrollY || 0;
+    if (scrollX || scrollY) {
+      clone.style.transform = `translate(${-scrollX}px, ${-scrollY}px)`;
+    }
+    const serialized = new XMLSerializer().serializeToString(clone);
+    const svgXml = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewW}" height="${viewH}" viewBox="0 0 ${viewW} ${viewH}"><foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+    const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgXml)}`;
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      const timer = window.setTimeout(() => reject(new Error("svg timeout")), 1500);
+      image.onload = () => {
+        window.clearTimeout(timer);
+        resolve(image);
+      };
+      image.onerror = (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      };
+      image.src = svgDataUrl;
+    });
+    fullCtx.drawImage(img, 0, 0, viewW, viewH);
+    // Probe whether canvas is tainted before committing to foreignObject output.
+    void fullCanvas.toDataURL("image/png");
+    renderedViaForeignObject = true;
+  } catch {
+    renderedViaForeignObject = false;
+  }
+
+  if (!renderedViaForeignObject) {
+    fullCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fullCtx.clearRect(0, 0, viewW, viewH);
+    paintDomToCanvas(fullCtx, doc, win, viewW, viewH);
+  }
+
+  let targetCanvas = fullCanvas;
+  if (cropRect && cropRect.width >= 8 && cropRect.height >= 8) {
+    const sx = Math.max(0, Math.min(viewW - 1, Math.floor(cropRect.x)));
+    const sy = Math.max(0, Math.min(viewH - 1, Math.floor(cropRect.y)));
+    const sw = Math.max(1, Math.min(viewW - sx, Math.floor(cropRect.width)));
+    const sh = Math.max(1, Math.min(viewH - sy, Math.floor(cropRect.height)));
+    const cropped = document.createElement("canvas");
+    cropped.width = Math.floor(sw * dpr);
+    cropped.height = Math.floor(sh * dpr);
+    const cCtx = cropped.getContext("2d");
+    if (cCtx) {
+      cCtx.drawImage(
+        fullCanvas,
+        Math.floor(sx * dpr),
+        Math.floor(sy * dpr),
+        Math.floor(sw * dpr),
+        Math.floor(sh * dpr),
+        0,
+        0,
+        Math.floor(sw * dpr),
+        Math.floor(sh * dpr),
+      );
+      targetCanvas = cropped;
+    }
+  }
+
+  const dataUrl = targetCanvas.toDataURL("image/png");
+  const comma = dataUrl.indexOf(",");
+  const base64Data = comma >= 0 ? dataUrl.slice(comma + 1) : "";
+  if (!base64Data) return null;
+  const suffix = cropRect ? "region" : "full";
+  return {
+    name: `preview-${port ?? "page"}-${suffix}-${Date.now()}.png`,
+    mediaType: "image/png",
+    base64Data,
+    dataUrl,
+  };
 }
 
 export function NewPreviewButton({ onOpen, active = false }: { onOpen: () => void; active?: boolean }) {
@@ -85,10 +363,12 @@ export function PreviewView({
   sessionId,
   active,
   initialPort = null,
+  onCaptureScreenshot,
 }: {
   sessionId: string;
   active: boolean;
   initialPort?: number | null;
+  onCaptureScreenshot?: (attachment: ScratchpadAttachmentPayload) => void;
 }) {
   const [portInput, setPortInput] = useState(formatPreviewAddress(initialPort));
   const [portError, setPortError] = useState<string | null>(null);
@@ -97,6 +377,13 @@ export function PreviewView({
   const [srcDocHtml, setSrcDocHtml] = useState<string | null>(null);
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [currentPath, setCurrentPath] = useState("/");
+  const [screenshotMenuOpen, setScreenshotMenuOpen] = useState(false);
+  const [selectingRect, setSelectingRect] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
+  const [capturing, setCapturing] = useState(false);
+  const screenshotWrapRef = useRef<HTMLDivElement>(null);
+  const cropOverlayRef = useRef<HTMLDivElement>(null);
   const currentPathRef = useRef("/");
   currentPathRef.current = currentPath;
 
@@ -467,6 +754,106 @@ export function PreviewView({
     void portsQuery.refetch();
   };
 
+  useEffect(() => {
+    if (!screenshotMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !screenshotWrapRef.current?.contains(event.target)) {
+        setScreenshotMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setScreenshotMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [screenshotMenuOpen]);
+
+  useEffect(() => {
+    if (!selectingRect) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectingRect(false);
+        setDragStart(null);
+        setDragCurrent(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectingRect]);
+
+  const canScreenshot = Boolean(srcDocHtml && reachable !== false && !capturing && onCaptureScreenshot);
+
+  const runCapture = async (cropRect: CropRect | null) => {
+    const iframe = iframeRef.current;
+    if (!iframe || !onCaptureScreenshot) return;
+    setCapturing(true);
+    try {
+      const payload = await captureIframeScreenshot(iframe, cropRect, configuredPort);
+      if (payload) {
+        onCaptureScreenshot(payload);
+      }
+    } finally {
+      setCapturing(false);
+      setSelectingRect(false);
+      setDragStart(null);
+      setDragCurrent(null);
+    }
+  };
+
+  const activeCropRect: CropRect | null =
+    dragStart && dragCurrent
+      ? {
+          x: Math.min(dragStart.x, dragCurrent.x),
+          y: Math.min(dragStart.y, dragCurrent.y),
+          width: Math.abs(dragCurrent.x - dragStart.x),
+          height: Math.abs(dragCurrent.y - dragStart.y),
+        }
+      : null;
+
+  const handleCropPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    event.preventDefault();
+    const overlay = cropOverlayRef.current;
+    if (!overlay) return;
+    try {
+      overlay.setPointerCapture(event.pointerId);
+    } catch { /* ignore */ }
+    const rect = overlay.getBoundingClientRect();
+    const pt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    setDragStart(pt);
+    setDragCurrent(pt);
+  };
+
+  const handleCropPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStart) return;
+    event.preventDefault();
+    const overlay = cropOverlayRef.current;
+    if (!overlay) return;
+    const rect = overlay.getBoundingClientRect();
+    setDragCurrent({
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+    });
+  };
+
+  const handleCropPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStart) return;
+    event.preventDefault();
+    try {
+      cropOverlayRef.current?.releasePointerCapture(event.pointerId);
+    } catch { /* ignore */ }
+    if (activeCropRect && activeCropRect.width >= 12 && activeCropRect.height >= 12) {
+      void runCapture(activeCropRect);
+    } else {
+      setDragStart(null);
+      setDragCurrent(null);
+    }
+  };
+
   const statusKind: "unattached" | "connecting" | "live" | "exited" | "unreachable" =
     configuredPort === null
       ? "unattached"
@@ -545,6 +932,53 @@ export function PreviewView({
         )}
 
         <div className="preview-toolbar-right">
+          {onCaptureScreenshot && (
+            <div ref={screenshotWrapRef} className="preview-screenshot-wrap">
+              <button
+                type="button"
+                className={`preview-screenshot-btn${screenshotMenuOpen || selectingRect ? " active" : ""}`}
+                disabled={!canScreenshot}
+                aria-haspopup="menu"
+                aria-expanded={screenshotMenuOpen}
+                aria-label="Take preview screenshot"
+                title="Take screenshot of preview"
+                onClick={() => setScreenshotMenuOpen((open) => !open)}
+              >
+                <ScreenshotIcon />
+                <svg className="preview-screenshot-caret" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 4.5 6 7.5 9 4.5" />
+                </svg>
+              </button>
+              {screenshotMenuOpen && (
+                <div className="preview-screenshot-menu" role="menu" aria-label="Screenshot options">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setScreenshotMenuOpen(false);
+                      void runCapture(null);
+                    }}
+                  >
+                    <FullFrameIcon />
+                    <span>Full page</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setScreenshotMenuOpen(false);
+                      setSelectingRect(true);
+                      setDragStart(null);
+                      setDragCurrent(null);
+                    }}
+                  >
+                    <CropRectIcon />
+                    <span>Rectangle</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <span
             className={`preview-status-pill status-${statusKind}`}
             role="status"
@@ -608,13 +1042,60 @@ export function PreviewView({
             </button>
           </div>
         ) : srcDocHtml !== null ? (
-          <iframe
-            ref={iframeRef}
-            key={`${sessionId}:${configuredPort}`}
-            className="preview-iframe"
-            srcDoc={srcDocHtml}
-            title={`Preview 127.0.0.1:${configuredPort}`}
-          />
+          <div className="preview-iframe-stage">
+            <iframe
+              ref={iframeRef}
+              key={`${sessionId}:${configuredPort}`}
+              className="preview-iframe"
+              srcDoc={srcDocHtml}
+              title={`Preview 127.0.0.1:${configuredPort}`}
+            />
+            {selectingRect && (
+              <div
+                ref={cropOverlayRef}
+                className="preview-crop-overlay"
+                role="region"
+                aria-label="Drag to capture a rectangle screenshot"
+                onPointerDown={handleCropPointerDown}
+                onPointerMove={handleCropPointerMove}
+                onPointerUp={handleCropPointerUp}
+                onPointerCancel={() => {
+                  setDragStart(null);
+                  setDragCurrent(null);
+                }}
+              >
+                <div className="preview-crop-hint">
+                  <span>Drag to capture a rectangle</span>
+                  <button
+                    type="button"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => {
+                      setSelectingRect(false);
+                      setDragStart(null);
+                      setDragCurrent(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {activeCropRect && activeCropRect.width > 2 && activeCropRect.height > 2 && (
+                  <div
+                    className="preview-crop-box"
+                    style={{
+                      left: `${activeCropRect.x}px`,
+                      top: `${activeCropRect.y}px`,
+                      width: `${activeCropRect.width}px`,
+                      height: `${activeCropRect.height}px`,
+                    }}
+                  >
+                    <span className="preview-crop-dims">
+                      {Math.round(activeCropRect.width)} × {Math.round(activeCropRect.height)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         ) : (
           <div className="preview-empty-state" role="status">
             <p className="preview-empty-title">Connecting to 127.0.0.1:{configuredPort}…</p>
