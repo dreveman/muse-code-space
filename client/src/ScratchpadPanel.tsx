@@ -561,23 +561,60 @@ export const ScratchpadView = memo(function ScratchpadView({
   const exportCompositePng = (): ScratchpadAttachmentPayload | null => {
     const { width, height, dpr } = canvasSizeRef.current;
     const out = document.createElement("canvas");
-    out.width = Math.floor(width * dpr);
-    out.height = Math.floor(height * dpr);
-    const ctx = out.getContext("2d");
-    if (!ctx) return null;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBackground(ctx, width, height, background, loadedImageEl);
-    if (inkCanvasRef.current) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.drawImage(inkCanvasRef.current, 0, 0);
+
+    if (loadedImageEl && (loadedImageEl.naturalWidth > 0 || loadedImageEl.width > 0)) {
+      const natW = Math.max(1, loadedImageEl.naturalWidth || loadedImageEl.width);
+      const natH = Math.max(1, loadedImageEl.naturalHeight || loadedImageEl.height);
+      const rect = computeContainRect(width, height, natW, natH, 16);
+      out.width = natW;
+      out.height = natH;
+      const ctx = out.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(loadedImageEl, 0, 0, natW, natH);
+
+      if (strokes.length > 0 && rect.w > 0 && rect.h > 0) {
+        const inkLayer = document.createElement("canvas");
+        inkLayer.width = natW;
+        inkLayer.height = natH;
+        const inkCtx = inkLayer.getContext("2d");
+        if (inkCtx) {
+          const scaleX = natW / rect.w;
+          const scaleY = natH / rect.h;
+          const strokeScale = (scaleX + scaleY) / 2;
+          for (const s of strokes) {
+            drawStroke(inkCtx, {
+              ...s,
+              size: s.size * strokeScale,
+              points: s.points.map((pt) => ({
+                x: (pt.x - rect.x) * scaleX,
+                y: (pt.y - rect.y) * scaleY,
+                pressure: pt.pressure,
+              })),
+            });
+          }
+          ctx.drawImage(inkLayer, 0, 0, natW, natH);
+        }
+      }
+    } else {
+      out.width = Math.floor(width * dpr);
+      out.height = Math.floor(height * dpr);
+      const ctx = out.getContext("2d");
+      if (!ctx) return null;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawBackground(ctx, width, height, background, null);
+      if (inkCanvasRef.current) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(inkCanvasRef.current, 0, 0);
+      }
     }
+
     const dataUrl = out.toDataURL("image/png");
     const comma = dataUrl.indexOf(",");
     const base64Data = comma >= 0 ? dataUrl.slice(comma + 1) : "";
     if (!base64Data) return null;
     const baseStem = baseImage?.name ? baseImage.name.replace(/\.[^.]+$/, "") : "sketch";
     return {
-      name: `${baseStem}-annotated-${Date.now()}.png`,
+      name: baseImage?.name || `${baseStem}-annotated-${Date.now()}.png`,
       mediaType: "image/png",
       base64Data,
       dataUrl,
@@ -599,6 +636,10 @@ export const ScratchpadView = memo(function ScratchpadView({
     if (!baseImage?.attachmentId || !onUpdateComposerAttachment) return;
     const payload = exportCompositePng();
     if (!payload) return;
+    prevBaseSrcRef.current = payload.dataUrl;
+    setBaseImage((prev) => (prev ? { ...prev, src: payload.dataUrl } : prev));
+    setStrokes([]);
+    setRedoStack([]);
     onUpdateComposerAttachment(baseImage.attachmentId, payload);
     setStatusMessage(`Updated "${baseImage.name}" in message composer`);
     window.setTimeout(() => setStatusMessage(null), 2200);
