@@ -5153,7 +5153,7 @@ export function App() {
   const chatPaneWidthPx = isNarrow
     ? viewportWidth
     : (() => {
-        const sidebarPx = sidebarCollapsed ? 72 : paneSizes.sidebarWidth;
+        const sidebarPx = sidebarCollapsed ? 84 : paneSizes.sidebarWidth;
         const detailPx = Math.max(280, viewportWidth - sidebarPx - 1);
         return hasSidePanel || hasLinkedSplitPane ? detailPx * paneSizes.chatShare : detailPx;
       })();

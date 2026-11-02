@@ -6,6 +6,7 @@ import {
   isAsymmetricHorizontalSafeArea,
   parseDeviceQuirksMode,
   resolveIphoneDuoLandscapeQuirk,
+  resolveIphoneDuoQuirkSide,
 } from "./deviceQuirks.ts";
 
 test("detects iPhone Duo landscape quirk when right safe-area inset is 0 or asymmetric", () => {
@@ -28,6 +29,36 @@ test("detects iPhone Duo landscape quirk when right safe-area inset is 0 or asym
     }),
     true,
     "iPhone Duo in landscape with left=0, right=0, bottom=0 activates the right border",
+  );
+
+  // iPhone Duo folded in portrait (native sidebar still on the right):
+  // width=382, height=678, top=0, right=0, bottom=0, left=0 -> activates ("right")!
+  assert.equal(
+    resolveIphoneDuoQuirkSide({
+      mode: "auto",
+      isIos: true,
+      isIphone: true,
+      isLandscape: false,
+      viewportWidth: 382,
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    }),
+    "right",
+    "iPhone Duo folded in portrait with right native sidebar activates the right border",
+  );
+
+  // iPhone Duo folded in landscape (width < 780, isLandscape=true):
+  // native sidebar is on the left and rounded corners are at the top -> activates ("left")!
+  assert.equal(
+    resolveIphoneDuoQuirkSide({
+      mode: "auto",
+      isIos: true,
+      isIphone: true,
+      isLandscape: true,
+      viewportWidth: 594,
+      insets: { top: 0, right: 0, bottom: 21, left: 0 },
+    }),
+    "left",
+    "iPhone Duo folded in landscape activates the left border and top-right menu inset",
   );
 
   // iPhone Duo in portrait: bottom=34 -> does NOT activate.
@@ -85,8 +116,10 @@ test("detects iPhone Duo landscape quirk when right safe-area inset is 0 or asym
 
   const css = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
   assert.ok(
-    css.includes(':root[data-quirk-iphone-duo="true"] .console-layout') &&
-      css.includes("border-right: 1px solid var(--border);"),
-    "iPhone Duo landscape quirk adds a right-side border separator on .console-layout",
+    css.includes(':root[data-quirk-iphone-duo="true"]:not([data-quirk-iphone-duo-side="left"]) .console-layout') &&
+      css.includes("border-right: 1px solid var(--border);") &&
+      css.includes(':root[data-quirk-iphone-duo-side="left"] .console-layout') &&
+      css.includes("border-left: 1px solid var(--border);"),
+    "iPhone Duo quirk adds a right or left border separator on .console-layout and insets the top-right button in folded landscape",
   );
 });

@@ -54,6 +54,46 @@ export function isAsymmetricHorizontalSafeArea(insets: SafeAreaInsets): boolean 
   return Math.abs(insets.left - insets.right) >= 1;
 }
 
+export type IphoneDuoQuirkSide = "right" | "left" | null;
+
+export function resolveIphoneDuoQuirkSide(input: {
+  mode: DeviceQuirksMode;
+  isIos: boolean;
+  isIphone?: boolean;
+  isLandscape?: boolean;
+  viewportWidth?: number;
+  insets: SafeAreaInsets;
+}): IphoneDuoQuirkSide {
+  if (input.mode === "off") return null;
+  if (input.mode === "force-iphone-duo") {
+    const foldedLandscape =
+      input.isLandscape === true &&
+      input.viewportWidth !== undefined &&
+      input.viewportWidth < 780;
+    return foldedLandscape ? "left" : "right";
+  }
+  const isPhone = input.isIphone ?? input.isIos;
+  if (!isPhone) return null;
+  if (input.insets.top >= 20) return null;
+  const zeroOrAsymmetricHorizontal =
+    input.insets.right === 0 || isAsymmetricHorizontalSafeArea(input.insets);
+  if (!zeroOrAsymmetricHorizontal) return null;
+
+  // Folded iPhone Duo in landscape (~594-678 x 382-466 CSS px):
+  // native bar sits on the left and the outer rounded display corners are at the top.
+  if (
+    input.isLandscape === true &&
+    input.viewportWidth !== undefined &&
+    input.viewportWidth < 780
+  ) {
+    return "left";
+  }
+
+  // Unfolded landscape (867x669) or folded portrait (382x678) with native bar on the right.
+  if (input.insets.bottom >= 30) return null;
+  return "right";
+}
+
 export function resolveIphoneDuoLandscapeQuirk(input: {
   mode: DeviceQuirksMode;
   isIos: boolean;
@@ -62,21 +102,7 @@ export function resolveIphoneDuoLandscapeQuirk(input: {
   viewportWidth?: number;
   insets: SafeAreaInsets;
 }): boolean {
-  if (input.mode === "off") return false;
-  if (input.mode === "force-iphone-duo") return true;
-  const isPhone = input.isIphone ?? input.isIos;
-  if (!isPhone) return false;
-  // In portrait on iPhone, safe-area-inset-bottom is ~34px and native controls
-  // sit at the bottom rather than the right.
-  if (input.insets.bottom >= 30 && !input.isLandscape) return false;
-  const landscape =
-    input.isLandscape === true ||
-    (input.insets.bottom < 30 && (input.viewportWidth === undefined || input.viewportWidth >= 480));
-  if (!landscape) return false;
-  // On a normal full-width iPhone in landscape, both left and right safe-area
-  // insets are >= 44px. When the host places a native pane on the right (as on
-  // the iPhone Duo in landscape), `insets.right` is 0 (or asymmetric).
-  return input.insets.right === 0 || isAsymmetricHorizontalSafeArea(input.insets);
+  return resolveIphoneDuoQuirkSide(input) !== null;
 }
 
 let probeContainer: HTMLDivElement | null = null;
@@ -131,7 +157,7 @@ export function syncDeviceQuirks(): boolean {
     window.innerWidth > window.innerHeight ||
     (typeof window.matchMedia === "function" && window.matchMedia("(orientation: landscape)").matches);
   const insets = measureSafeAreaInsets(document);
-  const active = resolveIphoneDuoLandscapeQuirk({
+  const side = resolveIphoneDuoQuirkSide({
     mode,
     isIos: isIphone,
     isIphone,
@@ -139,12 +165,14 @@ export function syncDeviceQuirks(): boolean {
     viewportWidth: window.innerWidth,
     insets,
   });
-  if (active) {
+  if (side) {
     document.documentElement.dataset.quirkIphoneDuo = "true";
+    document.documentElement.dataset.quirkIphoneDuoSide = side;
   } else {
     delete document.documentElement.dataset.quirkIphoneDuo;
+    delete document.documentElement.dataset.quirkIphoneDuoSide;
   }
-  return active;
+  return side !== null;
 }
 
 export function installDeviceQuirksObserver(): () => void {
