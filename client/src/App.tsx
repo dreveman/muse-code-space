@@ -4376,12 +4376,10 @@ export function App() {
         label: "Terminal",
         description: "Navigate to the current terminal or open one",
         onActivate: () => openOrFocusTerminalTab(session.id),
-      },
-      {
-        key: "new-terminal",
-        label: "New terminal",
-        description: "Open an additional terminal tab in the working directory",
-        onActivate: () => openTerminalTab(session.id),
+        secondaryAction: {
+          label: "New terminal",
+          onActivate: () => openTerminalTab(session.id),
+        },
       },
       {
         key: "preview",
