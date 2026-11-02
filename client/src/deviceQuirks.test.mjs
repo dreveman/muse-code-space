@@ -2,50 +2,69 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  detectIphoneDevice,
   isAsymmetricHorizontalSafeArea,
   parseDeviceQuirksMode,
   resolveIphoneDuoLandscapeQuirk,
 } from "./deviceQuirks.ts";
 
-test("detects asymmetric horizontal safe areas and activates iPhone Duo landscape quirk", () => {
+test("detects iPhone Duo landscape quirk when right safe-area inset is 0 or asymmetric", () => {
+  assert.equal(detectIphoneDevice({ userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" }), true);
+  assert.equal(detectIphoneDevice({ userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)" }), false);
+
   assert.equal(isAsymmetricHorizontalSafeArea({ top: 0, right: 0, bottom: 0, left: 0 }), false);
   assert.equal(isAsymmetricHorizontalSafeArea({ top: 0, right: 59, bottom: 21, left: 59 }), false, "symmetric iPhone landscape");
   assert.equal(isAsymmetricHorizontalSafeArea({ top: 0, right: 0, bottom: 21, left: 47 }), true, "asymmetric iPhone Duo");
-  assert.equal(isAsymmetricHorizontalSafeArea({ top: 0, right: 47, bottom: 21, left: 0 }), true, "asymmetric iPhone Duo right");
 
+  // iPhone Duo in landscape: left=0, right=0, bottom=0 -> activates!
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
       mode: "auto",
       isIos: true,
+      isIphone: true,
       isLandscape: true,
-      insets: { top: 0, right: 0, bottom: 21, left: 47 },
+      viewportWidth: 867,
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
     }),
     true,
+    "iPhone Duo in landscape with left=0, right=0, bottom=0 activates the right border",
   );
+
+  // iPhone Duo in portrait: bottom=34 -> does NOT activate.
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
       mode: "auto",
       isIos: true,
+      isIphone: true,
+      isLandscape: false,
+      viewportWidth: 400,
       insets: { top: 47, right: 0, bottom: 34, left: 0 },
     }),
     false,
-    "portrait (left=0, right=0) does not add the landscape right border",
+    "portrait (bottom=34) does not add the landscape right border",
   );
+
+  // Standard full-bleed iPhone in landscape: left=59, right=59 -> does NOT activate.
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
       mode: "auto",
       isIos: true,
-      isLandscape: false,
-      insets: { top: 0, right: 0, bottom: 21, left: 47 },
+      isIphone: true,
+      isLandscape: true,
+      viewportWidth: 844,
+      insets: { top: 0, right: 59, bottom: 21, left: 59 },
     }),
-    true,
-    "asymmetric horizontal inset activates even when the remaining WebView width beside the native pane is narrower than innerHeight",
+    false,
+    "standard full-bleed iPhone in landscape has symmetric non-zero right inset",
   );
+
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
       mode: "off",
       isIos: true,
-      insets: { top: 0, right: 0, bottom: 21, left: 47 },
+      isIphone: true,
+      isLandscape: true,
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
     }),
     false,
     "mode=off disables the quirk",
