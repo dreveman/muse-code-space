@@ -3456,4 +3456,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   font: 11px/1 var(--mono);
 }
 
+/* --- Device Quirks (client/src/deviceQuirks.ts) ---
+   On the iPhone Duo in landscape mode (detected via asymmetric horizontal
+   safe-area insets), the host app renders a native controls pane immediately
+   to the right of the Space WebView. Add a right border on `.console-layout`
+   so there is a clean vertical separator beside the native controls. */
+:root[data-quirk-iphone-duo="true"] .console-layout {
+  border-right: 1px solid var(--border);
+}
+
+
 
