@@ -2252,6 +2252,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   padding: 10px 12px; border: 0; background: var(--surface-strong); color: var(--text);
   cursor: pointer; text-align: left;
 }
+.wire-settings-item-row {
+  display: flex;
+  align-items: center;
+  background: var(--surface-strong);
+}
+.wire-settings-item-row > .wire-settings-item {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.session-menu-secondary-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  margin-right: 10px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: 600 16px/1 var(--sans);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.session-menu-secondary-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 10%, var(--bg));
+  border-color: var(--accent);
+}
+.session-menu-secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .wire-settings-item:hover:not(:disabled), .wire-settings-item:focus-visible { background: color-mix(in srgb, var(--text) 7%, var(--surface-strong)); }
 .wire-settings-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .wire-settings-item:disabled { cursor: wait; opacity: .62; }

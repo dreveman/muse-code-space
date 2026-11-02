@@ -179,7 +179,7 @@ test("past sessions keep the composer and send with Resume & send", () => {
 
 test("header terminal button navigates to current terminal or opens the first, and New terminal is in the menu", () => {
   assert.ok(app.includes("<NewTerminalButton active={terminalTabActive} onOpen={() => openOrFocusTerminalTab(detailSession.id)} />"), "terminal icon navigates to current terminal or opens first");
-  assert.ok(app.includes('key: "new-terminal"') && app.includes('label: "New terminal"'), "New terminal is available from the session menu");
+  assert.ok(app.includes("secondaryAction:") && app.includes('label: "New terminal"'), "New terminal + action is available on the Terminal menu item");
   assert.ok(!app.includes('onNewTerminal='), "tab strip never creates terminals");
   assert.ok(!app.includes("TerminalToggle") && !app.includes("terminalOpen"), "no show/hide toggle");
   assert.ok(app.includes('className={`detail-split${hasSidePanel ? " with-side-panel" : ""}`}'), "panel shown while the session has tabs");

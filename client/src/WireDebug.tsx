@@ -38,6 +38,10 @@ export type SessionMenuAction = {
   checked?: boolean;
   radio?: boolean;
   onActivate: () => void;
+  secondaryAction?: {
+    label: string;
+    onActivate: () => void;
+  };
 };
 
 export type SplitViewOption = {
@@ -70,7 +74,7 @@ const UI_THEME_OPTIONS: Array<{ value: UiTheme; label: string; description: stri
 ];
 
 function ActionMenuItem({ action, onDone }: { action: SessionMenuAction; onDone: () => void }) {
-  return (
+  const mainBtn = (
     <button
       type="button"
       className="wire-settings-item session-menu-action"
@@ -92,6 +96,25 @@ function ActionMenuItem({ action, onDone }: { action: SessionMenuAction; onDone:
         <span className={`wire-settings-switch${action.checked ? " active" : ""}`} aria-hidden="true"><span /></span>
       )}
     </button>
+  );
+  if (!action.secondaryAction) return mainBtn;
+  return (
+    <div className="wire-settings-item-row">
+      {mainBtn}
+      <button
+        type="button"
+        className="session-menu-secondary-btn"
+        disabled={action.disabled}
+        aria-label={action.secondaryAction.label}
+        title={action.secondaryAction.label}
+        onClick={() => {
+          onDone();
+          action.secondaryAction!.onActivate();
+        }}
+      >
+        +
+      </button>
+    </div>
   );
 }
 
@@ -258,9 +281,10 @@ export function SessionMenu({
           aria-label="Companion menu"
           style={{ maxHeight: `calc(100dvh - ${popoverPosition.top + 12}px)` }}
         >
-          {actions.map((action) => (
-            <ActionMenuItem key={action.key} action={action} onDone={() => setMenuOpen(false)} />
-          ))}
+          {((actions: readonly SessionMenuAction[]) =>
+            actions.map((action) => (
+              <ActionMenuItem key={action.key} action={action} onDone={() => setMenuOpen(false)} />
+            )))(actions.filter((action) => action.checked === undefined))}
           {onSelectSplitSession && (
             <>
               <div className="session-menu-separator" role="separator" />
@@ -289,6 +313,24 @@ export function SessionMenu({
                     No other active conversations to link.
                   </div>
                 )}
+              </details>
+            </>
+          )}
+          {actions.some((action) => action.checked !== undefined) && (
+            <>
+              {actions.some((action) => action.checked === undefined) && (
+                <div className="session-menu-separator" role="separator" />
+              )}
+              <details className="session-menu-section" role="group" aria-label="View options">
+                <summary className="session-menu-heading">
+                  <span>View options</span>
+                  <span className="session-menu-chevron" aria-hidden="true">›</span>
+                </summary>
+                {actions
+                  .filter((action) => action.checked !== undefined)
+                  .map((action) => (
+                    <ActionMenuItem key={action.key} action={action} onDone={() => setMenuOpen(false)} />
+                  ))}
               </details>
             </>
           )}
