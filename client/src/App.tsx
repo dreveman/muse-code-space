@@ -4384,7 +4384,7 @@ export function App() {
       },
       {
         key: "preview",
-        label: "Web preview",
+        label: "Preview",
         description: "Open or toggle the live web preview tab",
         onActivate: () => togglePreviewTab(session.id),
       },
@@ -4401,21 +4401,6 @@ export function App() {
         onActivate: () => toggleFilesTab(session.id),
       },
       ...viewMenuActions,
-      {
-        key: "rename",
-        label: "Change task summary",
-        description: "Edit the short description of this task",
-        disabled: renameBusy,
-        onActivate: () => setTextPrompt({
-          title: "Change task summary",
-          label: "Task summary",
-          initialValue: sessionTaskTitle(session).slice(0, 240),
-          confirmLabel: "Save",
-          maxLength: 240,
-          allowEmpty: true,
-          onSubmit: (value) => (value.trim() === session.session_summary ? null : updateSessionSummary(session.id, value)),
-        }),
-      },
       session.archived
         ? {
             key: "restore",
