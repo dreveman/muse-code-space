@@ -4396,7 +4396,7 @@ export function App() {
       },
       {
         key: "files",
-        label: "Browse files",
+        label: "Files",
         description: "Browse files and folders in the working directory",
         onActivate: () => toggleFilesTab(session.id),
       },
