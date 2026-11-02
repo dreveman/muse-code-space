@@ -6,7 +6,7 @@ import { relative, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 // Real terminals (same module as the pilot): only the agent is fake.
 import { createTerminalManager, handleTerminalRoute, terminalErrorStatus } from "../pilot/terminals.mjs";
-import { listWorkspaceDirectory, readWorkspaceImage } from "../pilot/files.mjs";
+import { listWorkspaceDirectory, readWorkspaceFile, readWorkspaceImage } from "../pilot/files.mjs";
 import {
   capturePreviewScreenshot,
   createPreviewWsManager,
@@ -2559,9 +2559,13 @@ Bun.serve({
       const requestedPath = typeof body.path === "string" ? body.path : "";
       const dynamicContent = sessionFiles.get(session.id)?.get(requestedPath);
       if (dynamicContent !== undefined) return json(200, { ok: true, path: requestedPath, content: dynamicContent });
-      if (body.path === "alpha.ts") return json(200, { ok: true, path: "alpha.ts", content: "const x: number = 3;\nconsole.log(x)\n" });
+      if (body.path === "alpha.ts" || body.path === "src/alpha.ts") return json(200, { ok: true, path: requestedPath, content: "const x: number = 3;\nconsole.log(x)\n" });
       if (body.path === "test.rs") return json(200, { ok: true, path: "test.rs", content: "ALPHA\nBETA\nGAMMA\n" });
       if (body.path === "notes.unknown") return json(200, { ok: true, path: "notes.unknown", content: "const x = 3;\n" });
+      if (session.workspaceRoot && existsSync(session.workspaceRoot)) {
+        const result = readWorkspaceFile(session.workspaceRoot, requestedPath);
+        return json(result.ok ? 200 : ("code" in result ? Number(result.code) : 400), result);
+      }
       return json(404, { error: "File not found in this agent's working directory." });
     }
     if (sub === "/files/read-image" && req.method === "POST") {
@@ -2572,9 +2576,48 @@ Bun.serve({
     }
     if (sub === "/files/list" && req.method === "POST") {
       const requestedPath = typeof body.path === "string" ? body.path : "";
-      if (session.workspaceRoot && existsSync(session.workspaceRoot)) {
-        const result = listWorkspaceDirectory(session.workspaceRoot, requestedPath);
-        if (result.ok) return json(200, result);
+      if (session.workspaceRoot) {
+        try {
+          mkdirSync(session.workspaceRoot, { recursive: true });
+          const seedReadme = resolve(session.workspaceRoot, "README.md");
+          if (!existsSync(seedReadme)) {
+            writeFileSync(seedReadme, "# Demo Workspace\n\nBrowse `src/` and `assets/` in the Files tab.\n", "utf8");
+            writeFileSync(resolve(session.workspaceRoot, "test.rs"), "ALPHA\nBETA\nGAMMA\n", "utf8");
+            mkdirSync(resolve(session.workspaceRoot, "src", "components"), { recursive: true });
+            writeFileSync(resolve(session.workspaceRoot, "src", "alpha.ts"), "export const x: number = 3;\nconsole.log(x);\n", "utf8");
+            writeFileSync(
+              resolve(session.workspaceRoot, "src", "components", "Button.tsx"),
+              "export function Button({ label }: { label: string }) {\n  return <button type=\"button\">{label}</button>;\n}\n",
+              "utf8",
+            );
+            mkdirSync(resolve(session.workspaceRoot, "assets"), { recursive: true });
+            writeFileSync(
+              resolve(session.workspaceRoot, "assets", "diagram.svg"),
+              `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" width="560" height="220">
+  <rect width="560" height="220" rx="12" fill="#11161d" stroke="#30363d" stroke-width="1.5"/>
+  <text x="28" y="42" fill="#e6edf3" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700">Workspace Architecture (assets/diagram.svg)</text>
+  <rect x="28" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="98" y="109" text-anchor="middle" fill="#58a6ff" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Client UI</text>
+  <path d="M168 104 H210" stroke="#8b949e" stroke-width="2"/>
+  <rect x="210" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="280" y="109" text-anchor="middle" fill="#3fb950" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Space Actions</text>
+  <path d="M350 104 H392" stroke="#8b949e" stroke-width="2"/>
+  <rect x="392" y="68" width="140" height="72" rx="10" fill="#161b22" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="462" y="109" text-anchor="middle" fill="#d2a8ff" font-family="ui-monospace, monospace" font-size="13" font-weight="600">Pilot Host</text>
+</svg>\n`,
+              "utf8",
+            );
+            writeFileSync(
+              resolve(session.workspaceRoot, "assets", "picture.png"),
+              Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAEAAAAAwCAYAAAChS3wfAAAAnUlEQVR4nO3QsQ0CQRDAwOuMFgipkB6o7ungs9UswoFDS5bP631ddzw+z1t+3T86QPsN0AHab4AO0H4DdID2z/bAab8BOkD7DdAB2m+ADtB+A7YHTvsN0AHab4AO0H4DdID2G7A9cNpvgA7QfgN0gPYboAO034DtgdN+A3SA9hugA7TfAB2g/QZsD5z2G6ADtN8AHaD9BugA7f/9gC8EypPSgNJOkQAAAABJRU5ErkJggg==",
+                "base64",
+              ),
+            );
+          }
+          const result = listWorkspaceDirectory(session.workspaceRoot, requestedPath);
+          if (result.ok) return json(200, result);
+        } catch { /* fallback below */ }
       }
       if (!requestedPath) {
         return json(200, {
