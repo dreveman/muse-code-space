@@ -746,11 +746,16 @@ button { color: inherit; }
   max-height: calc(100dvh - 88px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  border: 1px solid var(--border);
   border-radius: 22px;
+  background: color-mix(in srgb, var(--surface) 65%, white);
   box-shadow: 0 18px 48px rgb(0 0 0 / .24);
   transition:
     opacity 380ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+:root[data-color-mode="dark"] .transcript-companion-dropdown {
+  background: var(--surface);
 }
 .transcript-companion-dropdown.is-open {
   opacity: 1;
@@ -763,6 +768,10 @@ button { color: inherit; }
   min-height: 508px;
   height: auto;
   margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
   text-align: left;
 }
