@@ -818,7 +818,6 @@ export function WelcomeSpotifyCard() {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
   const connected = statusQuery.data?.connected === true;
-  const accountName = statusQuery.data?.account_name ?? null;
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -878,7 +877,7 @@ export function WelcomeSpotifyCard() {
             <div className="welcome-spotify-connected-row">
               <span className="welcome-spotify-connected-pill">
                 <SpotifyIcon />
-                <span>Connected to Spotify{accountName ? ` · ${accountName}` : ""}</span>
+                <span>Connected to Spotify</span>
               </span>
               <button
                 type="button"
@@ -888,10 +887,11 @@ export function WelcomeSpotifyCard() {
                 aria-label="Disconnect Spotify"
                 title="Disconnect Spotify"
               >
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M11.5 8.1l1.2-1.2a2.8 2.8 0 0 1 4 4l-1.2 1.2" opacity="0.58" />
+                  <path d="M12.5 15.9l-1.2 1.2a2.8 2.8 0 0 1-4-4l1.2-1.2" opacity="0.58" />
+                  <circle cx="12" cy="12" r="9.5" />
+                  <line x1="5.3" y1="5.3" x2="18.7" y2="18.7" />
                 </svg>
               </button>
             </div>
