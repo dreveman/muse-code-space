@@ -45,11 +45,12 @@ test("hamburger menu remains available on cards, during startup, with no agent, 
   assert.ok(app.includes('actions={sessionMenuActions(selectedSession ?? detailSession)}'), "real agents retain session actions");
 });
 
-test("session menu offers summary editing and archive/restore", () => {
+test("session menu offers side-panel tools and archive/restore", () => {
   assert.ok(app.includes("actions={sessionMenuActions(selectedSession ?? detailSession)}"), "menu reads the freshly refetched list copy");
-  for (const label of ['"Change task summary"', '"Archive task"', '"Restore task"']) {
+  for (const label of ['"Preview"', '"Archive task"', '"Restore task"']) {
     assert.ok(app.includes(label), `menu action ${label}`);
   }
+  assert.ok(!app.includes('"Change task summary"'), "Change task summary item was removed from the menu");
   assert.ok(/disabled: live \|\| archiveBusy/.test(app), "running sessions can't be archived from the menu either");
   assert.ok(menu.includes('action.checked === undefined ? "menuitem" : "menuitemcheckbox"') && menu.includes("actions.map"), "menu renders actions and checkbox toggles");
   assert.ok(menu.includes('label={panelVisible ? "Hide wire log" : "Show wire log"}'), "wire log toggle stays");
@@ -163,7 +164,7 @@ test("all dialogs are in-app: no window.prompt / confirm / alert anywhere", () =
     const source = readFileSync(path.join(root, file), "utf8").replace(/\/\/.*$/gm, "");
     assert.ok(!/window\.(prompt|confirm|alert)\(/.test(source), `${file} must not use native dialogs`);
   }
-  assert.ok(app.includes('title: "Change task summary"'), "summary editing uses the in-app text dialog");
+  assert.ok(app.includes("<ConfirmDeleteDialog"), "delete uses the in-app dialog");
 });
 
 test("past sessions keep the composer and send with Resume & send", () => {
