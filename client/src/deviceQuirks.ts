@@ -66,16 +66,12 @@ export function resolveIphoneDuoLandscapeQuirk(input: {
   if (input.mode === "force-iphone-duo") return true;
   const isPhone = input.isIphone ?? input.isIos;
   if (!isPhone) return false;
-  // In portrait on iPhone, safe-area-inset-bottom is ~34px and native controls
-  // sit at the bottom rather than the right.
-  if (input.insets.bottom >= 30 && !input.isLandscape) return false;
-  const landscape =
-    input.isLandscape === true ||
-    (input.insets.bottom < 30 && (input.viewportWidth === undefined || input.viewportWidth >= 480));
-  if (!landscape) return false;
-  // On a normal full-width iPhone in landscape, both left and right safe-area
-  // insets are >= 44px. When the host places a native pane on the right (as on
-  // the iPhone Duo in landscape), `insets.right` is 0 (or asymmetric).
+  // When the native controls bar sits at the bottom (or on a regular iPhone in
+  // portrait where top >= 20px and bottom >= 30px), do not draw a right border.
+  if (input.insets.bottom >= 30 || input.insets.top >= 20) return false;
+  // On the iPhone Duo (both unfolded landscape and folded portrait when the
+  // native sidebar sits on the right), `insets.bottom < 30`, `insets.top < 20`,
+  // and `insets.right` is 0 (or horizontal insets are asymmetric).
   return input.insets.right === 0 || isAsymmetricHorizontalSafeArea(input.insets);
 }
 

@@ -30,6 +30,21 @@ test("detects iPhone Duo landscape quirk when right safe-area inset is 0 or asym
     "iPhone Duo in landscape with left=0, right=0, bottom=0 activates the right border",
   );
 
+  // iPhone Duo folded in portrait (native sidebar still on the right):
+  // width=382, height=678, top=0, right=0, bottom=0, left=0 -> activates!
+  assert.equal(
+    resolveIphoneDuoLandscapeQuirk({
+      mode: "auto",
+      isIos: true,
+      isIphone: true,
+      isLandscape: false,
+      viewportWidth: 382,
+      insets: { top: 0, right: 0, bottom: 0, left: 0 },
+    }),
+    true,
+    "iPhone Duo folded in portrait with right native sidebar (insets all 0) activates the right border",
+  );
+
   // iPhone Duo in portrait: bottom=34 -> does NOT activate.
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
