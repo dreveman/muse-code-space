@@ -57,10 +57,12 @@ import {
   SidePanel,
   type ScratchpadAttachmentPayload,
   type ScratchpadBackground,
+  type ScratchpadBaseImage,
   type ScratchpadTargetStep,
   type SidePanelState,
   type SideTab,
 } from "./SidePanel";
+import { ScratchpadTabIcon, ScratchpadView } from "./ScratchpadPanel";
 import { isRichUserInput, RichUserInputCard, type RichUserInputAnswerSelection } from "./RichUserInputCard";
 import { PreviewTabIcon } from "./PreviewPanel";
 import { agentNameHue, displayAgentName, messagePeerHue } from "./agentColor";
@@ -314,10 +316,12 @@ const MarkdownSessionContext = createContext<{
   sessionId: string | null;
   openPreviewPort: (port: number) => void;
   openImage: (spec: { title: string; src: string; path?: string | null }) => void;
+  annotateImage: (spec: ScratchpadBaseImage) => void;
 }>({
   sessionId: null,
   openPreviewPort: () => {},
   openImage: () => {},
+  annotateImage: () => {},
 });
 
 function MarkdownImage({
@@ -329,7 +333,7 @@ function MarkdownImage({
   src: string;
   interactive?: boolean;
 }) {
-  const { sessionId, openImage } = useContext(MarkdownSessionContext);
+  const { sessionId, openImage, annotateImage } = useContext(MarkdownSessionContext);
   const workspacePath = normalizeWorkspaceImagePath(src);
   const imageQuery = useQuery({
     queryKey: ["session-image", sessionId, workspacePath],
@@ -361,14 +365,25 @@ function MarkdownImage({
 
   const title = workspacePath || alt || "Image";
   return (
-    <button
-      type="button"
-      className="markdown-image-button"
-      title={`Open ${title} in image viewer`}
-      onClick={() => openImage({ title, src: resolvedSrc!, path: workspacePath })}
-    >
-      {imgEl}
-    </button>
+    <span className="annotatable-image-wrap">
+      <button
+        type="button"
+        className="markdown-image-button"
+        title={`Open ${title} in image viewer`}
+        onClick={() => openImage({ title, src: resolvedSrc!, path: workspacePath })}
+      >
+        {imgEl}
+      </button>
+      <button
+        type="button"
+        className="image-annotate-badge"
+        title={`Annotate ${title} in Scratchpad`}
+        aria-label={`Annotate ${title} in Scratchpad`}
+        onClick={() => annotateImage({ src: resolvedSrc!, name: title.split("/").at(-1) || title })}
+      >
+        <ScratchpadTabIcon />
+      </button>
+    </span>
   );
 }
 
@@ -727,6 +742,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
     const interval = window.setInterval(() => setTickMs(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [running]);
+  const { annotateImage } = useContext(MarkdownSessionContext);
   const elapsed = toolElapsedMs(startedAt, finishedAt, tickMs);
   const displayDetails = fullOutput !== null && details ? { ...details, output: fullOutput } : details;
   const presentation = toolPresentation({ label: text, details: displayDetails, running, workspaceRoot });
@@ -913,7 +929,7 @@ const ToolEvent = memo(function ToolEvent({ sessionId, workspaceRoot, eventId, t
       {showExpandedPanel && (
         <div ref={patchPanelRef} id={panelId} className={`tool-transcript${!showRawToolOutput && (diffDoc || filePreview || imagePreview || searchPreview) ? " has-code-view" : ""}`}>
           {filePreview && <ToolFileView preview={filePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
-          {imagePreview && <ToolImageView sessionId={sessionId} preview={imagePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />}
+          {imagePreview && <ToolImageView sessionId={sessionId} preview={imagePreview} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} onAnnotateImage={annotateImage} />}
           {todosPreview && <ToolTodosView preview={todosPreview} />}
           {userInputPreview && <ToolUserInputView preview={userInputPreview} />}
           {skillPreview && skillBody !== null && (
@@ -1153,9 +1169,11 @@ function AttachmentButton({
 function ComposerAttachmentStrip({
   attachments,
   onRemove,
+  onAnnotate,
 }: {
   attachments: readonly ComposerAttachment[];
   onRemove: (id: string) => void;
+  onAnnotate?: (att: ComposerAttachment) => void;
 }) {
   if (attachments.length === 0) return null;
   return (
@@ -1166,7 +1184,20 @@ function ComposerAttachmentStrip({
             src={att.previewUrl}
             alt={att.name}
             className="composer-attachment-image"
+            onClick={() => onAnnotate?.(att)}
+            title={onAnnotate ? `Annotate ${att.name} in Scratchpad` : att.name}
           />
+          {onAnnotate && (
+            <button
+              type="button"
+              className="composer-attachment-annotate"
+              onClick={() => onAnnotate(att)}
+              aria-label={`Annotate ${att.name} in Scratchpad`}
+              title={`Annotate ${att.name} in Scratchpad`}
+            >
+              <ScratchpadTabIcon />
+            </button>
+          )}
           <button
             type="button"
             className="composer-attachment-remove"
@@ -1189,7 +1220,7 @@ function MessageAttachments({
 }: {
   attachments?: ReadonlyArray<{ name: string; dataUrl?: string; previewUrl?: string }>;
 }) {
-  const { openImage } = useContext(MarkdownSessionContext);
+  const { openImage, annotateImage } = useContext(MarkdownSessionContext);
   if (!attachments || attachments.length === 0) return null;
   return (
     <div className="message-attachments">
@@ -1198,19 +1229,29 @@ function MessageAttachments({
         if (!src) return null;
         const label = att.name || `Attachment ${idx + 1}`;
         return (
-          <button
-            key={`${att.name}-${idx}`}
-            type="button"
-            className="message-attachment-button"
-            title={`Open ${label} in image viewer`}
-            onClick={() => openImage({ title: label, src, path: null })}
-          >
-            <img
-              src={src}
-              alt={att.name}
-              className="message-attachment-image"
-            />
-          </button>
+          <span key={`${att.name}-${idx}`} className="annotatable-image-wrap">
+            <button
+              type="button"
+              className="message-attachment-button"
+              title={`Open ${label} in image viewer`}
+              onClick={() => openImage({ title: label, src, path: null })}
+            >
+              <img
+                src={src}
+                alt={att.name}
+                className="message-attachment-image"
+              />
+            </button>
+            <button
+              type="button"
+              className="image-annotate-badge"
+              title={`Annotate ${label} in Scratchpad`}
+              aria-label={`Annotate ${label} in Scratchpad`}
+              onClick={() => annotateImage({ src, name: label })}
+            >
+              <ScratchpadTabIcon />
+            </button>
+          </span>
         );
       })}
     </div>
@@ -4203,6 +4244,8 @@ export function App() {
     void api.setPreviewPort({ session_id: sessionId, port: null }).catch(() => undefined);
   }, [queryClient]);
   const [scratchpadTargetStep, setScratchpadTargetStep] = useState<ScratchpadTargetStep | null>(null);
+  const [scratchpadBaseImage, setScratchpadBaseImage] = useState<ScratchpadBaseImage | null>(null);
+  const [draftScratchpadOpen, setDraftScratchpadOpen] = useState(false);
   const [richStepAttachments, setRichStepAttachments] = useState<Record<string, ScratchpadAttachmentPayload>>({});
 
   const toggleFilesTab = useCallback((sessionId: string) => {
@@ -4248,11 +4291,58 @@ export function App() {
     });
   }, [isNarrow, mobileSideOpen]);
 
-  const openScratchpadForStep = useCallback((target: ScratchpadTargetStep, background?: ScratchpadBackground) => {
+  const openScratchpadForStep = useCallback((
+    target: ScratchpadTargetStep,
+    background?: ScratchpadBackground,
+    baseImage?: ScratchpadBaseImage | null,
+  ) => {
     if (!detailSession?.id) return;
     setScratchpadTargetStep(target);
+    setScratchpadBaseImage(baseImage ?? null);
     toggleScratchpadTab(detailSession.id, background ?? "grid");
   }, [detailSession?.id, toggleScratchpadTab]);
+
+  const clearScratchpadBaseImage = useCallback(() => {
+    setScratchpadBaseImage(null);
+  }, []);
+
+  const openScratchpadWithImage = useCallback((spec: ScratchpadBaseImage) => {
+    setScratchpadTargetStep(null);
+    setScratchpadBaseImage(spec);
+    if (detailSession?.id) {
+      setSidePanels((current) => {
+        const sid = detailSession.id;
+        const state = current[sid] ?? { tabs: [], activeKey: null, loaded: false };
+        const existing = state.tabs.find((tab) => tab.kind === "scratchpad");
+        if (existing) {
+          return { ...current, [sid]: { ...state, activeKey: existing.key } };
+        }
+        const tab: SideTab = { key: "scratchpad", kind: "scratchpad", background: "blank" };
+        return { ...current, [sid]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+      });
+      if (isNarrow) setMobileSideOpen(true);
+    } else {
+      setDraftScratchpadOpen(true);
+    }
+  }, [detailSession?.id, isNarrow]);
+
+  const handleUpdateComposerAttachment = useCallback((attachmentId: string, payload: ScratchpadAttachmentPayload) => {
+    setAttachments((curr) =>
+      curr.map((att) =>
+        att.id === attachmentId
+          ? {
+              ...att,
+              name: payload.name,
+              mediaType: payload.mediaType,
+              base64Data: payload.base64Data,
+              previewUrl: payload.dataUrl,
+            }
+          : att,
+      ),
+    );
+    setDraftScratchpadOpen(false);
+    if (isNarrow) setMobileSideOpen(false);
+  }, [isNarrow]);
 
   const handleAttachScratchpadToStep = useCallback((target: ScratchpadTargetStep, payload: ScratchpadAttachmentPayload) => {
     setRichStepAttachments((curr) => ({ ...curr, [`${target.userInputId}:${target.questionId}`]: payload }));
@@ -4270,6 +4360,7 @@ export function App() {
         previewUrl: payload.dataUrl,
       },
     ]);
+    setDraftScratchpadOpen(false);
     if (isNarrow) setMobileSideOpen(false);
   }, [isNarrow]);
 
@@ -4375,8 +4466,9 @@ export function App() {
       sessionId: detailSessionIdForFiles,
       openPreviewPort: openPreviewPortForDetail,
       openImage: openImageTabForDetail,
+      annotateImage: openScratchpadWithImage,
     }),
-    [detailSessionIdForFiles, openPreviewPortForDetail, openImageTabForDetail],
+    [detailSessionIdForFiles, openPreviewPortForDetail, openImageTabForDetail, openScratchpadWithImage],
   );
   const detailWorkspaceRoot = detailSession?.workspace_root ?? "";
   const assistantAvatarUrl = assistantIdentityQuery.data?.avatar_data_url ?? null;
@@ -4609,6 +4701,7 @@ export function App() {
         <ComposerAttachmentStrip
           attachments={startingDraft?.draft.id === selectedId ? [] : attachments}
           onRemove={removeAttachment}
+          onAnnotate={(att) => openScratchpadWithImage({ src: att.previewUrl, name: att.name, attachmentId: att.id })}
         />
         <label className="sr-only" htmlFor="draft-input">
           First message
@@ -5151,8 +5244,12 @@ export function App() {
         vcsLoading={vcsStatusQuery.isPending}
         workspacePath={detailWorkspaceShort}
         scratchpadTargetStep={scratchpadTargetStep}
+        scratchpadBaseImage={scratchpadBaseImage}
+        onClearScratchpadBaseImage={clearScratchpadBaseImage}
         onAttachScratchpadToStep={handleAttachScratchpadToStep}
         onAttachScratchpadToComposer={handleAttachScratchpadToComposer}
+        onUpdateComposerAttachment={handleUpdateComposerAttachment}
+        onAnnotateImage={openScratchpadWithImage}
         onRefreshVcs={refreshDetailVcs}
         onOpenFile={openFileTabForDetail}
         onOpenImage={openImageTabForDetail}
@@ -5176,8 +5273,12 @@ export function App() {
     vcsStatusQuery.isPending,
     detailWorkspaceShort,
     scratchpadTargetStep,
+    scratchpadBaseImage,
+    clearScratchpadBaseImage,
     handleAttachScratchpadToStep,
     handleAttachScratchpadToComposer,
+    handleUpdateComposerAttachment,
+    openScratchpadWithImage,
     refreshDetailVcs,
     openFileTabForDetail,
     openImageTabForDetail,
@@ -5531,6 +5632,7 @@ export function App() {
                           <ComposerAttachmentStrip
                             attachments={attachments}
                             onRemove={removeAttachment}
+                            onAnnotate={(att) => openScratchpadWithImage({ src: att.previewUrl, name: att.name, attachmentId: att.id })}
                           />
                           <label className="sr-only" htmlFor="takeover-input">
                             Message Muse Code
@@ -5832,6 +5934,31 @@ export function App() {
             </MarkdownSessionContext.Provider>
           </div>
       </main>
+      {draftScratchpadOpen && (
+        <div className="dialog-backdrop" role="dialog" aria-modal="true" aria-label="Annotate image in Scratchpad">
+          <div className="scratchpad-modal-dialog">
+            <div className="scratchpad-modal-header">
+              <strong>Scratchpad</strong>
+              <button
+                type="button"
+                className="scratchpad-tool-btn"
+                onClick={() => setDraftScratchpadOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <ScratchpadView
+              sessionId={selectedId ?? "draft"}
+              active={true}
+              initialBackground="blank"
+              initialBaseImage={scratchpadBaseImage}
+              onClearBaseImage={clearScratchpadBaseImage}
+              onAttachToComposer={handleAttachScratchpadToComposer}
+              onUpdateComposerAttachment={handleUpdateComposerAttachment}
+            />
+          </div>
+        </div>
+      )}
       {textPrompt && (
         <TextPromptDialog key={textPrompt.title} spec={textPrompt} onClose={() => setTextPrompt(null)} />
       )}
@@ -6375,6 +6502,7 @@ function LinkedConversationPane({
       sessionId,
       openPreviewPort: onOpenPreviewPort,
       openImage: onOpenImage,
+      annotateImage: (spec: ScratchpadBaseImage) => onOpenImage({ title: spec.name, src: spec.src, path: null }),
     }),
     [sessionId, onOpenPreviewPort, onOpenImage],
   );

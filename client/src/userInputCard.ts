@@ -22,15 +22,15 @@ function selectionBounds(question: UserInputQuestionLike): { min: number; max: n
 }
 
 export function questionSelectionHint(question: UserInputQuestionLike): string {
-  if (question.kind === "file") return "Upload an image, PDF, or text file (or draw in Scratchpad)";
+  if (question.kind === "file" || question.kind === "image" || question.kind === "sketch") {
+    return "Attach an image or draw in Scratchpad";
+  }
   if (question.kind === "embed") {
     if (!question.embed?.type || question.embed.type === "scratchpad") {
-      return "Draw in the Scratchpad or write your answer below";
+      return "Attach an image, draw in Scratchpad, or write below";
     }
     return "Write your answer";
   }
-  if (question.kind === "sketch") return "Draw in the Scratchpad or upload an image";
-  if (question.kind === "image") return "Upload or paste an image (or draw in Scratchpad)";
   const options = question.options ?? [];
   if (options.length === 0) return "Write your answer";
   if (question.selection.mode !== "multiple") return "Pick one";

@@ -1479,13 +1479,12 @@ async function runTurn(session: Session, text: string) {
         const toolItemId = crypto.randomUUID();
         const richQuestions = [
           {
-            id: "layout",
-            header: "Layout sketch",
-            question: "Sketch the layout in the Scratchpad (or write a description).",
-            kind: "embed",
-            embed: { type: "scratchpad", background: "grid" as const },
+            id: "image",
+            header: "Reference image",
+            question: "Provide an image or draw in the Scratchpad.",
+            kind: "file",
             required: true,
-            placeholder: "Or describe the layout in plain text…",
+            placeholder: "Optional notes about your image…",
             selection: { mode: "single", minSelections: 1, maxSelections: 1 },
             options: [],
           },
