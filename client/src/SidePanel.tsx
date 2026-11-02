@@ -175,6 +175,7 @@ export function SidePanel({
                 aria-selected={selected}
                 aria-controls={`side-panel-${tab.key}`}
                 className="side-tab-label"
+                title={label}
                 onClick={() => onSelect(tab.key)}
               >
                 {tab.kind === "terminal" && <TerminalTabIcon />}
