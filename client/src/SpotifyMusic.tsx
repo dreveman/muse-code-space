@@ -887,11 +887,10 @@ export function WelcomeSpotifyCard() {
                 aria-label="Disconnect Spotify"
                 title="Disconnect Spotify"
               >
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M11.5 8.1l1.2-1.2a2.8 2.8 0 0 1 4 4l-1.2 1.2" opacity="0.58" />
-                  <path d="M12.5 15.9l-1.2 1.2a2.8 2.8 0 0 1-4-4l1.2-1.2" opacity="0.58" />
-                  <circle cx="12" cy="12" r="9.5" />
-                  <line x1="5.3" y1="5.3" x2="18.7" y2="18.7" />
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m18.84 12.25 1.72-1.71a4.5 4.5 0 0 0-6.36-6.36l-1.72 1.71" />
+                  <path d="m5.17 11.75-1.71 1.71a4.5 4.5 0 0 0 6.36 6.36l1.71-1.71" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
                 </svg>
               </button>
             </div>
