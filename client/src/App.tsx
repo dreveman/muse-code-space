@@ -5163,7 +5163,7 @@ export function App() {
 
   // Compute how many extra icon buttons can fit in `.chat-floating-actions`
   // beside the 3-dot SessionMenu button without overlapping the centered
-  // companion portrait (`50%` center, ~72px half-width + 14px inset + 10px gap).
+  // 64px companion portrait (`50%` center, 32px radius + 14px inset + 4px gap = 50px).
   const chatPaneWidthPx = isNarrow
     ? viewportWidth
     : (() => {
@@ -5173,7 +5173,7 @@ export function App() {
       })();
   const maxFloatingActionIcons = Math.max(
     0,
-    Math.min(5, Math.floor(((chatPaneWidthPx / 2) - 96 - 34) / 34)),
+    Math.min(5, Math.floor(((chatPaneWidthPx / 2) - 50 - 34) / 34)),
   );
   const visibleFloatingActionKeys = useMemo(() => {
     type ActionKey = "terminal" | "preview" | "scratchpad" | "files" | "artifacts";
