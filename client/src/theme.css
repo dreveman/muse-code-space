@@ -2832,10 +2832,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   z-index: 6;
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 5px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -2918,14 +2918,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   display: grid;
   gap: 8px;
 }
+.scratchpad-more-menu,
+.scratchpad-shape-menu {
+  min-width: 152px;
+  padding: 5px;
+  gap: 2px;
+}
 .scratchpad-more-menu {
   left: auto;
   right: 0;
   min-width: 176px;
-  padding: 5px;
-  gap: 2px;
 }
 .scratchpad-more-menu > button,
+.scratchpad-shape-menu > button,
 .scratchpad-more-menu > .scratchpad-menu-item {
   width: 100%;
   min-height: 30px;
@@ -2944,6 +2949,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   touch-action: manipulation;
 }
 .scratchpad-more-menu > button:hover:not(:disabled),
+.scratchpad-shape-menu > button:hover:not(:disabled),
 .scratchpad-more-menu > .scratchpad-menu-item:hover {
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }

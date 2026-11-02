@@ -289,11 +289,14 @@ export const ScratchpadView = memo(function ScratchpadView({
   const [loadedImageEl, setLoadedImageEl] = useState<HTMLImageElement | null>(null);
   const [penOnly, setPenOnly] = useState(false);
   const [penDetected, setPenDetected] = useState(false);
+  const [lastShape, setLastShape] = useState<"arrow" | "rect" | "circle" | "line">("arrow");
+  const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const [styleMenuOpen, setStyleMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const fileInputId = useId();
 
+  const shapeWrapRef = useRef<HTMLDivElement>(null);
   const styleWrapRef = useRef<HTMLDivElement>(null);
   const moreWrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -485,10 +488,13 @@ export const ScratchpadView = memo(function ScratchpadView({
   }, [active, undo, redo]);
 
   useEffect(() => {
-    if (!styleMenuOpen && !moreMenuOpen) return;
+    if (!shapeMenuOpen && !styleMenuOpen && !moreMenuOpen) return;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
+      if (shapeMenuOpen && !shapeWrapRef.current?.contains(target)) {
+        setShapeMenuOpen(false);
+      }
       if (styleMenuOpen && !styleWrapRef.current?.contains(target)) {
         setStyleMenuOpen(false);
       }
@@ -498,6 +504,7 @@ export const ScratchpadView = memo(function ScratchpadView({
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        setShapeMenuOpen(false);
         setStyleMenuOpen(false);
         setMoreMenuOpen(false);
       }
@@ -508,7 +515,7 @@ export const ScratchpadView = memo(function ScratchpadView({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [styleMenuOpen, moreMenuOpen]);
+  }, [shapeMenuOpen, styleMenuOpen, moreMenuOpen]);
 
   const pointFromEvent = (
     canvas: HTMLCanvasElement,
@@ -693,6 +700,9 @@ export const ScratchpadView = memo(function ScratchpadView({
     a.click();
   };
 
+  const isShapeTool = tool === "arrow" || tool === "rect" || tool === "circle" || tool === "line";
+  const displayedShape = isShapeTool ? tool : lastShape;
+
   return (
     <div className="scratchpad-panel">
       <header className="scratchpad-toolbar" role="toolbar" aria-label="Scratchpad drawing tools">
@@ -703,7 +713,10 @@ export const ScratchpadView = memo(function ScratchpadView({
             aria-pressed={tool === "pen"}
             aria-label="Pen"
             title="Pen"
-            onClick={() => setTool("pen")}
+            onClick={() => {
+              setShapeMenuOpen(false);
+              setTool("pen");
+            }}
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 19l7-7 3 3-7 7-3-3z" />
@@ -716,57 +729,99 @@ export const ScratchpadView = memo(function ScratchpadView({
             aria-pressed={tool === "highlighter"}
             aria-label="Highlighter"
             title="Highlighter"
-            onClick={() => setTool("highlighter")}
+            onClick={() => {
+              setShapeMenuOpen(false);
+              setTool("highlighter");
+            }}
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m9 11-6 6v3h9l3-3" />
               <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
             </svg>
           </button>
-          <button
-            type="button"
-            className={`scratchpad-icon-btn${tool === "arrow" ? " is-active" : ""}`}
-            aria-pressed={tool === "arrow"}
-            aria-label="Arrow"
-            title="Arrow"
-            onClick={() => setTool("arrow")}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <line x1="5" y1="19" x2="19" y2="5" />
-              <polyline points="10 5 19 5 19 14" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className={`scratchpad-icon-btn${tool === "rect" ? " is-active" : ""}`}
-            aria-pressed={tool === "rect"}
-            aria-label="Rectangle"
-            title="Rectangle"
-            onClick={() => setTool("rect")}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="4" y="5" width="16" height="14" rx="2" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className={`scratchpad-icon-btn${tool === "circle" ? " is-active" : ""}`}
-            aria-pressed={tool === "circle"}
-            aria-label="Oval"
-            title="Oval"
-            onClick={() => setTool("circle")}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="8" />
-            </svg>
-          </button>
+
+          <div ref={shapeWrapRef} className="scratchpad-dropdown-wrap">
+            <button
+              type="button"
+              className={`scratchpad-style-trigger${isShapeTool ? " is-active" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={shapeMenuOpen}
+              aria-label="Shape tools"
+              title="Shapes (Arrow, Rectangle, Oval, Line)"
+              onClick={() => {
+                setStyleMenuOpen(false);
+                setMoreMenuOpen(false);
+                if (!isShapeTool) {
+                  setTool(lastShape);
+                  setShapeMenuOpen(true);
+                } else {
+                  setShapeMenuOpen((v) => !v);
+                }
+              }}
+            >
+              {displayedShape === "arrow" && (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="19" x2="19" y2="5" />
+                  <polyline points="10 5 19 5 19 14" />
+                </svg>
+              )}
+              {displayedShape === "rect" && (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="4" y="5" width="16" height="14" rx="2" />
+                </svg>
+              )}
+              {displayedShape === "circle" && (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8" />
+                </svg>
+              )}
+              {displayedShape === "line" && (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="19" x2="19" y2="5" />
+                </svg>
+              )}
+              <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 4.5 6 7.5 9 4.5" />
+              </svg>
+            </button>
+            {shapeMenuOpen && (
+              <div className="scratchpad-popover scratchpad-shape-menu" role="menu" aria-label="Shapes">
+                {(
+                  [
+                    ["arrow", "Arrow"],
+                    ["rect", "Rectangle"],
+                    ["circle", "Oval"],
+                    ["line", "Line"],
+                  ] as const
+                ).map(([shapeId, shapeLabel]) => (
+                  <button
+                    key={shapeId}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setLastShape(shapeId);
+                      setTool(shapeId);
+                      setShapeMenuOpen(false);
+                    }}
+                  >
+                    <span>{shapeLabel}</span>
+                    {tool === shapeId && <span>✓</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             className={`scratchpad-icon-btn${tool === "eraser" ? " is-active" : ""}`}
             aria-pressed={tool === "eraser"}
             aria-label="Eraser"
             title="Eraser"
-            onClick={() => setTool("eraser")}
+            onClick={() => {
+              setShapeMenuOpen(false);
+              setTool("eraser");
+            }}
           >
             <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
@@ -785,6 +840,7 @@ export const ScratchpadView = memo(function ScratchpadView({
             aria-label="Color and stroke width"
             title="Color & stroke width"
             onClick={() => {
+              setShapeMenuOpen(false);
               setMoreMenuOpen(false);
               setStyleMenuOpen((v) => !v);
             }}
@@ -881,6 +937,7 @@ export const ScratchpadView = memo(function ScratchpadView({
               aria-label="More scratchpad options"
               title="More options"
               onClick={() => {
+                setShapeMenuOpen(false);
                 setStyleMenuOpen(false);
                 setMoreMenuOpen((v) => !v);
               }}
@@ -893,17 +950,6 @@ export const ScratchpadView = memo(function ScratchpadView({
             </button>
             {moreMenuOpen && (
               <div className="scratchpad-popover scratchpad-more-menu" role="menu" aria-label="Scratchpad options">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setTool("line");
-                    setMoreMenuOpen(false);
-                  }}
-                >
-                  <span>Line tool</span>
-                  {tool === "line" && <span>✓</span>}
-                </button>
                 <button
                   type="button"
                   role="menuitem"
