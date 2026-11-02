@@ -69,4 +69,8 @@ test("Preview tab lives in SidePanel with port control, reload button, status st
   assert.ok(actions.includes("setPreviewPort:") && actions.includes("listPreviewPorts:") && actions.includes("previewProxy:") && actions.includes("previewWs:"));
   assert.ok(actions.includes("readSessionImage:"), "readSessionImage action is defined for workspace Markdown images");
   assert.ok(app.includes("MarkdownLinkedImage") && app.includes("markdown-preview-card"), "clickable preview screenshot cards are rendered in Markdown");
+  assert.ok(preview.includes('aria-label="Take preview screenshot"'), "Preview toolbar includes screenshot dropdown button");
+  assert.ok(preview.includes("<span>Full page</span>") && preview.includes("<span>Rectangle</span>"), "Screenshot dropdown offers Full page and Rectangle modes");
+  assert.ok(preview.includes('className="preview-crop-overlay"'), "Rectangle mode renders an interactive crop selection overlay");
+  assert.ok(side.includes("onCaptureScreenshot={onAttachScratchpadToComposer}"), "Captured preview screenshots attach directly to the input prompt");
 });

@@ -232,6 +232,7 @@ export function SidePanel({
                   sessionId={sessionId}
                   active={selected}
                   initialPort={previewPort}
+                  onCaptureScreenshot={onAttachScratchpadToComposer}
                 />
               ) : tab.kind === "scratchpad" ? (
                 <ScratchpadView
