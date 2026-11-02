@@ -38,4 +38,12 @@ export function resizeComposerTextarea(
   const nextHeight = `${clampedHeight}px`;
   input.style.height = nextHeight;
   input.style.overflowY = contentHeight > effectiveMaxHeight ? "auto" : "hidden";
+  if (clampedHeight === COMPOSER_MIN_HEIGHT && attachmentsHeight === 0) {
+    input.parentElement?.style?.removeProperty?.("height");
+  } else {
+    input.parentElement?.style?.setProperty?.(
+      "height",
+      `${clampedHeight + COMPOSER_TOOLBAR_HEIGHT + attachmentsHeight}px`,
+    );
+  }
 }

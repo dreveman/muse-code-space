@@ -37,8 +37,8 @@ test("readiness counts answered questions and finds the first unanswered one", (
   const embedScratchpad = { id: "emb-1", kind: "embed", embed: { type: "scratchpad" }, required: true, selection: { mode: "single" }, options: [] };
   const embedUnknown = { id: "emb-2", kind: "embed", embed: { type: "server-picker" }, required: true, selection: { mode: "single" }, options: [] };
   const optionalStep = { id: "opt-1", kind: "text", required: false, selection: { mode: "single" }, options: [] };
-  assert.equal(questionSelectionHint(fileStep), "Upload an image, PDF, or text file (or draw in Scratchpad)");
-  assert.equal(questionSelectionHint(embedScratchpad), "Draw in the Scratchpad or write your answer below");
+  assert.equal(questionSelectionHint(fileStep), "Attach an image or draw in Scratchpad");
+  assert.equal(questionSelectionHint(embedScratchpad), "Attach an image, draw in Scratchpad, or write below");
   assert.equal(questionSelectionHint(embedUnknown), "Write your answer");
   assert.equal(questionAnswered(fileStep, [], "", false), false);
   assert.equal(questionAnswered(fileStep, [], "", true), true, "attachment satisfies file step");
@@ -93,7 +93,7 @@ test("the card wires readiness, selected states and per-question structure", () 
   const richCard = readFileSync(new URL("./RichUserInputCard.tsx", import.meta.url), "utf8");
   const scratchpad = readFileSync(new URL("./ScratchpadPanel.tsx", import.meta.url), "utf8");
   const sidePanel = readFileSync(new URL("./SidePanel.tsx", import.meta.url), "utf8");
-  assert.ok(richCard.includes("Open Scratchpad to draw"), "RichUserInputCard offers Scratchpad button for sketch/image steps");
+  assert.ok(richCard.includes("<span>Attach image</span>") && richCard.includes("<span>Scratchpad</span>"), "RichUserInputCard offers Attach image and Scratchpad buttons for image steps");
   assert.ok(scratchpad.includes("getCoalescedEvents") && scratchpad.includes("Pen only"), "Scratchpad supports coalesced pointer events and Pen only palm rejection");
   assert.ok(sidePanel.includes('tab.kind === "scratchpad"'), "SidePanel renders the Scratchpad tab");
 });

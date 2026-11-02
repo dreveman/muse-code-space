@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 export type ScratchpadTool = "pen" | "highlighter" | "line" | "arrow" | "rect" | "circle" | "eraser";
 export type ScratchpadBackground = "grid" | "dots" | "blank";
@@ -20,6 +20,12 @@ export type ScratchpadTargetStep = {
   userInputId: string;
   questionId: string;
   header: string;
+};
+
+export type ScratchpadBaseImage = {
+  src: string;
+  name: string;
+  attachmentId?: string | null;
 };
 
 export type ScratchpadAttachmentPayload = {
@@ -49,15 +55,14 @@ const sessionStrokesCache = new Map<string, {
   strokes: ScratchpadStroke[];
   redo: ScratchpadStroke[];
   background: ScratchpadBackground;
+  baseImage: ScratchpadBaseImage | null;
 }>();
 
 export function ScratchpadTabIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 19l7-7 3 3-7 7-3-3z" />
-      <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-      <path d="M2 2l7.586 7.586" />
-      <circle cx="11" cy="11" r="2" />
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13.5 5H6a2.5 2.5 0 0 0-2.5 2.5v11A2.5 2.5 0 0 0 6 21h11a2.5 2.5 0 0 0 2.5-2.5V11" />
+      <path d="M9.5 15.5l1.2-4.2L17.8 4.2a2.12 2.12 0 0 1 3 3l-7.1 7.1-4.2 1.2z" />
     </svg>
   );
 }
@@ -75,11 +80,30 @@ export function NewScratchpadButton({
       className={`terminal-toggle${active ? " active" : ""}`}
       onClick={onOpen}
       aria-label="Open scratchpad"
-      title="Scratchpad — draw or sketch with touch or Apple Pencil"
+      title="Scratchpad — draw or annotate images with touch or Apple Pencil"
     >
       <ScratchpadTabIcon />
     </button>
   );
+}
+
+function computeContainRect(
+  stageW: number,
+  stageH: number,
+  imgW: number,
+  imgH: number,
+  pad = 16,
+): { x: number; y: number; w: number; h: number } {
+  const availW = Math.max(40, stageW - pad * 2);
+  const availH = Math.max(40, stageH - pad * 2);
+  const safeImgW = Math.max(1, imgW);
+  const safeImgH = Math.max(1, imgH);
+  const scale = Math.min(availW / safeImgW, availH / safeImgH);
+  const w = Math.round(safeImgW * scale);
+  const h = Math.round(safeImgH * scale);
+  const x = Math.round((stageW - w) / 2);
+  const y = Math.round((stageH - h) / 2);
+  return { x, y, w, h };
 }
 
 function drawBackground(
@@ -87,6 +111,7 @@ function drawBackground(
   width: number,
   height: number,
   background: ScratchpadBackground,
+  imageEl: HTMLImageElement | null = null,
 ) {
   ctx.save();
   ctx.fillStyle = "#fbfaf7";
@@ -116,6 +141,13 @@ function drawBackground(
         ctx.fill();
       }
     }
+  }
+
+  if (imageEl && imageEl.complete && (imageEl.naturalWidth > 0 || imageEl.width > 0)) {
+    const natW = imageEl.naturalWidth || imageEl.width || 300;
+    const natH = imageEl.naturalHeight || imageEl.height || 200;
+    const rect = computeContainRect(width, height, natW, natH, 16);
+    ctx.drawImage(imageEl, rect.x, rect.y, rect.w, rect.h);
   }
   ctx.restore();
 }
@@ -207,7 +239,6 @@ function drawStroke(ctx: CanvasRenderingContext2D, stroke: ScratchpadStroke) {
     return;
   }
 
-  // Smooth quadratic spline with average stylus pressure modulation.
   const avgPressure = pts.reduce((acc, p) => acc + p.pressure, 0) / pts.length;
   if (stroke.tool === "pen") {
     ctx.lineWidth = stroke.size * (0.65 + avgPressure * 0.7);
@@ -231,32 +262,42 @@ export const ScratchpadView = memo(function ScratchpadView({
   active,
   targetStep = null,
   initialBackground = "grid",
+  initialBaseImage = null,
+  onClearBaseImage,
   onAttachToStep,
   onAttachToComposer,
+  onUpdateComposerAttachment,
 }: {
   sessionId: string;
   active: boolean;
   targetStep?: ScratchpadTargetStep | null;
   initialBackground?: ScratchpadBackground;
+  initialBaseImage?: ScratchpadBaseImage | null;
+  onClearBaseImage?: () => void;
   onAttachToStep?: (target: ScratchpadTargetStep, attachment: ScratchpadAttachmentPayload) => void;
   onAttachToComposer?: (attachment: ScratchpadAttachmentPayload) => void;
+  onUpdateComposerAttachment?: (attachmentId: string, attachment: ScratchpadAttachmentPayload) => void;
 }) {
   const cached = sessionStrokesCache.get(sessionId);
   const [strokes, setStrokes] = useState<ScratchpadStroke[]>(() => cached?.strokes ?? []);
   const [redoStack, setRedoStack] = useState<ScratchpadStroke[]>(() => cached?.redo ?? []);
   const [tool, setTool] = useState<ScratchpadTool>("pen");
-  const [color, setColor] = useState<string>(PALETTE[0].color);
+  const [color, setColor] = useState<string>(PALETTE[4].color); // Red default when annotating, or Ink
   const [size, setSize] = useState<number>(SIZES[1].size);
   const [background, setBackground] = useState<ScratchpadBackground>(() => cached?.background ?? initialBackground);
+  const [baseImage, setBaseImage] = useState<ScratchpadBaseImage | null>(() => initialBaseImage ?? cached?.baseImage ?? null);
+  const [loadedImageEl, setLoadedImageEl] = useState<HTMLImageElement | null>(null);
   const [penOnly, setPenOnly] = useState(false);
   const [penDetected, setPenDetected] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const fileInputId = useId();
 
   const stageRef = useRef<HTMLDivElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const inkCanvasRef = useRef<HTMLCanvasElement>(null);
   const activeStrokeRef = useRef<ScratchpadStroke | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const prevBaseSrcRef = useRef<string | null>(baseImage?.src ?? null);
   const canvasSizeRef = useRef<{ width: number; height: number; dpr: number }>({
     width: 640,
     height: 440,
@@ -268,8 +309,40 @@ export const ScratchpadView = memo(function ScratchpadView({
   }, [initialBackground]);
 
   useEffect(() => {
-    sessionStrokesCache.set(sessionId, { strokes, redo: redoStack, background });
-  }, [sessionId, strokes, redoStack, background]);
+    if (!initialBaseImage) return;
+    if (initialBaseImage.src !== prevBaseSrcRef.current) {
+      prevBaseSrcRef.current = initialBaseImage.src;
+      setBaseImage(initialBaseImage);
+      setStrokes([]);
+      setRedoStack([]);
+    } else {
+      setBaseImage(initialBaseImage);
+    }
+  }, [initialBaseImage]);
+
+  useEffect(() => {
+    if (!baseImage?.src) {
+      setLoadedImageEl(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (!cancelled) setLoadedImageEl(img);
+    };
+    img.onerror = () => {
+      if (!cancelled) setLoadedImageEl(null);
+    };
+    img.src = baseImage.src;
+    return () => {
+      cancelled = true;
+    };
+  }, [baseImage?.src]);
+
+  useEffect(() => {
+    sessionStrokesCache.set(sessionId, { strokes, redo: redoStack, background, baseImage });
+  }, [sessionId, strokes, redoStack, background, baseImage]);
 
   const redrawAll = useCallback(() => {
     const bgCanvas = bgCanvasRef.current;
@@ -281,7 +354,7 @@ export const ScratchpadView = memo(function ScratchpadView({
     if (!bgCtx || !inkCtx) return;
 
     bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBackground(bgCtx, width, height, background);
+    drawBackground(bgCtx, width, height, background, loadedImageEl);
 
     inkCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     inkCtx.clearRect(0, 0, width, height);
@@ -291,7 +364,7 @@ export const ScratchpadView = memo(function ScratchpadView({
     if (activeStrokeRef.current) {
       drawStroke(inkCtx, activeStrokeRef.current);
     }
-  }, [strokes, background]);
+  }, [strokes, background, loadedImageEl]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -352,6 +425,33 @@ export const ScratchpadView = memo(function ScratchpadView({
     setStrokes([]);
   };
 
+  const removeBaseImage = () => {
+    prevBaseSrcRef.current = null;
+    setBaseImage(null);
+    setLoadedImageEl(null);
+    onClearBaseImage?.();
+  };
+
+  const loadFileAsBaseImage = (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      if (!result) return;
+      prevBaseSrcRef.current = result;
+      setBaseImage({ src: result, name: file.name || "image.png", attachmentId: null });
+      setStrokes([]);
+      setRedoStack([]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleLoadImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) loadFileAsBaseImage(file);
+  };
+
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -365,8 +465,19 @@ export const ScratchpadView = memo(function ScratchpadView({
         }
       }
     };
+    const onPaste = (event: ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+      if (files[0]) {
+        event.preventDefault();
+        loadFileAsBaseImage(files[0]);
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("paste", onPaste);
+    };
   }, [active, undo, redo]);
 
   const pointFromEvent = (
@@ -455,7 +566,7 @@ export const ScratchpadView = memo(function ScratchpadView({
     const ctx = out.getContext("2d");
     if (!ctx) return null;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBackground(ctx, width, height, background);
+    drawBackground(ctx, width, height, background, loadedImageEl);
     if (inkCanvasRef.current) {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(inkCanvasRef.current, 0, 0);
@@ -464,20 +575,32 @@ export const ScratchpadView = memo(function ScratchpadView({
     const comma = dataUrl.indexOf(",");
     const base64Data = comma >= 0 ? dataUrl.slice(comma + 1) : "";
     if (!base64Data) return null;
+    const baseStem = baseImage?.name ? baseImage.name.replace(/\.[^.]+$/, "") : "sketch";
     return {
-      name: `sketch-${Date.now()}.png`,
+      name: `${baseStem}-annotated-${Date.now()}.png`,
       mediaType: "image/png",
       base64Data,
       dataUrl,
     };
   };
 
+  const hasContent = strokes.length > 0 || Boolean(loadedImageEl);
+
   const handleUseInStep = () => {
     if (!targetStep || !onAttachToStep) return;
     const payload = exportCompositePng();
     if (!payload) return;
     onAttachToStep(targetStep, payload);
-    setStatusMessage(`Attached drawing to "${targetStep.header}"`);
+    setStatusMessage(`Attached to "${targetStep.header}"`);
+    window.setTimeout(() => setStatusMessage(null), 2200);
+  };
+
+  const handleUpdateExistingAttachment = () => {
+    if (!baseImage?.attachmentId || !onUpdateComposerAttachment) return;
+    const payload = exportCompositePng();
+    if (!payload) return;
+    onUpdateComposerAttachment(baseImage.attachmentId, payload);
+    setStatusMessage(`Updated "${baseImage.name}" in message composer`);
     window.setTimeout(() => setStatusMessage(null), 2200);
   };
 
@@ -486,7 +609,7 @@ export const ScratchpadView = memo(function ScratchpadView({
     const payload = exportCompositePng();
     if (!payload) return;
     onAttachToComposer(payload);
-    setStatusMessage("Attached drawing to message composer");
+    setStatusMessage("Attached annotated image to message composer");
     window.setTimeout(() => setStatusMessage(null), 2200);
   };
 
@@ -569,6 +692,21 @@ export const ScratchpadView = memo(function ScratchpadView({
               {bg === "grid" ? "Grid" : bg === "dots" ? "Dots" : "Blank"}
             </button>
           ))}
+          <label htmlFor={fileInputId} className="scratchpad-tool-btn scratchpad-upload-label" title="Load an image onto the canvas to annotate">
+            {baseImage ? "Change image…" : "Load image…"}
+          </label>
+          <input
+            id={fileInputId}
+            type="file"
+            accept="image/*"
+            style={{ display: "none" }}
+            onChange={handleLoadImageChange}
+          />
+          {baseImage && (
+            <button type="button" className="scratchpad-tool-btn" onClick={removeBaseImage} title={`Remove ${baseImage.name} from canvas`}>
+              Remove image
+            </button>
+          )}
         </div>
 
         <div className="scratchpad-tool-group scratchpad-actions-right">
@@ -588,9 +726,9 @@ export const ScratchpadView = memo(function ScratchpadView({
             Redo
           </button>
           <button type="button" className="scratchpad-tool-btn" onClick={clearCanvas} disabled={strokes.length === 0}>
-            Clear
+            Clear ink
           </button>
-          <button type="button" className="scratchpad-tool-btn" onClick={handleDownload} disabled={strokes.length === 0}>
+          <button type="button" className="scratchpad-tool-btn" onClick={handleDownload} disabled={!hasContent}>
             Save PNG
           </button>
           {targetStep && onAttachToStep ? (
@@ -598,22 +736,49 @@ export const ScratchpadView = memo(function ScratchpadView({
               type="button"
               className="scratchpad-primary-btn"
               onClick={handleUseInStep}
-              disabled={strokes.length === 0}
+              disabled={!hasContent}
             >
               Use in {targetStep.header || "step"}
             </button>
+          ) : baseImage?.attachmentId && onUpdateComposerAttachment ? (
+            <>
+              <button
+                type="button"
+                className="scratchpad-primary-btn"
+                onClick={handleUpdateExistingAttachment}
+                disabled={!hasContent}
+              >
+                Update attachment
+              </button>
+              {onAttachToComposer && (
+                <button
+                  type="button"
+                  className="scratchpad-tool-btn"
+                  onClick={handleAttachToComposer}
+                  disabled={!hasContent}
+                >
+                  Attach as copy
+                </button>
+              )}
+            </>
           ) : onAttachToComposer ? (
             <button
               type="button"
               className="scratchpad-primary-btn"
               onClick={handleAttachToComposer}
-              disabled={strokes.length === 0}
+              disabled={!hasContent}
             >
               Attach to message
             </button>
           ) : null}
         </div>
       </header>
+
+      {baseImage && (
+        <div className="scratchpad-image-bar">
+          <span>Annotating: <strong>{baseImage.name}</strong></span>
+        </div>
+      )}
 
       {statusMessage && (
         <div className="scratchpad-status-banner" role="status" aria-live="polite">

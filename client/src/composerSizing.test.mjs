@@ -33,6 +33,23 @@ test("textarea grows with newlines, caps at a readable height, and shrinks again
   resizeComposerTextarea(input, 386);
   assert.equal(input.style.height, "191px");
   assert.equal(input.style.overflowY, "auto");
+
+  // When attachments are present, parentElement (.terminal-composer) expands to fit
+  // the 140px attachment strip + textarea + 47px toolbar so the bottom never clips.
+  let parentHeight = null;
+  const withParent = {
+    style: { height: "48px", overflowY: "hidden" },
+    scrollHeight: 48,
+    parentElement: {
+      querySelector: (sel) => (sel === ".composer-attachments" ? {} : null),
+      style: {
+        setProperty: (_k, v) => { parentHeight = v; },
+        removeProperty: () => { parentHeight = null; },
+      },
+    },
+  };
+  resizeComposerTextarea(withParent);
+  assert.equal(parentHeight, "235px");
 });
 
 test("both draft and existing-agent composers autosize on text and pane changes", () => {

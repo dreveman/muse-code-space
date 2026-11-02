@@ -1,8 +1,22 @@
 import { fileToBase64 } from "@hatch/space-sdk/client";
 import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import type { ApiResponse, api } from "./api";
-import { ScratchpadTabIcon, type ScratchpadAttachmentPayload, type ScratchpadBackground, type ScratchpadTargetStep } from "./ScratchpadPanel";
+import {
+  ScratchpadTabIcon,
+  type ScratchpadAttachmentPayload,
+  type ScratchpadBackground,
+  type ScratchpadBaseImage,
+  type ScratchpadTargetStep,
+} from "./ScratchpadPanel";
 import { questionAnswered, questionSelectionHint, userInputReadiness } from "./userInputCard";
+
+function RichAttachmentIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
 
 type PendingUserInput = ApiResponse<typeof api, "getPendingUserInputs">["inputs"][number];
 
@@ -48,7 +62,11 @@ export function RichUserInputCard({
   stepAttachments: Record<string, ScratchpadAttachmentPayload>;
   onAttachStepImage: (questionId: string, payload: ScratchpadAttachmentPayload) => void;
   onClearStepImage: (questionId: string) => void;
-  onOpenScratchpadForStep: (target: ScratchpadTargetStep, background?: ScratchpadBackground) => void;
+  onOpenScratchpadForStep: (
+    target: ScratchpadTargetStep,
+    background?: ScratchpadBackground,
+    baseImage?: ScratchpadBaseImage | null,
+  ) => void;
   onAnswer: (userInputId: string, selections: RichUserInputAnswerSelection[]) => void;
   onCancel: (userInputId: string) => void;
 }) {
@@ -219,58 +237,117 @@ export function RichUserInputCard({
 
           {(isFileKind || isKnownScratchpadEmbed) && (
             <div className="rich-user-input-media-box">
-              <div className="rich-user-input-media-actions">
-                <button
-                  type="button"
-                  className="rich-scratchpad-open-btn"
-                  disabled={busy}
-                  onClick={() =>
-                    onOpenScratchpadForStep(
-                      {
-                        userInputId: input.userInputId,
-                        questionId: question.id,
-                        header: question.header || `Step ${clampedIndex + 1}`,
-                      },
-                      question.embed?.background ?? question.canvasPreset?.background,
-                    )
-                  }
-                >
-                  <ScratchpadTabIcon />
-                  <span>{currentAttachment ? "Edit in Scratchpad" : "Open Scratchpad to draw"}</span>
-                </button>
-
-                <label htmlFor={fileInputId} className="rich-image-upload-btn">
-                  <span>{currentAttachment ? "Replace file…" : isFileKind ? "Upload image, PDF, or text…" : "Upload image…"}</span>
-                </label>
-                <input
-                  ref={fileInputRef}
-                  id={fileInputId}
-                  type="file"
-                  accept="image/*,application/pdf,text/*,.md,.txt,.json,.csv,.ts,.tsx,.js,.jsx,.py,.rs,.go,.html,.css"
-                  style={{ display: "none" }}
-                  disabled={busy}
-                  onChange={(e) => void handleFileChange(e, question.id)}
-                />
-              </div>
-
-              {currentAttachment && (
-                <div className="rich-user-input-preview">
-                  {currentAttachment.mediaType.startsWith("image/") && (
-                    <img src={currentAttachment.dataUrl} alt={currentAttachment.name} />
-                  )}
-                  <div className="rich-user-input-preview-meta">
-                    <span>{currentAttachment.name} ({currentAttachment.mediaType})</span>
-                    <button
-                      type="button"
-                      className="rich-user-input-remove-btn"
-                      onClick={() => onClearStepImage(question.id)}
-                      disabled={busy}
-                    >
-                      Remove
-                    </button>
+              {currentAttachment ? (
+                currentAttachment.mediaType.startsWith("image/") ? (
+                  <div className="composer-attachments rich-step-attachments" aria-label="Attached step image">
+                    <div className="composer-attachment-card">
+                      <img
+                        src={currentAttachment.dataUrl}
+                        alt={currentAttachment.name}
+                        className="composer-attachment-image"
+                        title={`Annotate ${currentAttachment.name} in Scratchpad`}
+                        onClick={() =>
+                          onOpenScratchpadForStep(
+                            {
+                              userInputId: input.userInputId,
+                              questionId: question.id,
+                              header: question.header || `Step ${clampedIndex + 1}`,
+                            },
+                            question.embed?.background ?? question.canvasPreset?.background,
+                            { src: currentAttachment.dataUrl, name: currentAttachment.name },
+                          )
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="composer-attachment-annotate"
+                        disabled={busy}
+                        aria-label={`Annotate ${currentAttachment.name} in Scratchpad`}
+                        title={`Annotate ${currentAttachment.name} in Scratchpad`}
+                        onClick={() =>
+                          onOpenScratchpadForStep(
+                            {
+                              userInputId: input.userInputId,
+                              questionId: question.id,
+                              header: question.header || `Step ${clampedIndex + 1}`,
+                            },
+                            question.embed?.background ?? question.canvasPreset?.background,
+                            { src: currentAttachment.dataUrl, name: currentAttachment.name },
+                          )
+                        }
+                      >
+                        <ScratchpadTabIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="composer-attachment-remove"
+                        disabled={busy}
+                        onClick={() => onClearStepImage(question.id)}
+                        aria-label={`Remove ${currentAttachment.name}`}
+                        title={`Remove ${currentAttachment.name}`}
+                      >
+                        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                          <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
+                ) : (
+                  <div className="rich-user-input-preview">
+                    <div className="rich-user-input-preview-meta">
+                      <span>{currentAttachment.name} ({currentAttachment.mediaType})</span>
+                      <button
+                        type="button"
+                        className="composer-attachment-remove rich-file-remove-inline"
+                        onClick={() => onClearStepImage(question.id)}
+                        disabled={busy}
+                        aria-label={`Remove ${currentAttachment.name}`}
+                        title={`Remove ${currentAttachment.name}`}
+                      >
+                        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                          <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                )
+              ) : (
+                <div className="rich-user-input-media-actions">
+                  <label htmlFor={fileInputId} className="rich-image-upload-btn">
+                    <RichAttachmentIcon />
+                    <span>Attach image</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="rich-scratchpad-open-btn"
+                    disabled={busy}
+                    onClick={() =>
+                      onOpenScratchpadForStep(
+                        {
+                          userInputId: input.userInputId,
+                          questionId: question.id,
+                          header: question.header || `Step ${clampedIndex + 1}`,
+                        },
+                        question.embed?.background ?? question.canvasPreset?.background,
+                        null,
+                      )
+                    }
+                  >
+                    <ScratchpadTabIcon />
+                    <span>Scratchpad</span>
+                  </button>
                 </div>
               )}
+
+              <input
+                ref={fileInputRef}
+                id={fileInputId}
+                type="file"
+                accept="image/*,application/pdf,text/*,.md,.txt,.json,.csv,.ts,.tsx,.js,.jsx,.py,.rs,.go,.html,.css"
+                style={{ display: "none" }}
+                disabled={busy}
+                onChange={(e) => void handleFileChange(e, question.id)}
+              />
 
               <label className={`user-input-other${(free[question.id] ?? "").trim() ? " is-selected" : ""}`}>
                 <span className="user-input-other-label">{isKnownScratchpadEmbed ? "Or write your answer / notes" : "Notes or caption (optional)"}</span>

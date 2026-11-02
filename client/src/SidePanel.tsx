@@ -13,13 +13,14 @@ import {
   ScratchpadView,
   type ScratchpadAttachmentPayload,
   type ScratchpadBackground,
+  type ScratchpadBaseImage,
   type ScratchpadTargetStep,
 } from "./ScratchpadPanel";
 import { SmartLogIcon, SmartLogView } from "./SmartLogPanel";
 import type { SessionVcsStatus } from "./smartlogLayout";
 
 export { NewFileBrowserButton, NewPreviewButton, NewScratchpadButton };
-export type { ScratchpadAttachmentPayload, ScratchpadBackground, ScratchpadTargetStep };
+export type { ScratchpadAttachmentPayload, ScratchpadBackground, ScratchpadBaseImage, ScratchpadTargetStep };
 
 const LazyTerminalView = lazy(() =>
   import("./TerminalPanel").then((m) => ({ default: m.TerminalView })),
@@ -116,8 +117,12 @@ export function SidePanel({
   vcsLoading = false,
   workspacePath = null,
   scratchpadTargetStep = null,
+  scratchpadBaseImage = null,
+  onClearScratchpadBaseImage,
   onAttachScratchpadToStep,
   onAttachScratchpadToComposer,
+  onUpdateComposerAttachment,
+  onAnnotateImage,
   onRefreshVcs,
   onOpenFile,
   onOpenImage,
@@ -133,8 +138,12 @@ export function SidePanel({
   vcsLoading?: boolean;
   workspacePath?: string | null;
   scratchpadTargetStep?: ScratchpadTargetStep | null;
+  scratchpadBaseImage?: ScratchpadBaseImage | null;
+  onClearScratchpadBaseImage?: () => void;
   onAttachScratchpadToStep?: (target: ScratchpadTargetStep, attachment: ScratchpadAttachmentPayload) => void;
   onAttachScratchpadToComposer?: (attachment: ScratchpadAttachmentPayload) => void;
+  onUpdateComposerAttachment?: (attachmentId: string, attachment: ScratchpadAttachmentPayload) => void;
+  onAnnotateImage?: (spec: ScratchpadBaseImage) => void;
   onRefreshVcs?: () => void;
   onOpenFile?: (path: string) => void;
   onOpenImage?: (spec: { title: string; src: string; path: string }) => void;
@@ -230,8 +239,11 @@ export function SidePanel({
                   active={selected}
                   targetStep={scratchpadTargetStep}
                   initialBackground={tab.background ?? "grid"}
+                  initialBaseImage={scratchpadBaseImage}
+                  onClearBaseImage={onClearScratchpadBaseImage}
                   onAttachToStep={onAttachScratchpadToStep}
                   onAttachToComposer={onAttachScratchpadToComposer}
+                  onUpdateComposerAttachment={onUpdateComposerAttachment}
                 />
               ) : tab.kind === "files" ? (
                 <FileBrowserView
@@ -246,6 +258,7 @@ export function SidePanel({
                   path={tab.path ?? null}
                   initialSrc={tab.src}
                   title={tab.title}
+                  onAnnotate={onAnnotateImage}
                 />
               ) : <FileTab sessionId={sessionId} path={tab.path} />}
             </div>

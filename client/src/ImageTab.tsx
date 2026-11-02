@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { api } from "./api";
+import { ScratchpadTabIcon } from "./ScratchpadPanel";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 8;
@@ -34,11 +35,13 @@ export function ImageTab({
   path,
   initialSrc = null,
   title,
+  onAnnotate,
 }: {
   sessionId: string;
   path?: string | null;
   initialSrc?: string | null;
   title?: string;
+  onAnnotate?: (spec: { src: string; name: string }) => void;
 }) {
   const displayTitle = title || path || "Image";
   const [revision, setRevision] = useState(0);
@@ -304,6 +307,19 @@ export function ImageTab({
               title="Refresh"
             >
               <RefreshIcon />
+            </button>
+          )}
+          {onAnnotate && (
+            <button
+              type="button"
+              onClick={() => {
+                if (src) onAnnotate({ src, name: displayTitle.split("/").at(-1) || displayTitle });
+              }}
+              disabled={loading || !src}
+              aria-label="Annotate image in Scratchpad"
+              title="Annotate in Scratchpad"
+            >
+              <ScratchpadTabIcon />
             </button>
           )}
           <button
