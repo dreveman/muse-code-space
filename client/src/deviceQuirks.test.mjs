@@ -26,17 +26,25 @@ test("detects asymmetric horizontal safe areas and activates iPhone Duo landscap
     resolveIphoneDuoLandscapeQuirk({
       mode: "auto",
       isIos: true,
-      isLandscape: false,
       insets: { top: 47, right: 0, bottom: 34, left: 0 },
     }),
     false,
-    "portrait does not add the landscape right border",
+    "portrait (left=0, right=0) does not add the landscape right border",
+  );
+  assert.equal(
+    resolveIphoneDuoLandscapeQuirk({
+      mode: "auto",
+      isIos: true,
+      isLandscape: false,
+      insets: { top: 0, right: 0, bottom: 21, left: 47 },
+    }),
+    true,
+    "asymmetric horizontal inset activates even when the remaining WebView width beside the native pane is narrower than innerHeight",
   );
   assert.equal(
     resolveIphoneDuoLandscapeQuirk({
       mode: "off",
       isIos: true,
-      isLandscape: true,
       insets: { top: 0, right: 0, bottom: 21, left: 47 },
     }),
     false,
@@ -46,11 +54,11 @@ test("detects asymmetric horizontal safe areas and activates iPhone Duo landscap
     resolveIphoneDuoLandscapeQuirk({
       mode: "force-iphone-duo",
       isIos: false,
-      isLandscape: true,
+      isLandscape: false,
       insets: { top: 0, right: 0, bottom: 0, left: 0 },
     }),
     true,
-    "force-iphone-duo enables the quirk in landscape on any device",
+    "force-iphone-duo enables the quirk regardless of DevTools dock width",
   );
   assert.equal(parseDeviceQuirksMode("off"), "off");
   assert.equal(parseDeviceQuirksMode("force-iphone-duo"), "force-iphone-duo");
