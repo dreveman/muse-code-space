@@ -48,15 +48,15 @@ function FileTabIcon() {
   );
 }
 
-/** Floating chat button: always opens a new terminal tab. */
-export function NewTerminalButton({ onOpen }: { onOpen: () => void }) {
+/** Floating chat button: navigates to the current terminal tab or opens the first. */
+export function NewTerminalButton({ onOpen, active = false }: { onOpen: () => void; active?: boolean }) {
   return (
     <button
       type="button"
-      className="terminal-toggle"
+      className={`terminal-toggle${active ? " active" : ""}`}
       onClick={onOpen}
-      aria-label="Open a new terminal"
-      title="New terminal in the working directory"
+      aria-label="Open terminal"
+      title="Terminal in the working directory"
     >
       <TerminalTabIcon />
     </button>

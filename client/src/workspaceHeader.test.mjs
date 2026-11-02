@@ -37,7 +37,7 @@ test("the first transcript message starts clear of the floating companion", () =
 });
 
 test("terminal, session menu and mobile back remain available", () => {
-  assert.ok(app.includes('<NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />'));
+  assert.ok(app.includes('<NewTerminalButton active={terminalTabActive} onOpen={() => openOrFocusTerminalTab(detailSession.id)} />'));
   assert.ok(app.includes('actions={sessionMenuActions(selectedSession ?? detailSession)}'));
   assert.ok(app.includes('aria-label="Back to companions"'));
   assert.ok(css.includes('.chat-floating-toolbar .mobile-back-button { pointer-events: auto; }'));
