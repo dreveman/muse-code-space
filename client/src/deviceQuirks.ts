@@ -1,13 +1,14 @@
 // Isolated device-quirk detection and overrides.
 //
-// Safe areas on the iPhone Duo are asymmetric (`env(safe-area-inset-left)` !=
-// `env(safe-area-inset-right)`), and in landscape mode the host places a
-// native controls pane immediately to the right of the Space WebView.
+// On the iPhone Duo in landscape mode, the host app places a native controls
+// pane immediately to the right of the Space WebView. Because the WebView's
+// right edge abuts that interior native pane rather than the physical phone
+// bezel, UIKit reports `env(safe-area-inset-right) = 0` in landscape (whereas
+// a full-bleed iPhone WebView in landscape has `safe-area-inset-right >= 44px`,
+// and portrait mode has `safe-area-inset-bottom >= 30px`).
 // Centralizing that detection here makes it trivial to disable (`"off"`),
 // force-enable for desktop testing (`"force-iphone-duo"`), or extend to
 // future devices without scattering device heuristics across components.
-
-import { detectIosDevice } from "./colorMode.ts";
 
 export const DEVICE_QUIRKS_KEY = "muse-code-space:device-quirks";
 
@@ -42,6 +43,13 @@ export function saveDeviceQuirksMode(mode: DeviceQuirksMode): void {
   }
 }
 
+export function detectIphoneDevice(
+  nav: { userAgent?: string } | undefined = typeof navigator !== "undefined" ? navigator : undefined,
+): boolean {
+  if (!nav) return false;
+  return /\biPhone\b/i.test(nav.userAgent ?? "");
+}
+
 export function isAsymmetricHorizontalSafeArea(insets: SafeAreaInsets): boolean {
   return Math.abs(insets.left - insets.right) >= 1;
 }
@@ -49,63 +57,86 @@ export function isAsymmetricHorizontalSafeArea(insets: SafeAreaInsets): boolean 
 export function resolveIphoneDuoLandscapeQuirk(input: {
   mode: DeviceQuirksMode;
   isIos: boolean;
+  isIphone?: boolean;
   isLandscape?: boolean;
+  viewportWidth?: number;
   insets: SafeAreaInsets;
 }): boolean {
   if (input.mode === "off") return false;
   if (input.mode === "force-iphone-duo") return true;
-  // Asymmetric horizontal safe-area insets (left != right) only occur in
-  // landscape when the host's native controls pane occupies one side of the
-  // screen (in portrait, both left and right safe-area insets are 0). Note
-  // that the remaining WebView width beside the native pane can be narrower
-  // than innerHeight, so we do not require innerWidth > innerHeight here.
-  return input.isIos && isAsymmetricHorizontalSafeArea(input.insets);
+  const isPhone = input.isIphone ?? input.isIos;
+  if (!isPhone) return false;
+  // In portrait on iPhone, safe-area-inset-bottom is ~34px and native controls
+  // sit at the bottom rather than the right.
+  if (input.insets.bottom >= 30 && !input.isLandscape) return false;
+  const landscape =
+    input.isLandscape === true ||
+    (input.insets.bottom < 30 && (input.viewportWidth === undefined || input.viewportWidth >= 480));
+  if (!landscape) return false;
+  // On a normal full-width iPhone in landscape, both left and right safe-area
+  // insets are >= 44px. When the host places a native pane on the right (as on
+  // the iPhone Duo in landscape), `insets.right` is 0 (or asymmetric).
+  return input.insets.right === 0 || isAsymmetricHorizontalSafeArea(input.insets);
 }
 
-let probeEl: HTMLDivElement | null = null;
+let probeContainer: HTMLDivElement | null = null;
+let probeTop: HTMLDivElement | null = null;
+let probeRight: HTMLDivElement | null = null;
+let probeBottom: HTMLDivElement | null = null;
+let probeLeft: HTMLDivElement | null = null;
 
-export function measureSafeAreaInsets(doc: Document | undefined = typeof document !== "undefined" ? document : undefined): SafeAreaInsets {
+function ensureProbeElements(doc: Document): void {
+  const host = doc.querySelector<HTMLElement>(".hatch-space-root[data-hatch-space-root]") ?? doc.body;
+  if (!host) return;
+  if (probeContainer && host.contains(probeContainer)) return;
+  probeContainer = doc.createElement("div");
+  probeContainer.setAttribute("aria-hidden", "true");
+  probeContainer.style.cssText =
+    "position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;pointer-events:none;visibility:hidden;z-index:-1;";
+
+  const makeProbe = (cssProp: "width" | "height", expr: string): HTMLDivElement => {
+    const el = doc.createElement("div");
+    el.style.cssText = `${cssProp}:${expr};`;
+    probeContainer!.appendChild(el);
+    return el;
+  };
+
+  probeTop = makeProbe("height", "env(safe-area-inset-top, 0px)");
+  probeRight = makeProbe("width", "env(safe-area-inset-right, 0px)");
+  probeBottom = makeProbe("height", "env(safe-area-inset-bottom, 0px)");
+  probeLeft = makeProbe("width", "env(safe-area-inset-left, 0px)");
+  host.appendChild(probeContainer);
+}
+
+export function measureSafeAreaInsets(
+  doc: Document | undefined = typeof document !== "undefined" ? document : undefined,
+): SafeAreaInsets {
   if (!doc?.body || typeof window === "undefined") {
     return { top: 0, right: 0, bottom: 0, left: 0 };
   }
-  if (!probeEl || !doc.body.contains(probeEl)) {
-    probeEl = doc.createElement("div");
-    probeEl.setAttribute("aria-hidden", "true");
-    probeEl.style.cssText = [
-      "position:fixed",
-      "top:0",
-      "left:0",
-      "width:0",
-      "height:0",
-      "pointer-events:none",
-      "visibility:hidden",
-      "z-index:-1",
-      "padding-top:var(--twsa-safe-area-inset-top, env(safe-area-inset-top, 0px))",
-      "padding-right:var(--twsa-safe-area-inset-right, env(safe-area-inset-right, 0px))",
-      "padding-bottom:var(--twsa-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))",
-      "padding-left:var(--twsa-safe-area-inset-left, env(safe-area-inset-left, 0px))",
-    ].join(";");
-    doc.body.appendChild(probeEl);
-  }
-  const cs = window.getComputedStyle(probeEl);
+  ensureProbeElements(doc);
   return {
-    top: parseFloat(cs.paddingTop) || 0,
-    right: parseFloat(cs.paddingRight) || 0,
-    bottom: parseFloat(cs.paddingBottom) || 0,
-    left: parseFloat(cs.paddingLeft) || 0,
+    top: probeTop ? Math.round(probeTop.getBoundingClientRect().height * 10) / 10 : 0,
+    right: probeRight ? Math.round(probeRight.getBoundingClientRect().width * 10) / 10 : 0,
+    bottom: probeBottom ? Math.round(probeBottom.getBoundingClientRect().height * 10) / 10 : 0,
+    left: probeLeft ? Math.round(probeLeft.getBoundingClientRect().width * 10) / 10 : 0,
   };
 }
 
 export function syncDeviceQuirks(): boolean {
   if (typeof document === "undefined" || typeof window === "undefined") return false;
   const mode = loadDeviceQuirksMode();
-  const isIos = detectIosDevice();
-  const isLandscape = window.innerWidth > window.innerHeight;
+  const isIphone = detectIphoneDevice();
+  const isLandscape =
+    window.innerWidth > window.innerHeight ||
+    (typeof window.matchMedia === "function" && window.matchMedia("(orientation: landscape)").matches);
   const insets = measureSafeAreaInsets(document);
   const active = resolveIphoneDuoLandscapeQuirk({
     mode,
-    isIos,
+    isIos: isIphone,
+    isIphone,
     isLandscape,
+    viewportWidth: window.innerWidth,
     insets,
   });
   if (active) {
@@ -125,12 +156,23 @@ export function installDeviceQuirksObserver(): () => void {
     syncDeviceQuirks();
   };
   update();
+  const raf = window.requestAnimationFrame(update);
+  const timer = window.setTimeout(update, 180);
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+  if (ro && probeContainer) {
+    for (const child of Array.from(probeContainer.children)) {
+      ro.observe(child);
+    }
+  }
   const vv = window.visualViewport;
   window.addEventListener("resize", update);
   window.addEventListener("orientationchange", update);
   window.addEventListener("muse-code-space:device-quirks", update);
   vv?.addEventListener("resize", update);
   return () => {
+    window.cancelAnimationFrame(raf);
+    window.clearTimeout(timer);
+    ro?.disconnect();
     window.removeEventListener("resize", update);
     window.removeEventListener("orientationchange", update);
     window.removeEventListener("muse-code-space:device-quirks", update);
