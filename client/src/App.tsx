@@ -4133,66 +4133,6 @@ export function App() {
       onActivate: () => setShowWorkingDetails((value) => !value),
     },
   ];
-  // The sidebar's rename/archive buttons are hover-only; the transcript's
-  // session menu carries the same actions so touch devices can reach them.
-  const sessionMenuActions = (session: Session): SessionMenuAction[] => {
-    const live = isTurnLive(session.status);
-    // Past sessions mirror their sidebar row: restore (if archived) + delete.
-    if (session.archived) {
-      const actions: SessionMenuAction[] = [];
-      if (session.archived) {
-        actions.push({
-          key: "restore",
-          label: "Restore task",
-          description: companionAssignedElsewhere(sessions, session.title, session.id) ? "Pick an available companion in the prompt first" : "Move it back to Active",
-          disabled: archiveBusy || companionAssignedElsewhere(sessions, session.title, session.id),
-          onActivate: () => void changeArchiveState(session.id, false),
-        });
-      }
-      actions.push({
-        key: "delete",
-        label: "Delete task",
-        description: live ? "Available once the companion stops running" : "Permanently delete this task and its transcript",
-        disabled: live || deleteBusy,
-        onActivate: () => askToDelete(session),
-      });
-      return [...viewMenuActions, ...actions];
-    }
-    return [
-      ...viewMenuActions,
-      {
-        key: "rename",
-        label: "Change task summary",
-        description: "Edit the short description of this task",
-        disabled: renameBusy,
-        onActivate: () => setTextPrompt({
-          title: "Change task summary",
-          label: "Task summary",
-          initialValue: sessionTaskTitle(session).slice(0, 240),
-          confirmLabel: "Save",
-          maxLength: 240,
-          allowEmpty: true,
-          onSubmit: (value) => (value.trim() === session.session_summary ? null : updateSessionSummary(session.id, value)),
-        }),
-      },
-      session.archived
-        ? {
-            key: "restore",
-            label: "Restore task",
-            description: "Move it back to Active",
-            disabled: archiveBusy,
-            onActivate: () => void changeArchiveState(session.id, false),
-          }
-        : {
-            key: "archive",
-            label: "Archive task",
-            description: live ? "Available once the companion stops running" : "Move it to Past; you can restore it",
-            disabled: live || archiveBusy,
-            onActivate: () => void changeArchiveState(session.id, true),
-          },
-    ];
-  };
-
   const updateSidePanel = (sessionId: string, update: (state: SidePanelState & { loaded: boolean }) => SidePanelState & { loaded: boolean }) => {
     setSidePanels((current) => ({
       ...current,
@@ -4200,12 +4140,28 @@ export function App() {
     }));
   };
 
-  // The header's terminal button: always a new terminal, as a new tab.
-  const openTerminalTab = (sessionId: string) => {
+  // Menu "New terminal": always opens an additional terminal tab.
+  const openTerminalTab = useCallback((sessionId: string) => {
     const tab: SideTab = { key: randomUuid(), kind: "terminal", terminalId: null, number: null };
     updateSidePanel(sessionId, (state) => ({ ...state, tabs: [...state.tabs, tab], activeKey: tab.key }));
     if (isNarrow) setMobileSideOpen(true);
-  };
+  }, [isNarrow]);
+
+  // Top-bar & menu "Terminal": navigates to the current terminal tab, or opens the first.
+  const openOrFocusTerminalTab = useCallback((sessionId: string) => {
+    setSidePanels((current) => {
+      const state = current[sessionId] ?? { tabs: [], activeKey: null, loaded: false };
+      const existing =
+        state.tabs.find((tab) => tab.kind === "terminal" && tab.key === state.activeKey) ??
+        state.tabs.filter((tab) => tab.kind === "terminal").at(-1);
+      if (isNarrow) setMobileSideOpen(true);
+      if (existing) {
+        return { ...current, [sessionId]: { ...state, activeKey: existing.key } };
+      }
+      const tab: SideTab = { key: randomUuid(), kind: "terminal", terminalId: null, number: null };
+      return { ...current, [sessionId]: { ...state, tabs: [...state.tabs, tab], activeKey: tab.key } };
+    });
+  }, [isNarrow]);
   const openFileTab = useCallback((sessionId: string, path: string) => {
     updateSidePanel(sessionId, (state) => {
       const existing = state.tabs.find((tab) => tab.kind === "file" && tab.path === path);
@@ -4246,6 +4202,7 @@ export function App() {
   const [scratchpadTargetStep, setScratchpadTargetStep] = useState<ScratchpadTargetStep | null>(null);
   const [scratchpadBaseImage, setScratchpadBaseImage] = useState<ScratchpadBaseImage | null>(null);
   const [draftScratchpadOpen, setDraftScratchpadOpen] = useState(false);
+  const [floatingActionsHovered, setFloatingActionsHovered] = useState(false);
   const [richStepAttachments, setRichStepAttachments] = useState<Record<string, ScratchpadAttachmentPayload>>({});
 
   const toggleFilesTab = useCallback((sessionId: string) => {
@@ -4386,6 +4343,97 @@ export function App() {
     });
     if (closedPreview) disconnectPreviewPort(sessionId);
   }, [isNarrow, mobileSideOpen, disconnectPreviewPort]);
+
+  // The sidebar's rename/archive buttons are hover-only; the transcript's
+  // session menu carries the same actions (plus side-panel tools) so touch
+  // devices and narrow viewports can always reach them.
+  const sessionMenuActions = (session: Session): SessionMenuAction[] => {
+    const live = isTurnLive(session.status);
+    // Past sessions mirror their sidebar row: restore (if archived) + delete.
+    if (session.archived) {
+      const actions: SessionMenuAction[] = [];
+      if (session.archived) {
+        actions.push({
+          key: "restore",
+          label: "Restore task",
+          description: companionAssignedElsewhere(sessions, session.title, session.id) ? "Pick an available companion in the prompt first" : "Move it back to Active",
+          disabled: archiveBusy || companionAssignedElsewhere(sessions, session.title, session.id),
+          onActivate: () => void changeArchiveState(session.id, false),
+        });
+      }
+      actions.push({
+        key: "delete",
+        label: "Delete task",
+        description: live ? "Available once the companion stops running" : "Permanently delete this task and its transcript",
+        disabled: live || deleteBusy,
+        onActivate: () => askToDelete(session),
+      });
+      return [...viewMenuActions, ...actions];
+    }
+    return [
+      {
+        key: "terminal",
+        label: "Terminal",
+        description: "Navigate to the current terminal or open one",
+        onActivate: () => openOrFocusTerminalTab(session.id),
+      },
+      {
+        key: "new-terminal",
+        label: "New terminal",
+        description: "Open an additional terminal tab in the working directory",
+        onActivate: () => openTerminalTab(session.id),
+      },
+      {
+        key: "preview",
+        label: "Web preview",
+        description: "Open or toggle the live web preview tab",
+        onActivate: () => togglePreviewTab(session.id),
+      },
+      {
+        key: "scratchpad",
+        label: "Scratchpad",
+        description: "Draw or annotate images",
+        onActivate: () => toggleScratchpadTab(session.id),
+      },
+      {
+        key: "files",
+        label: "Browse files",
+        description: "Browse files and folders in the working directory",
+        onActivate: () => toggleFilesTab(session.id),
+      },
+      ...viewMenuActions,
+      {
+        key: "rename",
+        label: "Change task summary",
+        description: "Edit the short description of this task",
+        disabled: renameBusy,
+        onActivate: () => setTextPrompt({
+          title: "Change task summary",
+          label: "Task summary",
+          initialValue: sessionTaskTitle(session).slice(0, 240),
+          confirmLabel: "Save",
+          maxLength: 240,
+          allowEmpty: true,
+          onSubmit: (value) => (value.trim() === session.session_summary ? null : updateSessionSummary(session.id, value)),
+        }),
+      },
+      session.archived
+        ? {
+            key: "restore",
+            label: "Restore task",
+            description: "Move it back to Active",
+            disabled: archiveBusy,
+            onActivate: () => void changeArchiveState(session.id, false),
+          }
+        : {
+            key: "archive",
+            label: "Archive task",
+            description: live ? "Available once the companion stops running" : "Move it to Past; you can restore it",
+            disabled: live || archiveBusy,
+            onActivate: () => void changeArchiveState(session.id, true),
+          },
+    ];
+  };
   // Stable per-detail-session file opener so memoized tool rows keep an
   // identical onOpenFile prop across renders.
   const detailSessionIdForFiles = detailSession?.id ?? null;
@@ -5087,22 +5135,81 @@ export function App() {
     linkedPairs,
   ]);
   const detailSidePanelState = detailSessionIdForFiles ? sidePanels[detailSessionIdForFiles] : undefined;
+  const detailTabs = detailSidePanelState?.tabs ?? [];
+  const detailActiveKey = detailSidePanelState?.activeKey ?? null;
   const smartlogTabActive = Boolean(
     (!isNarrow || mobileSideOpen) &&
-      detailSidePanelState?.tabs.some((tab) => tab.kind === "smartlog" && tab.key === detailSidePanelState.activeKey),
+      detailTabs.some((tab) => tab.kind === "smartlog" && tab.key === detailActiveKey),
   );
   const previewTabActive = Boolean(
     (!isNarrow || mobileSideOpen) &&
-      detailSidePanelState?.tabs.some((tab) => tab.kind === "preview" && tab.key === detailSidePanelState.activeKey),
+      detailTabs.some((tab) => tab.kind === "preview" && tab.key === detailActiveKey),
   );
   const scratchpadTabActive = Boolean(
     (!isNarrow || mobileSideOpen) &&
-      detailSidePanelState?.tabs.some((tab) => tab.kind === "scratchpad" && tab.key === detailSidePanelState.activeKey),
+      detailTabs.some((tab) => tab.kind === "scratchpad" && tab.key === detailActiveKey),
   );
   const filesTabActive = Boolean(
     (!isNarrow || mobileSideOpen) &&
-      detailSidePanelState?.tabs.some((tab) => tab.kind === "files" && tab.key === detailSidePanelState.activeKey),
+      detailTabs.some((tab) => tab.kind === "files" && tab.key === detailActiveKey),
   );
+  const terminalTabActive = Boolean(
+    (!isNarrow || mobileSideOpen) &&
+      detailTabs.some((tab) => tab.kind === "terminal" && tab.key === detailActiveKey),
+  );
+  const terminalTabOpen = detailTabs.some((tab) => tab.kind === "terminal");
+  const previewTabOpen = detailTabs.some((tab) => tab.kind === "preview");
+  const scratchpadTabOpen = detailTabs.some((tab) => tab.kind === "scratchpad");
+  const filesTabOpen = detailTabs.some((tab) => tab.kind === "files");
+  const artifactTabOpen = ownedFiles.length > 0 && detailTabs.some((tab) => tab.kind === "file" || tab.kind === "image");
+
+  // Compute how many extra icon buttons can fit in `.chat-floating-actions`
+  // beside the 3-dot SessionMenu button without overlapping the centered
+  // companion portrait (`50%` center, ~72px half-width + 14px inset + 10px gap).
+  const chatPaneWidthPx = isNarrow
+    ? viewportWidth
+    : (() => {
+        const sidebarPx = sidebarCollapsed ? 72 : paneSizes.sidebarWidth;
+        const detailPx = Math.max(280, viewportWidth - sidebarPx - 1);
+        return hasSidePanel || hasLinkedSplitPane ? detailPx * paneSizes.chatShare : detailPx;
+      })();
+  const maxFloatingActionIcons = Math.max(
+    0,
+    Math.min(5, Math.floor(((chatPaneWidthPx / 2) - 96 - 34) / 34)),
+  );
+  const visibleFloatingActionKeys = useMemo(() => {
+    type ActionKey = "terminal" | "preview" | "scratchpad" | "files" | "artifacts";
+    const candidates: Array<{ key: ActionKey; isOpen: boolean; isFocused: boolean; available: boolean }> = [
+      { key: "terminal", isOpen: terminalTabOpen, isFocused: terminalTabActive, available: true },
+      { key: "preview", isOpen: previewTabOpen, isFocused: previewTabActive, available: true },
+      { key: "scratchpad", isOpen: scratchpadTabOpen, isFocused: scratchpadTabActive, available: true },
+      { key: "files", isOpen: filesTabOpen, isFocused: filesTabActive, available: true },
+      { key: "artifacts", isOpen: artifactTabOpen, isFocused: detailTabs.some((t) => (t.kind === "file" || t.kind === "image") && t.key === detailActiveKey), available: ownedFiles.length > 0 },
+    ];
+    const openOnes = candidates
+      .filter((c) => c.available && c.isOpen)
+      .sort((a, b) => Number(b.isFocused) - Number(a.isFocused));
+    if (!floatingActionsHovered) {
+      return new Set(openOnes.slice(0, maxFloatingActionIcons).map((c) => c.key));
+    }
+    const closedOnes = candidates.filter((c) => c.available && !c.isOpen);
+    return new Set([...openOnes, ...closedOnes].slice(0, maxFloatingActionIcons).map((c) => c.key));
+  }, [
+    terminalTabOpen,
+    terminalTabActive,
+    previewTabOpen,
+    previewTabActive,
+    scratchpadTabOpen,
+    scratchpadTabActive,
+    filesTabOpen,
+    filesTabActive,
+    artifactTabOpen,
+    detailTabs,
+    detailActiveKey,
+    ownedFiles.length,
+    floatingActionsHovered,
+    maxFloatingActionIcons,
+  ]);
   const detailPreviewPort = effectiveDetailPreviewPort;
   const detailMenuSession = selectedSession ?? detailSession;
   const detailCompanionActive = (!detailSession?.archived && (sessionActive || workflowRunning)) || sendingDirection || pendingEcho !== null;
@@ -5137,12 +5244,30 @@ export function App() {
                         starting={taskStarting}
                         activity={detailCompanionActivity}
                         visible={detailCompanionVisible} />
-                      <div className="chat-floating-actions">
-                        <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
-                        <NewFileBrowserButton active={filesTabActive} onOpen={() => toggleFilesTab(detailSession.id)} />
-                        <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
-                        <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
-                        <NewTerminalButton onOpen={() => openTerminalTab(detailSession.id)} />
+                      <div
+                        className="chat-floating-actions"
+                        onPointerEnter={(e) => {
+                          if (e.pointerType === "mouse") setFloatingActionsHovered(true);
+                        }}
+                        onPointerLeave={(e) => {
+                          if (e.pointerType === "mouse") setFloatingActionsHovered(false);
+                        }}
+                      >
+                        {visibleFloatingActionKeys.has("artifacts") && (
+                          <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                        )}
+                        {visibleFloatingActionKeys.has("files") && (
+                          <NewFileBrowserButton active={filesTabActive} onOpen={() => toggleFilesTab(detailSession.id)} />
+                        )}
+                        {visibleFloatingActionKeys.has("scratchpad") && (
+                          <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
+                        )}
+                        {visibleFloatingActionKeys.has("preview") && (
+                          <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
+                        )}
+                        {visibleFloatingActionKeys.has("terminal") && (
+                          <NewTerminalButton active={terminalTabActive} onOpen={() => openOrFocusTerminalTab(detailSession.id)} />
+                        )}
                         <SessionMenu
                           actions={sessionMenuActions(selectedSession ?? detailSession)}
                           colorMode={colorMode}
@@ -5166,6 +5291,7 @@ export function App() {
     taskStarting,
     detailCompanionActivity,
     detailCompanionVisible,
+    visibleFloatingActionKeys,
     ownedFiles,
     openFileTabForDetail,
     filesTabActive,
@@ -5174,6 +5300,9 @@ export function App() {
     toggleScratchpadTab,
     previewTabActive,
     togglePreviewTab,
+    terminalTabActive,
+    openOrFocusTerminalTab,
+    openTerminalTab,
     colorMode,
     showRawToolOutput,
     showReasoning,
@@ -5884,7 +6013,7 @@ export function App() {
                         const partnerId = activeLinkedPair.partnerId;
                         setSelectedCompanionId(null);
                         setSelectedId(partnerId);
-                        openTerminalTab(partnerId);
+                        openOrFocusTerminalTab(partnerId);
                       }}
                       onToggleSmartlog={() => {
                         const partnerId = activeLinkedPair.partnerId;
@@ -6198,6 +6327,7 @@ function LinkedConversationPane({
   forceFullDetailRef: { current: Set<string> };
 }) {
   const queryClient = useQueryClient();
+  const [partnerActionsHovered, setPartnerActionsHovered] = useState(false);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const scrollControlsRef = useRef<HTMLDivElement>(null);
@@ -6558,10 +6688,22 @@ function LinkedConversationPane({
             activity={paneCompanionActivity}
             visible={true}
           />
-          <div className="chat-floating-actions">
-            <OwnedArtifactMenu paths={ownedFiles} onOpen={onOpenFile} />
-            <NewPreviewButton active={false} onOpen={onTogglePreview} />
-            <NewTerminalButton onOpen={onOpenTerminal} />
+          <div
+            className="chat-floating-actions"
+            onPointerEnter={(e) => {
+              if (e.pointerType === "mouse") setPartnerActionsHovered(true);
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType === "mouse") setPartnerActionsHovered(false);
+            }}
+          >
+            {partnerActionsHovered && (
+              <>
+                <OwnedArtifactMenu paths={ownedFiles} onOpen={onOpenFile} />
+                <NewPreviewButton active={false} onOpen={onTogglePreview} />
+                <NewTerminalButton onOpen={onOpenTerminal} />
+              </>
+            )}
             <SessionMenu
               actions={sessionMenuActions(listSession ?? detailSession)}
               colorMode={colorMode}
