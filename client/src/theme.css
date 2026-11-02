@@ -3486,12 +3486,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 /* --- Device Quirks (client/src/deviceQuirks.ts) ---
-   On the iPhone Duo in landscape mode (detected via asymmetric horizontal
-   safe-area insets), the host app renders a native controls pane immediately
-   to the right of the Space WebView. Add a right border on `.console-layout`
-   so there is a clean vertical separator beside the native controls. */
-:root[data-quirk-iphone-duo="true"] .console-layout {
+   On the iPhone Duo:
+   - Unfolded landscape and folded portrait place the native controls pane on the
+     right (`data-quirk-iphone-duo-side="right"`), so `.console-layout` gets a
+     1px right border.
+   - Folded landscape (`data-quirk-iphone-duo-side="left"`) places the native
+     pane on the left with the rounded outer display corners at the top, so
+     `.console-layout` gets a 1px left border and the top-right floating menu /
+     sidebar button shifts left to clear the top-right rounded corner. */
+:root[data-quirk-iphone-duo="true"]:not([data-quirk-iphone-duo-side="left"]) .console-layout {
   border-right: 1px solid var(--border);
+}
+:root[data-quirk-iphone-duo-side="left"] .console-layout {
+  border-left: 1px solid var(--border);
+}
+:root[data-quirk-iphone-duo-side="left"] .chat-floating-toolbar,
+:root[data-quirk-iphone-duo-side="left"] .session-rail .sidebar-collapse-toggle {
+  right: max(26px, calc(14px + var(--top-corner-inset, 0px)));
 }
 
 
