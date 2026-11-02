@@ -2369,6 +2369,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   width: 100%;
   max-width: 700px;
   margin-inline: auto;
+  margin-bottom: 28px;
   border-left-width: var(--chat-side-border, 0px);
   border-right-width: var(--chat-side-border, 0px);
   border-radius: var(--chat-round, 0);
