@@ -289,9 +289,13 @@ export const ScratchpadView = memo(function ScratchpadView({
   const [loadedImageEl, setLoadedImageEl] = useState<HTMLImageElement | null>(null);
   const [penOnly, setPenOnly] = useState(false);
   const [penDetected, setPenDetected] = useState(false);
+  const [styleMenuOpen, setStyleMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const fileInputId = useId();
 
+  const styleWrapRef = useRef<HTMLDivElement>(null);
+  const moreWrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const inkCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -480,6 +484,32 @@ export const ScratchpadView = memo(function ScratchpadView({
     };
   }, [active, undo, redo]);
 
+  useEffect(() => {
+    if (!styleMenuOpen && !moreMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (styleMenuOpen && !styleWrapRef.current?.contains(target)) {
+        setStyleMenuOpen(false);
+      }
+      if (moreMenuOpen && !moreWrapRef.current?.contains(target)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setStyleMenuOpen(false);
+        setMoreMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [styleMenuOpen, moreMenuOpen]);
+
   const pointFromEvent = (
     canvas: HTMLCanvasElement,
     e: { clientX: number; clientY: number; pressure?: number; pointerType?: string },
@@ -667,75 +697,174 @@ export const ScratchpadView = memo(function ScratchpadView({
     <div className="scratchpad-panel">
       <header className="scratchpad-toolbar" role="toolbar" aria-label="Scratchpad drawing tools">
         <div className="scratchpad-tool-group" role="group" aria-label="Drawing mode">
-          {(
-            [
-              ["pen", "Pen"],
-              ["highlighter", "Marker"],
-              ["line", "Line"],
-              ["arrow", "Arrow"],
-              ["rect", "Box"],
-              ["circle", "Oval"],
-              ["eraser", "Eraser"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`scratchpad-tool-btn${tool === id ? " is-active" : ""}`}
-              aria-pressed={tool === id}
-              onClick={() => setTool(id)}
-            >
-              {label}
-            </button>
-          ))}
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "pen" ? " is-active" : ""}`}
+            aria-pressed={tool === "pen"}
+            aria-label="Pen"
+            title="Pen"
+            onClick={() => setTool("pen")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19l7-7 3 3-7 7-3-3z" />
+              <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "highlighter" ? " is-active" : ""}`}
+            aria-pressed={tool === "highlighter"}
+            aria-label="Highlighter"
+            title="Highlighter"
+            onClick={() => setTool("highlighter")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m9 11-6 6v3h9l3-3" />
+              <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "arrow" ? " is-active" : ""}`}
+            aria-pressed={tool === "arrow"}
+            aria-label="Arrow"
+            title="Arrow"
+            onClick={() => setTool("arrow")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="5" y1="19" x2="19" y2="5" />
+              <polyline points="10 5 19 5 19 14" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "rect" ? " is-active" : ""}`}
+            aria-pressed={tool === "rect"}
+            aria-label="Rectangle"
+            title="Rectangle"
+            onClick={() => setTool("rect")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="14" rx="2" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "circle" ? " is-active" : ""}`}
+            aria-pressed={tool === "circle"}
+            aria-label="Oval"
+            title="Oval"
+            onClick={() => setTool("circle")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`scratchpad-icon-btn${tool === "eraser" ? " is-active" : ""}`}
+            aria-pressed={tool === "eraser"}
+            aria-label="Eraser"
+            title="Eraser"
+            onClick={() => setTool("eraser")}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+              <path d="M22 21H7" />
+              <path d="m5 11 9 9" />
+            </svg>
+          </button>
         </div>
 
-        <div className="scratchpad-tool-group" role="group" aria-label="Stroke color">
-          {PALETTE.map((swatch) => (
-            <button
-              key={swatch.id}
-              type="button"
-              className={`scratchpad-color-swatch${color === swatch.color && tool !== "eraser" ? " is-active" : ""}`}
-              style={{ "--swatch-color": swatch.color } as React.CSSProperties}
-              aria-label={`Color: ${swatch.label}`}
-              title={swatch.label}
-              onClick={() => {
-                setColor(swatch.color);
-                if (tool === "eraser") setTool("pen");
-              }}
-            />
-          ))}
+        <div ref={styleWrapRef} className="scratchpad-dropdown-wrap">
+          <button
+            type="button"
+            className={`scratchpad-style-trigger${styleMenuOpen ? " is-active" : ""}`}
+            aria-haspopup="dialog"
+            aria-expanded={styleMenuOpen}
+            aria-label="Color and stroke width"
+            title="Color & stroke width"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              setStyleMenuOpen((v) => !v);
+            }}
+          >
+            <span className="scratchpad-style-dot" style={{ "--swatch-color": color } as React.CSSProperties} />
+            <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 4.5 6 7.5 9 4.5" />
+            </svg>
+          </button>
+          {styleMenuOpen && (
+            <div className="scratchpad-popover" role="dialog" aria-label="Color and stroke width">
+              <div className="scratchpad-popover-section">
+                <span className="scratchpad-popover-label">Color</span>
+                <div className="scratchpad-swatch-row">
+                  {PALETTE.map((swatch) => (
+                    <button
+                      key={swatch.id}
+                      type="button"
+                      className={`scratchpad-color-swatch${color === swatch.color && tool !== "eraser" ? " is-active" : ""}`}
+                      style={{ "--swatch-color": swatch.color } as React.CSSProperties}
+                      aria-label={`Color: ${swatch.label}`}
+                      title={swatch.label}
+                      onClick={() => {
+                        setColor(swatch.color);
+                        if (tool === "eraser") setTool("pen");
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="scratchpad-popover-section">
+                <span className="scratchpad-popover-label">Stroke width</span>
+                <div className="scratchpad-size-row">
+                  {SIZES.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={`scratchpad-tool-btn${size === s.size ? " is-active" : ""}`}
+                      aria-pressed={size === s.size}
+                      onClick={() => setSize(s.size)}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="scratchpad-tool-group" role="group" aria-label="Stroke size">
-          {SIZES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={`scratchpad-tool-btn${size === s.size ? " is-active" : ""}`}
-              aria-pressed={size === s.size}
-              onClick={() => setSize(s.size)}
-            >
-              {s.label}
-            </button>
-          ))}
+        <div className="scratchpad-tool-group" role="group" aria-label="History">
+          <button
+            type="button"
+            className="scratchpad-icon-btn"
+            onClick={undo}
+            disabled={strokes.length === 0}
+            aria-label="Undo"
+            title="Undo (Cmd/Ctrl+Z)"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 7v6h6" />
+              <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="scratchpad-icon-btn"
+            onClick={redo}
+            disabled={redoStack.length === 0}
+            aria-label="Redo"
+            title="Redo (Cmd/Ctrl+Shift+Z)"
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 7v6h-6" />
+              <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" />
+            </svg>
+          </button>
         </div>
 
-        <div className="scratchpad-tool-group" role="group" aria-label="Canvas guide">
-          {(["grid", "dots", "blank"] as const).map((bg) => (
-            <button
-              key={bg}
-              type="button"
-              className={`scratchpad-tool-btn${background === bg ? " is-active" : ""}`}
-              aria-pressed={background === bg}
-              onClick={() => setBackground(bg)}
-            >
-              {bg === "grid" ? "Grid" : bg === "dots" ? "Dots" : "Blank"}
-            </button>
-          ))}
-          <label htmlFor={fileInputId} className="scratchpad-tool-btn scratchpad-upload-label" title="Load an image onto the canvas to annotate">
-            {baseImage ? "Change image…" : "Load image…"}
-          </label>
+        <div className="scratchpad-tool-group scratchpad-actions-right">
           <input
             id={fileInputId}
             type="file"
@@ -743,35 +872,121 @@ export const ScratchpadView = memo(function ScratchpadView({
             style={{ display: "none" }}
             onChange={handleLoadImageChange}
           />
-          {baseImage && (
-            <button type="button" className="scratchpad-tool-btn" onClick={removeBaseImage} title={`Remove ${baseImage.name} from canvas`}>
-              Remove image
+          <div ref={moreWrapRef} className="scratchpad-dropdown-wrap">
+            <button
+              type="button"
+              className={`scratchpad-icon-btn${moreMenuOpen ? " is-active" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={moreMenuOpen}
+              aria-label="More scratchpad options"
+              title="More options"
+              onClick={() => {
+                setStyleMenuOpen(false);
+                setMoreMenuOpen((v) => !v);
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="2" />
+                <circle cx="12" cy="12" r="2" />
+                <circle cx="19" cy="12" r="2" />
+              </svg>
             </button>
-          )}
-        </div>
+            {moreMenuOpen && (
+              <div className="scratchpad-popover scratchpad-more-menu" role="menu" aria-label="Scratchpad options">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setTool("line");
+                    setMoreMenuOpen(false);
+                  }}
+                >
+                  <span>Line tool</span>
+                  {tool === "line" && <span>✓</span>}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => setPenOnly((v) => !v)}
+                >
+                  <span>Pen only{penDetected ? " ✎" : ""}</span>
+                  {penOnly && <span>✓</span>}
+                </button>
+                <div className="scratchpad-menu-divider" />
+                <div className="scratchpad-popover-section">
+                  <span className="scratchpad-popover-label">Background</span>
+                  <div className="scratchpad-size-row">
+                    {(["grid", "dots", "blank"] as const).map((bg) => (
+                      <button
+                        key={bg}
+                        type="button"
+                        className={`scratchpad-tool-btn${background === bg ? " is-active" : ""}`}
+                        onClick={() => setBackground(bg)}
+                      >
+                        {bg === "grid" ? "Grid" : bg === "dots" ? "Dots" : "Blank"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="scratchpad-menu-divider" />
+                <label
+                  htmlFor={fileInputId}
+                  className="scratchpad-menu-item"
+                  onClick={() => setMoreMenuOpen(false)}
+                >
+                  <span>{baseImage ? "Change image…" : "Load image…"}</span>
+                </label>
+                {baseImage && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      removeBaseImage();
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <span>Remove image</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={strokes.length === 0}
+                  onClick={() => {
+                    clearCanvas();
+                    setMoreMenuOpen(false);
+                  }}
+                >
+                  <span>Clear ink</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!hasContent}
+                  onClick={() => {
+                    handleDownload();
+                    setMoreMenuOpen(false);
+                  }}
+                >
+                  <span>Save PNG</span>
+                </button>
+                {baseImage?.attachmentId && onUpdateComposerAttachment && onAttachToComposer && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!hasContent}
+                    onClick={() => {
+                      handleAttachToComposer();
+                      setMoreMenuOpen(false);
+                    }}
+                  >
+                    <span>Attach as copy</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
-        <div className="scratchpad-tool-group scratchpad-actions-right">
-          <button
-            type="button"
-            className={`scratchpad-tool-btn${penOnly ? " is-active" : ""}`}
-            aria-pressed={penOnly}
-            title="Ignore finger touches while drawing with Apple Pencil or stylus"
-            onClick={() => setPenOnly((v) => !v)}
-          >
-            Pen only{penDetected ? " ✎" : ""}
-          </button>
-          <button type="button" className="scratchpad-tool-btn" onClick={undo} disabled={strokes.length === 0} title="Undo (Cmd/Ctrl+Z)">
-            Undo
-          </button>
-          <button type="button" className="scratchpad-tool-btn" onClick={redo} disabled={redoStack.length === 0} title="Redo (Cmd/Ctrl+Shift+Z)">
-            Redo
-          </button>
-          <button type="button" className="scratchpad-tool-btn" onClick={clearCanvas} disabled={strokes.length === 0}>
-            Clear ink
-          </button>
-          <button type="button" className="scratchpad-tool-btn" onClick={handleDownload} disabled={!hasContent}>
-            Save PNG
-          </button>
           {targetStep && onAttachToStep ? (
             <button
               type="button"
@@ -782,26 +997,14 @@ export const ScratchpadView = memo(function ScratchpadView({
               Use in {targetStep.header || "step"}
             </button>
           ) : baseImage?.attachmentId && onUpdateComposerAttachment ? (
-            <>
-              <button
-                type="button"
-                className="scratchpad-primary-btn"
-                onClick={handleUpdateExistingAttachment}
-                disabled={!hasContent}
-              >
-                Update attachment
-              </button>
-              {onAttachToComposer && (
-                <button
-                  type="button"
-                  className="scratchpad-tool-btn"
-                  onClick={handleAttachToComposer}
-                  disabled={!hasContent}
-                >
-                  Attach as copy
-                </button>
-              )}
-            </>
+            <button
+              type="button"
+              className="scratchpad-primary-btn"
+              onClick={handleUpdateExistingAttachment}
+              disabled={!hasContent}
+            >
+              Update
+            </button>
           ) : onAttachToComposer ? (
             <button
               type="button"
@@ -809,7 +1012,7 @@ export const ScratchpadView = memo(function ScratchpadView({
               onClick={handleAttachToComposer}
               disabled={!hasContent}
             >
-              Attach to message
+              Attach
             </button>
           ) : null}
         </div>
