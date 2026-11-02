@@ -33,6 +33,20 @@ export function loadDeviceQuirksMode(): DeviceQuirksMode {
   }
 }
 
+export function saveDeviceQuirksMode(mode: DeviceQuirksMode): void {
+  try {
+    if (mode === "auto") {
+      window.localStorage.removeItem(DEVICE_QUIRKS_KEY);
+    } else {
+      window.localStorage.setItem(DEVICE_QUIRKS_KEY, mode);
+    }
+  } catch { /* ignore storage errors */ }
+  syncDeviceQuirks();
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new Event("muse-code-space:device-quirks"));
+  }
+}
+
 export function isAsymmetricHorizontalSafeArea(insets: SafeAreaInsets): boolean {
   return Math.abs(insets.left - insets.right) >= 1;
 }
@@ -40,12 +54,17 @@ export function isAsymmetricHorizontalSafeArea(insets: SafeAreaInsets): boolean 
 export function resolveIphoneDuoLandscapeQuirk(input: {
   mode: DeviceQuirksMode;
   isIos: boolean;
-  isLandscape: boolean;
+  isLandscape?: boolean;
   insets: SafeAreaInsets;
 }): boolean {
   if (input.mode === "off") return false;
-  if (input.mode === "force-iphone-duo") return input.isLandscape;
-  return input.isIos && input.isLandscape && isAsymmetricHorizontalSafeArea(input.insets);
+  if (input.mode === "force-iphone-duo") return true;
+  // Asymmetric horizontal safe-area insets (left != right) only occur in
+  // landscape when the host's native controls pane occupies one side of the
+  // screen (in portrait, both left and right safe-area insets are 0). Note
+  // that the remaining WebView width beside the native pane can be narrower
+  // than innerHeight, so we do not require innerWidth > innerHeight here.
+  return input.isIos && isAsymmetricHorizontalSafeArea(input.insets);
 }
 
 let probeEl: HTMLDivElement | null = null;

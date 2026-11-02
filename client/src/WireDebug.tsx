@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { applyUiTheme, loadUiTheme, type ColorMode, type UiTheme } from "./colorMode";
+import { loadDeviceQuirksMode, saveDeviceQuirksMode, type DeviceQuirksMode } from "./deviceQuirks";
 import { RelayDebugPanel } from "./RelayDebug";
 
 type WireEntry = {
@@ -178,6 +179,7 @@ export function SessionMenu({
   const [relayVisible, setRelayVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [uiTheme, setUiTheme] = useState<UiTheme>(loadUiTheme);
+  const [quirksMode, setQuirksMode] = useState<DeviceQuirksMode>(loadDeviceQuirksMode);
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ top: 48, right: 12, width: 560 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -212,8 +214,13 @@ export function SessionMenu({
 
   useEffect(() => {
     const onThemeChange = () => setUiTheme(loadUiTheme());
+    const onQuirksChange = () => setQuirksMode(loadDeviceQuirksMode());
     window.addEventListener("muse-code-space:ui-theme", onThemeChange);
-    return () => window.removeEventListener("muse-code-space:ui-theme", onThemeChange);
+    window.addEventListener("muse-code-space:device-quirks", onQuirksChange);
+    return () => {
+      window.removeEventListener("muse-code-space:ui-theme", onThemeChange);
+      window.removeEventListener("muse-code-space:device-quirks", onQuirksChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -393,6 +400,16 @@ export function SessionMenu({
               description="View safe model-connection diagnostics"
               checked={relayVisible}
               onActivate={() => { setPanelVisible(false); setRelayVisible((visible) => !visible); }}
+            />
+            <SettingsMenuItem
+              label="Simulate iPhone Duo quirk"
+              description="Force asymmetric safe-area right border"
+              checked={quirksMode === "force-iphone-duo"}
+              onActivate={() => {
+                const next: DeviceQuirksMode = quirksMode === "force-iphone-duo" ? "auto" : "force-iphone-duo";
+                saveDeviceQuirksMode(next);
+                setQuirksMode(next);
+              }}
             />
             <div className="wire-settings-build" aria-label={`Build ${detectUiBuildId()}`}>
               <span className="wire-settings-item-label">Build</span>
