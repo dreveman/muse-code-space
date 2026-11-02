@@ -87,6 +87,7 @@ import { parseAgentListOutput, type AgentListOutput } from "./agentListOutput";
 import { parseMarkdownTable } from "./markdownTable";
 import { decideSubmit, isConnectionLost, isNetworkFailure } from "./connectionState";
 import { applyColorMode, COLOR_MODE_KEY, loadColorMode, type ColorMode } from "./colorMode";
+import { installDeviceQuirksObserver } from "./deviceQuirks";
 
 type Session = ApiResponse<typeof api, "listSessions">["sessions"][number];
 type Filter = "active" | "inactive";
@@ -2075,6 +2076,7 @@ export function App() {
     };
   }, [isNarrow, mobileListOpen]);
 
+  useEffect(() => installDeviceQuirksObserver(), []);
   useEffect(() => { savePaneSizes(paneSizes); }, [paneSizes]);
   useEffect(() => {
     try { window.localStorage.setItem(SHOW_REASONING_KEY, String(showReasoning)); } catch { /* webview storage can be disabled */ }
