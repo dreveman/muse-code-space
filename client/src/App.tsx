@@ -4202,7 +4202,6 @@ export function App() {
   const [scratchpadTargetStep, setScratchpadTargetStep] = useState<ScratchpadTargetStep | null>(null);
   const [scratchpadBaseImage, setScratchpadBaseImage] = useState<ScratchpadBaseImage | null>(null);
   const [draftScratchpadOpen, setDraftScratchpadOpen] = useState(false);
-  const [floatingActionsHovered, setFloatingActionsHovered] = useState(false);
   const [richStepAttachments, setRichStepAttachments] = useState<Record<string, ScratchpadAttachmentPayload>>({});
 
   const toggleFilesTab = useCallback((sessionId: string) => {
@@ -5175,7 +5174,7 @@ export function App() {
     0,
     Math.min(5, Math.floor(((chatPaneWidthPx / 2) - 50 - 34) / 34)),
   );
-  const visibleFloatingActionKeys = useMemo(() => {
+  const { restingFloatingKeys, hoverFloatingKeys } = useMemo(() => {
     type ActionKey = "terminal" | "preview" | "scratchpad" | "files" | "artifacts";
     const candidates: Array<{ key: ActionKey; isOpen: boolean; isFocused: boolean; available: boolean }> = [
       { key: "terminal", isOpen: terminalTabOpen, isFocused: terminalTabActive, available: true },
@@ -5187,11 +5186,11 @@ export function App() {
     const openOnes = candidates
       .filter((c) => c.available && c.isOpen)
       .sort((a, b) => Number(b.isFocused) - Number(a.isFocused));
-    if (!floatingActionsHovered) {
-      return new Set(openOnes.slice(0, maxFloatingActionIcons).map((c) => c.key));
-    }
     const closedOnes = candidates.filter((c) => c.available && !c.isOpen);
-    return new Set([...openOnes, ...closedOnes].slice(0, maxFloatingActionIcons).map((c) => c.key));
+    return {
+      restingFloatingKeys: new Set(openOnes.slice(0, maxFloatingActionIcons).map((c) => c.key)),
+      hoverFloatingKeys: new Set([...openOnes, ...closedOnes].slice(0, maxFloatingActionIcons).map((c) => c.key)),
+    };
   }, [
     terminalTabOpen,
     terminalTabActive,
@@ -5205,7 +5204,6 @@ export function App() {
     detailTabs,
     detailActiveKey,
     ownedFiles.length,
-    floatingActionsHovered,
     maxFloatingActionIcons,
   ]);
   const detailPreviewPort = effectiveDetailPreviewPort;
@@ -5242,29 +5240,31 @@ export function App() {
                         starting={taskStarting}
                         activity={detailCompanionActivity}
                         visible={detailCompanionVisible} />
-                      <div
-                        className="chat-floating-actions"
-                        onPointerEnter={(e) => {
-                          if (e.pointerType === "mouse") setFloatingActionsHovered(true);
-                        }}
-                        onPointerLeave={(e) => {
-                          if (e.pointerType === "mouse") setFloatingActionsHovered(false);
-                        }}
-                      >
-                        {visibleFloatingActionKeys.has("artifacts") && (
-                          <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                      <div className="chat-floating-actions">
+                        {hoverFloatingKeys.has("artifacts") && (
+                          <span className={`chat-floating-action-slot${restingFloatingKeys.has("artifacts") ? " is-resting" : ""}`}>
+                            <OwnedArtifactMenu paths={ownedFiles} onOpen={openFileTabForDetail} />
+                          </span>
                         )}
-                        {visibleFloatingActionKeys.has("files") && (
-                          <NewFileBrowserButton active={filesTabActive} onOpen={() => toggleFilesTab(detailSession.id)} />
+                        {hoverFloatingKeys.has("files") && (
+                          <span className={`chat-floating-action-slot${restingFloatingKeys.has("files") ? " is-resting" : ""}`}>
+                            <NewFileBrowserButton active={filesTabActive} onOpen={() => toggleFilesTab(detailSession.id)} />
+                          </span>
                         )}
-                        {visibleFloatingActionKeys.has("scratchpad") && (
-                          <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
+                        {hoverFloatingKeys.has("scratchpad") && (
+                          <span className={`chat-floating-action-slot${restingFloatingKeys.has("scratchpad") ? " is-resting" : ""}`}>
+                            <NewScratchpadButton active={scratchpadTabActive} onOpen={() => toggleScratchpadTab(detailSession.id)} />
+                          </span>
                         )}
-                        {visibleFloatingActionKeys.has("preview") && (
-                          <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
+                        {hoverFloatingKeys.has("preview") && (
+                          <span className={`chat-floating-action-slot${restingFloatingKeys.has("preview") ? " is-resting" : ""}`}>
+                            <NewPreviewButton active={previewTabActive} onOpen={() => togglePreviewTab(detailSession.id)} />
+                          </span>
                         )}
-                        {visibleFloatingActionKeys.has("terminal") && (
-                          <NewTerminalButton active={terminalTabActive} onOpen={() => openOrFocusTerminalTab(detailSession.id)} />
+                        {hoverFloatingKeys.has("terminal") && (
+                          <span className={`chat-floating-action-slot${restingFloatingKeys.has("terminal") ? " is-resting" : ""}`}>
+                            <NewTerminalButton active={terminalTabActive} onOpen={() => openOrFocusTerminalTab(detailSession.id)} />
+                          </span>
                         )}
                         <SessionMenu
                           actions={sessionMenuActions(selectedSession ?? detailSession)}
@@ -5289,7 +5289,8 @@ export function App() {
     taskStarting,
     detailCompanionActivity,
     detailCompanionVisible,
-    visibleFloatingActionKeys,
+    restingFloatingKeys,
+    hoverFloatingKeys,
     ownedFiles,
     openFileTabForDetail,
     filesTabActive,
@@ -6325,7 +6326,6 @@ function LinkedConversationPane({
   forceFullDetailRef: { current: Set<string> };
 }) {
   const queryClient = useQueryClient();
-  const [partnerActionsHovered, setPartnerActionsHovered] = useState(false);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
   const transcriptContentRef = useRef<HTMLDivElement>(null);
   const scrollControlsRef = useRef<HTMLDivElement>(null);
@@ -6686,22 +6686,18 @@ function LinkedConversationPane({
             activity={paneCompanionActivity}
             visible={true}
           />
-          <div
-            className="chat-floating-actions"
-            onPointerEnter={(e) => {
-              if (e.pointerType === "mouse") setPartnerActionsHovered(true);
-            }}
-            onPointerLeave={(e) => {
-              if (e.pointerType === "mouse") setPartnerActionsHovered(false);
-            }}
-          >
-            {partnerActionsHovered && (
-              <>
+          <div className="chat-floating-actions">
+            {ownedFiles.length > 0 && (
+              <span className="chat-floating-action-slot">
                 <OwnedArtifactMenu paths={ownedFiles} onOpen={onOpenFile} />
-                <NewPreviewButton active={false} onOpen={onTogglePreview} />
-                <NewTerminalButton onOpen={onOpenTerminal} />
-              </>
+              </span>
             )}
+            <span className="chat-floating-action-slot">
+              <NewPreviewButton active={false} onOpen={onTogglePreview} />
+            </span>
+            <span className="chat-floating-action-slot">
+              <NewTerminalButton onOpen={onOpenTerminal} />
+            </span>
             <SessionMenu
               actions={sessionMenuActions(listSession ?? detailSession)}
               colorMode={colorMode}
