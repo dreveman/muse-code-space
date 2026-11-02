@@ -20,26 +20,21 @@ export type SafeAreaInsets = {
   left: number;
 };
 
+let currentQuirksMode: DeviceQuirksMode = "auto";
+
 export function parseDeviceQuirksMode(raw: string | null | undefined): DeviceQuirksMode {
   if (raw === "off" || raw === "force-iphone-duo") return raw;
   return "auto";
 }
 
 export function loadDeviceQuirksMode(): DeviceQuirksMode {
-  try {
-    return parseDeviceQuirksMode(window.localStorage.getItem(DEVICE_QUIRKS_KEY));
-  } catch {
-    return "auto";
-  }
+  return currentQuirksMode;
 }
 
 export function saveDeviceQuirksMode(mode: DeviceQuirksMode): void {
+  currentQuirksMode = parseDeviceQuirksMode(mode);
   try {
-    if (mode === "auto") {
-      window.localStorage.removeItem(DEVICE_QUIRKS_KEY);
-    } else {
-      window.localStorage.setItem(DEVICE_QUIRKS_KEY, mode);
-    }
+    window.localStorage.removeItem(DEVICE_QUIRKS_KEY);
   } catch { /* ignore storage errors */ }
   syncDeviceQuirks();
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
@@ -123,6 +118,9 @@ export function syncDeviceQuirks(): boolean {
 
 export function installDeviceQuirksObserver(): () => void {
   if (typeof window === "undefined") return () => {};
+  try {
+    window.localStorage.removeItem(DEVICE_QUIRKS_KEY);
+  } catch { /* ignore */ }
   const update = () => {
     syncDeviceQuirks();
   };
