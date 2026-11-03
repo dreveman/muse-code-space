@@ -137,8 +137,13 @@ export function sortSessions<T extends SortableSession>(sessions: readonly T[], 
 }
 
 export function sessionTaskTitle(session: Pick<SessionListEntry, "session_summary" | "prompt">): string {
-  return session.session_summary?.replace(/\s+/g, " ").trim()
-    || session.prompt.replace(/\s+/g, " ").trim() || "Untitled task";
+  const summary = session.session_summary?.replace(/\s+/g, " ").trim();
+  if (summary) return summary;
+  const promptWithoutStarter = session.prompt.replace(
+    /<code-space-starter-instructions>[\s\S]*?(?:<\/code-space-starter-instructions>|$)/g,
+    "",
+  );
+  return promptWithoutStarter.replace(/\s+/g, " ").trim() || "Untitled task";
 }
 
 // Case-insensitive substring match over companion name (title), task title/summary,

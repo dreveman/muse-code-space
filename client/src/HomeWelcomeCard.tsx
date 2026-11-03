@@ -2,11 +2,16 @@ import { useEffect, useState } from "react";
 import { displayAgentName } from "./agentColor";
 import { agentVisualStatus } from "./agentStatus";
 import { api, type ApiResponse } from "./api";
-import { companions } from "./Companions";
+import { companions, type Companion } from "./Companions";
 import { PreviewTabIcon } from "./PreviewPanel";
 import { sessionTaskTitle } from "./sessionList";
 import { SmartLogIcon } from "./SmartLogPanel";
 import { WelcomeSpotifyCard } from "./SpotifyMusic";
+import {
+  resolveStarterExamplesForAvailableCompanions,
+  type StarterExampleDefinition,
+  type StarterExampleId,
+} from "./starterExamples";
 
 type Session = ApiResponse<typeof api, "listSessions">["sessions"][number];
 
@@ -38,6 +43,39 @@ function WelcomeStatusDot({ session }: { session: Session }) {
     );
   }
   return <span className={`welcome-session-dot status-${visual}`} aria-hidden="true" />;
+}
+
+function WelcomeStarterIcon({ id }: { id: StarterExampleId }) {
+  if (id === "game") {
+    return (
+      <span className="welcome-starter-icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="1.75" y="4.25" width="12.5" height="7.5" rx="3.75" />
+          <path d="M5.25 6.75v2.5M4 8h2.5" />
+          <circle cx="10.25" cy="7.25" r="0.7" fill="currentColor" stroke="none" />
+          <circle cx="11.75" cy="8.75" r="0.7" fill="currentColor" stroke="none" />
+        </svg>
+      </span>
+    );
+  }
+  if (id === "trip-overview") {
+    return (
+      <span className="welcome-starter-icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14.25 2.5 7.2 9.55" />
+          <path d="m14.25 2.5-4.4 11.75-2.65-4.7-4.7-2.65L14.25 2.5Z" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span className="welcome-starter-icon" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3.25 5.25h9.5l-.75 8.25h-8l-.75-8.25Z" />
+        <path d="M5.75 5.25V4a2.25 2.25 0 0 1 4.5 0v1.25" />
+      </svg>
+    </span>
+  );
 }
 
 function TerminalIllustration() {
@@ -248,18 +286,22 @@ const FEATURES = [
 
 export function HomeWelcomeCard({
   sessions,
+  availableCompanions = companions,
   userName = null,
   assistantName = null,
   formatTime,
   onSelectSession,
   onPickCompanion,
+  onStartExample,
 }: {
   sessions: readonly Session[];
+  availableCompanions?: readonly Companion[];
   userName?: string | null;
   assistantName?: string | null;
   formatTime: (iso: string) => string;
   onSelectSession: (id: string) => void;
   onPickCompanion: () => void;
+  onStartExample?: (companionId: string, example: StarterExampleDefinition) => void;
 }) {
   const [featureIndex, setFeatureIndex] = useState(0);
   const [hovered, setHovered] = useState(false);
@@ -269,6 +311,14 @@ export function HomeWelcomeCard({
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
   const resolvedAssistantName = assistantName?.trim() || "Jolly";
+  const starterSlots = Math.max(0, 3 - recentSessions.length);
+  const starterExamples =
+    starterSlots > 0
+      ? resolveStarterExamplesForAvailableCompanions(availableCompanions, resolvedAssistantName).slice(
+          0,
+          starterSlots,
+        )
+      : [];
   const teamMembers = ["nova", "poppy", "tilly", "remy", "sage"]
     .map((id) => companions.find((c) => c.id === id))
     .filter((c): c is (typeof companions)[number] => Boolean(c));
@@ -298,8 +348,12 @@ export function HomeWelcomeCard({
             {recentSessions.length > 0 ? "Pick up where you left off." : "Start a new conversation."}
           </h2>
 
-          {recentSessions.length > 0 && (
-            <div className="welcome-session-list" role="list" aria-label="Recent conversations">
+          {(recentSessions.length > 0 || starterExamples.length > 0) && (
+            <div
+              className="welcome-session-list"
+              role="list"
+              aria-label={recentSessions.length > 0 ? "Recent conversations and starter examples" : "Starter examples"}
+            >
               {recentSessions.map((session) => {
                 const companionName = displayAgentName(session.title);
                 const taskSummary =
@@ -326,6 +380,21 @@ export function HomeWelcomeCard({
                   </button>
                 );
               })}
+              {starterExamples.map((starter) => (
+                <button
+                  key={starter.example.id}
+                  type="button"
+                  className="welcome-session-row welcome-starter-row"
+                  onClick={() => onStartExample?.(starter.companion.id, starter.example)}
+                >
+                  <WelcomeStarterIcon id={starter.example.id} />
+                  <span className="welcome-session-text">
+                    <span className="welcome-session-companion">{starter.label}</span>
+                    <span className="welcome-session-sep" aria-hidden="true">›</span>
+                    <span className="welcome-session-summary">{starter.subtitle}</span>
+                  </span>
+                </button>
+              ))}
             </div>
           )}
 
