@@ -9,6 +9,11 @@ import { AccomplishmentCelebrationEvent, artworkForCompanionName, CompanionConta
 import { parseAccomplishmentNotice } from "../../server/src/companionStatistics";
 import { CreateCompanionCard, type CreateCompanionInput } from "./CreateCompanionCard";
 import { HomeWelcomeCard } from "./HomeWelcomeCard";
+import {
+  buildStarterPrompt,
+  stripStarterInstructions,
+  type StarterExampleDefinition,
+} from "./starterExamples";
 import { CUSTOM_COMPANION_LIMIT } from "./companionCustom";
 import { CompanionMenu } from "./CompanionMenu";
 import { CompanionAccessNotice } from "./CompanionAccess";
@@ -197,7 +202,7 @@ function formatPromptWithAttachments(text: string, attachments: readonly Compose
 
 function visibleUserPromptText(content: string, hasAttachments: boolean): string {
   if (hasAttachments && content.trim() === "[Image]") return "";
-  return displayOutput(content);
+  return displayOutput(stripStarterInstructions(content));
 }
 
 const QUEUE_FULL_MESSAGE = "One message is already queued. It sends when the connection is back.";
@@ -3839,28 +3844,24 @@ export function App() {
     }
   };
 
-  const submitDraft = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!draft || creating || firstMessageSendingRef.current || selectedModelBlocked) return;
-    if (!availableCompanions.some((companion) => companion.id === draft.companionId)) {
-      setCreateError("This companion is already on a task. Pick another companion.");
-      return;
-    }
-    const rawText = direction.trim();
-    const submittedAttachments = attachments;
-    const prompt = formatPromptWithAttachments(rawText, submittedAttachments);
-    if (!prompt) return;
-    const workspace = resolveWorkspaceRoot(draft.workspaceRoot);
+  const sendDraftPrompt = async (
+    targetDraft: QueuedDraft["draft"],
+    prompt: string,
+    rawText: string,
+    submittedAttachments: readonly ComposerAttachment[],
+    fromComposer: boolean,
+  ) => {
+    const workspace = resolveWorkspaceRoot(targetDraft.workspaceRoot);
     if (!workspace.ok) {
       setCreateError(workspace.error);
       return;
     }
     const queued: QueuedDraft = {
       kind: "draft",
-      draft,
+      draft: targetDraft,
       workspacePath: workspace.path,
       prompt,
-      ...(submittedAttachments.length > 0 ? { attachments: submittedAttachments } : {}),
+      ...(submittedAttachments.length > 0 ? { attachments: [...submittedAttachments] } : {}),
     };
     const decision = decideSubmit(promptConnectionLost, queuedPrompt !== null);
     if (decision === "queue-full") {
@@ -3872,23 +3873,62 @@ export function App() {
     promptHistoryStateRef.current = INITIAL_PROMPT_HISTORY_STATE;
     if (decision === "queue") {
       setQueuedPrompt(queued);
-      setDirection("");
-      setAttachments([]);
+      if (fromComposer) {
+        setDirection("");
+        setAttachments([]);
+      }
       return;
     }
     firstMessageSendingRef.current = true;
     setCreating(true);
-    const result = await createFromDraft(queued, true);
+    const result = await createFromDraft(queued, fromComposer);
     firstMessageSendingRef.current = false;
     setCreating(false);
     if (result.ok) return;
     if (result.network && queuedPrompt === null) {
       setSendFailedAt(Date.now());
       setQueuedPrompt(queued);
-      setDirection("");
+      if (fromComposer) setDirection("");
       return;
     }
     setCreateError(result.error);
+  };
+
+  const submitDraft = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!draft || creating || firstMessageSendingRef.current || selectedModelBlocked) return;
+    if (!availableCompanions.some((companion) => companion.id === draft.companionId)) {
+      setCreateError("This companion is already on a task. Pick another companion.");
+      return;
+    }
+    const rawText = direction.trim();
+    const submittedAttachments = attachments;
+    const prompt = formatPromptWithAttachments(rawText, submittedAttachments);
+    if (!prompt) return;
+    await sendDraftPrompt(draft, prompt, rawText, submittedAttachments, true);
+  };
+
+  const startStarterExample = async (companionId: string, example: StarterExampleDefinition) => {
+    if (creating || firstMessageSendingRef.current) return;
+    const companion =
+      availableCompanions.find((item) => item.id === companionId) ?? availableCompanions[0];
+    if (!companion) return;
+    const nextDraft = makeNewSessionDraft(companion);
+    setDraft(nextDraft);
+    setSelectedId(nextDraft.id);
+    selectedIdRef.current = nextDraft.id;
+    setSelectedCompanionId(companion.id);
+    setCreateCompanionOpen(false);
+    setCreateError(null);
+    setMobileListOpen(false);
+    if (companionModelAccess(companion, accessibleModels).status !== "ready") {
+      return;
+    }
+    const prompt = buildStarterPrompt(
+      example,
+      assistantIdentityQuery.data?.name ?? "your Muse assistant",
+    );
+    await sendDraftPrompt(nextDraft, prompt, "", [], false);
   };
 
   // Keep the queue until delivery succeeds. A pilot rejection must not
@@ -5535,6 +5575,7 @@ export function App() {
                 /* Pick a companion and tell them what you’d like to do. Select a task to see its conversation. */
                 <HomeWelcomeCard
                   sessions={sessions}
+                  availableCompanions={availableCompanions}
                   userName={assistantIdentityQuery.data?.user_name ?? null}
                   assistantName={assistantIdentityQuery.data?.name ?? null}
                   formatTime={(iso) => formatRelativeTime(iso, sidebarClockMs)}
@@ -5552,6 +5593,9 @@ export function App() {
                     }
                     const firstAvailable = availableCompanions[0] ?? allCompanions[0];
                     if (firstAvailable) selectCompanion(firstAvailable.id);
+                  }}
+                  onStartExample={(companionId, example) => {
+                    void startStarterExample(companionId, example);
                   }}
                 />
               ) : shouldShowConversationLoading({ isPending: detailQuery.isPending, hasDetailSession: detailSession !== null && detailSession !== undefined, hasListSession: selectedSession !== null }) || !detailSession ? (

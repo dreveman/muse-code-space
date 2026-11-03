@@ -1473,7 +1473,184 @@ async function runTurn(session: Session, text: string) {
         () => push(session, "item", { item: reasoning("completed", ["Checking the project structure…", "The next step is to run the tests."]) }),
       );
     }
-    if (/\b(?:rich-ask|ask-rich)\b/i.test(text)) {
+    if (text.includes("<code-space-starter-instructions>")) {
+      steps.push(async () => {
+        const isTrip = /Trip Overview/i.test(text);
+        const isShopping = /Dynamic Shopping List/i.test(text);
+        const userInputId = `rich-${crypto.randomUUID()}`;
+        const toolItemId = crypto.randomUUID();
+        const title = isTrip
+          ? "Design your Trip Overview"
+          : isShopping
+            ? "Design your Shopping List"
+            : "Design your Space Game";
+        const richQuestions = isTrip
+          ? [
+              {
+                id: "trips",
+                header: "Trips",
+                question: "Which trips should your overview highlight first?",
+                kind: "choice" as const,
+                required: true,
+                selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                options: [
+                  { label: "Next upcoming trip", description: "Put my next trip front-and-center with a countdown and full booking timeline" },
+                  { label: "All planned trips", description: "Show a trip switcher for all upcoming trips and weekend getaways" },
+                  { label: "A trip I'm planning now", description: "Start with a specific destination I’m putting together" },
+                ],
+              },
+              {
+                id: "layout",
+                header: "Layout",
+                question: "What view gives you the most confidence while traveling?",
+                kind: "choice" as const,
+                required: true,
+                selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                options: [
+                  { label: "Day-by-day booking timeline", description: "Chronological timeline of flights, hotel check-ins, transfers, and dining" },
+                  { label: "Boarding & check-in cards", description: "At-a-glance cards with confirmation codes, terminals, check-in times, and addresses" },
+                  { label: "Timeline + readiness checklist", description: "Full booking timeline paired with a pre-trip checklist" },
+                ],
+              },
+              {
+                id: "details",
+                header: "Details",
+                question: "Any upcoming destination or preference to start with? (Optional — your Muse assistant will also populate bookings from your inbox.)",
+                kind: "text" as const,
+                required: false,
+                placeholder: "e.g. Tokyo in May, window seats, or leave blank",
+                selection: { mode: "single" as const, minSelections: 0, maxSelections: 1 },
+                options: [],
+              },
+            ]
+          : isShopping
+            ? [
+                {
+                  id: "layout",
+                  header: "Layout",
+                  question: "How would you like your shopping view structured?",
+                  kind: "choice" as const,
+                  required: true,
+                  selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                  options: [
+                    { label: "Shopping list + live shipments", description: "Items to buy alongside a live tracker for packages on the way" },
+                    { label: "Organized by store & category", description: "Grouped neatly by store or category (Groceries, Home, Tech, Wardrobe)" },
+                    { label: "Priority board", description: "Columns for Need Now, Restock Soon, and Wishlist" },
+                  ],
+                },
+                {
+                  id: "sync",
+                  header: "Assistant sync",
+                  question: "How should your Muse assistant help keep it updated?",
+                  kind: "choice" as const,
+                  required: true,
+                  selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                  options: [
+                    { label: "Both shopping list & deliveries", description: "Add items I mention and automatically track orders from my email" },
+                    { label: "Auto-track package deliveries", description: "Focus on pulling order confirmations, tracking links, and delivery ETAs" },
+                    { label: "Remember brand & store preferences", description: "Keep my preferred brands, sizes, and favorite stores attached to each item" },
+                  ],
+                },
+                {
+                  id: "preferences",
+                  header: "Preferences",
+                  question: "Any favorite stores, recurring items, or personal preferences to start with? (Optional)",
+                  kind: "text" as const,
+                  required: false,
+                  placeholder: "e.g. Whole Foods, oat milk, running shoes, or leave blank",
+                  selection: { mode: "single" as const, minSelections: 0, maxSelections: 1 },
+                  options: [],
+                },
+              ]
+            : [
+                {
+                  id: "game",
+                  header: "Game",
+                  question: "What kind of game should we build?",
+                  kind: "choice" as const,
+                  required: true,
+                  selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                  options: [
+                    { label: "Muse Jump", description: "Fast endless runner (like the Chrome Dino game) where you jump and duck past obstacles" },
+                    { label: "Muse Trivia Challenge", description: "Interactive trivia game with custom questions powered by your Muse assistant" },
+                    { label: "Cosmic Catch", description: "Arcade game where you catch falling stars and power-ups while dodging hazards" },
+                  ],
+                },
+                {
+                  id: "style",
+                  header: "Style",
+                  question: "What visual vibe should it have?",
+                  kind: "choice" as const,
+                  required: true,
+                  selection: { mode: "single" as const, minSelections: 1, maxSelections: 1 },
+                  options: [
+                    { label: "Retro Arcade", description: "Crisp arcade look with synth sound effects and high-score flair" },
+                    { label: "Cozy & Playful", description: "Warm colors, smooth rounded cards, and cheerful animations" },
+                    { label: "Neon Space", description: "Dark starfield backdrop with glowing neon accents" },
+                  ],
+                },
+                {
+                  id: "character",
+                  header: "Character",
+                  question: "Want to sketch your hero character or an obstacle on the Scratchpad? (Optional — skip if you’d like me to design it!)",
+                  kind: "embed" as const,
+                  required: false,
+                  embed: { type: "scratchpad" },
+                  selection: { mode: "single" as const, minSelections: 0, maxSelections: 1 },
+                  options: [],
+                },
+              ];
+        const toolArgs = JSON.stringify({ title, questions: richQuestions });
+        push(session, "item", {
+          item: {
+            kind: "toolCall",
+            itemId: toolItemId,
+            tool: "mcp__code_space__AskUserRichForm",
+            status: "inProgress",
+            recordedAt: new Date().toISOString(),
+            args: toolArgs,
+          },
+        });
+        const answerJson = await new Promise<string>((resolve) => {
+          const input: PendingInput = {
+            userInputId,
+            turnId,
+            title,
+            rich: true,
+            questions: richQuestions,
+            resolve,
+          };
+          session.inputs.set(userInputId, input);
+          push(session, "user_input_requested", {
+            userInputId,
+            title,
+            rich: true,
+            questions: input.questions,
+          });
+        });
+        push(session, "user_input_answered", { userInputId });
+        push(session, "item", {
+          item: {
+            kind: "toolCall",
+            itemId: toolItemId,
+            tool: "mcp__code_space__AskUserRichForm",
+            status: "completed",
+            recordedAt: new Date().toISOString(),
+            args: toolArgs,
+            visibleOutput: answerJson,
+          },
+        });
+        const demo = await startDemoPreviewServer(session.id);
+        push(session, "preview_started", { port: demo.port });
+        push(session, "item", {
+          item: {
+            kind: "agentMessage",
+            status: "completed",
+            text: `Awesome choices! I’ve built your **${title.replace(/^Design your /, "")}** and opened it in the **Preview** tab, and I’ve messaged **@${assistant.name}** to publish it as a Space for you.`,
+          },
+        });
+      });
+    } else if (/\b(?:rich-ask|ask-rich)\b/i.test(text)) {
       steps.push(async () => {
         const userInputId = `rich-${crypto.randomUUID()}`;
         const toolItemId = crypto.randomUUID();
