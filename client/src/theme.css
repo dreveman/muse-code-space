@@ -513,7 +513,8 @@ button { color: inherit; }
 .welcome-tips-art { height: 152px; margin: 10px 0 4px; overflow: hidden; }
 .welcome-tips-art .welcome-illus-window { height: 152px; background: color-mix(in srgb, var(--surface) 65%, white); }
 :root[data-color-mode="dark"] .welcome-tips-art .welcome-illus-window { background: var(--surface); }
-.welcome-more-section { margin-top: 2px; padding-top: 6px; }
+.welcome-more-section { margin-top: 2px; padding-top: 6px; margin-bottom: -10px; }
+.welcome-more-section:has(> .welcome-more-grid) { margin-bottom: 0; }
 .welcome-more-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 10px; }
 .welcome-more-grid > .welcome-callout { margin-top: 0; }
 @container (min-width: 560px) {
