@@ -45,36 +45,111 @@ function WelcomeStatusDot({ session }: { session: Session }) {
   return <span className={`welcome-session-dot status-${visual}`} aria-hidden="true" />;
 }
 
-function WelcomeStarterIcon({ id }: { id: StarterExampleId }) {
+function WelcomeStarterIllustration({
+  id,
+  assistantName,
+}: {
+  id: StarterExampleId;
+  assistantName: string;
+}) {
   if (id === "game") {
     return (
-      <span className="welcome-starter-icon" aria-hidden="true">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="1.75" y="4.25" width="12.5" height="7.5" rx="3.75" />
-          <path d="M5.25 6.75v2.5M4 8h2.5" />
-          <circle cx="10.25" cy="7.25" r="0.7" fill="currentColor" stroke="none" />
-          <circle cx="11.75" cy="8.75" r="0.7" fill="currentColor" stroke="none" />
-        </svg>
-      </span>
+      <div className="welcome-illus-window welcome-starter-illus-window" aria-hidden="true">
+        <div className="welcome-illus-tabbar">
+          <span className="welcome-illus-tab">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="1.75" y="4.25" width="12.5" height="7.5" rx="3.75" />
+              <path d="M5.25 6.75v2.5M4 8h2.5" />
+              <circle cx="10.25" cy="7.25" r="0.7" fill="currentColor" stroke="none" />
+              <circle cx="11.75" cy="8.75" r="0.7" fill="currentColor" stroke="none" />
+            </svg>
+            Muse Jump
+          </span>
+          <span className="welcome-starter-score">HI 02840 · 01420</span>
+        </div>
+        <div className="welcome-starter-game-stage">
+          <svg className="welcome-starter-game-svg" viewBox="0 0 260 76" fill="none">
+            {/* Clouds / stars */}
+            <circle cx="42" cy="16" r="1.5" fill="currentColor" opacity="0.28" />
+            <circle cx="128" cy="12" r="1.5" fill="currentColor" opacity="0.22" />
+            <circle cx="212" cy="18" r="1.5" fill="currentColor" opacity="0.28" />
+            <path d="M78 20h18M170 15h14" stroke="currentColor" strokeOpacity="0.18" strokeWidth="2" strokeLinecap="round" />
+            {/* Jump arc */}
+            <path d="M52 54 Q 82 14 112 54" stroke="#1d74f5" strokeOpacity="0.28" strokeWidth="1.5" strokeDasharray="3 3" />
+            {/* Jumping hero */}
+            <g transform="translate(68, 16)">
+              <rect x="0" y="4" width="20" height="18" rx="6" fill="#1d74f5" />
+              <circle cx="14" cy="10" r="2" fill="#fff" />
+              <path d="M4 22l-2 5M16 22l3 4" stroke="#1d74f5" strokeWidth="2.2" strokeLinecap="round" />
+            </g>
+            {/* Obstacles on the track */}
+            <rect x="148" y="42" width="10" height="20" rx="3" fill="currentColor" opacity="0.55" />
+            <rect x="162" y="47" width="8" height="15" rx="2.5" fill="currentColor" opacity="0.4" />
+            <rect x="222" y="44" width="10" height="18" rx="3" fill="currentColor" opacity="0.5" />
+            {/* Ground line */}
+            <line x1="12" y1="62" x2="248" y2="62" stroke="currentColor" strokeOpacity="0.24" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </div>
+      </div>
     );
   }
   if (id === "trip-overview") {
     return (
-      <span className="welcome-starter-icon" aria-hidden="true">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M14.25 2.5 7.2 9.55" />
-          <path d="m14.25 2.5-4.4 11.75-2.65-4.7-4.7-2.65L14.25 2.5Z" />
-        </svg>
-      </span>
+      <div className="welcome-illus-window welcome-starter-illus-window" aria-hidden="true">
+        <div className="welcome-illus-tabbar">
+          <span className="welcome-illus-tab">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.25 2.5 7.2 9.55" />
+              <path d="m14.25 2.5-4.4 11.75-2.65-4.7-4.7-2.65L14.25 2.5Z" />
+            </svg>
+            Tokyo Trip · May 12–18
+          </span>
+          <span className="welcome-illus-live">
+            <i /> @{assistantName}
+          </span>
+        </div>
+        <div className="welcome-illus-body welcome-starter-list-body">
+          <div className="welcome-starter-item-row">
+            <span className="welcome-starter-badge">FLIGHT</span>
+            <span className="welcome-starter-item-main">SFO → HND · NH 7</span>
+            <span className="welcome-illus-ok">✓ Confirmed</span>
+          </div>
+          <div className="welcome-starter-item-row">
+            <span className="welcome-starter-badge">HOTEL</span>
+            <span className="welcome-starter-item-main">Shibuya Stream · 5 nights</span>
+            <span className="welcome-illus-ok">✓ Confirmed</span>
+          </div>
+        </div>
+      </div>
     );
   }
   return (
-    <span className="welcome-starter-icon" aria-hidden="true">
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3.25 5.25h9.5l-.75 8.25h-8l-.75-8.25Z" />
-        <path d="M5.75 5.25V4a2.25 2.25 0 0 1 4.5 0v1.25" />
-      </svg>
-    </span>
+    <div className="welcome-illus-window welcome-starter-illus-window" aria-hidden="true">
+      <div className="welcome-illus-tabbar">
+        <span className="welcome-illus-tab">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3.25 5.25h9.5l-.75 8.25h-8l-.75-8.25Z" />
+            <path d="M5.75 5.25V4a2.25 2.25 0 0 1 4.5 0v1.25" />
+          </svg>
+          Shopping &amp; Deliveries
+        </span>
+        <span className="welcome-illus-live">
+          <i /> @{assistantName}
+        </span>
+      </div>
+      <div className="welcome-illus-body welcome-starter-list-body">
+        <div className="welcome-starter-item-row">
+          <span className="welcome-starter-badge">BUY</span>
+          <span className="welcome-starter-item-main">Espresso beans · Whole Foods</span>
+          <span className="welcome-illus-dim">@{assistantName}</span>
+        </div>
+        <div className="welcome-starter-item-row">
+          <span className="welcome-starter-badge live">SHIPPED</span>
+          <span className="welcome-starter-item-main">Running shoes · Arrives Thu</span>
+          <span className="welcome-illus-ok">● In transit</span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -305,20 +380,34 @@ export function HomeWelcomeCard({
 }) {
   const [featureIndex, setFeatureIndex] = useState(0);
   const [hovered, setHovered] = useState(false);
+  const [starterIndex, setStarterIndex] = useState(0);
+  const [starterHovered, setStarterHovered] = useState(false);
+  const [examplesDismissed, setExamplesDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:welcome-examples-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [animCompanionIdx, setAnimCompanionIdx] = useState(1);
 
   const recentSessions = sessions.filter((session) => !session.archived).slice(0, 5);
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
   const resolvedAssistantName = assistantName?.trim() || "Jolly";
-  const starterSlots = Math.max(0, 3 - recentSessions.length);
-  const starterExamples =
-    starterSlots > 0
-      ? resolveStarterExamplesForAvailableCompanions(availableCompanions, resolvedAssistantName).slice(
-          0,
-          starterSlots,
-        )
-      : [];
+  const starterExamples = resolveStarterExamplesForAvailableCompanions(
+    availableCompanions,
+    resolvedAssistantName,
+  );
+  const activeStarter = starterExamples[starterIndex % Math.max(1, starterExamples.length)] ?? starterExamples[0];
+  const showStarterShowcase = !examplesDismissed && Boolean(activeStarter);
+
+  const dismissStarterExamples = () => {
+    setExamplesDismissed(true);
+    try {
+      window.localStorage.setItem("muse-code-space:welcome-examples-dismissed", "1");
+    } catch { /* ignore */ }
+  };
   const teamMembers = ["nova", "poppy", "tilly", "remy", "sage"]
     .map((id) => companions.find((c) => c.id === id))
     .filter((c): c is (typeof companions)[number] => Boolean(c));
@@ -348,12 +437,8 @@ export function HomeWelcomeCard({
             {recentSessions.length > 0 ? "Pick up where you left off." : "Start a new conversation."}
           </h2>
 
-          {(recentSessions.length > 0 || starterExamples.length > 0) && (
-            <div
-              className="welcome-session-list"
-              role="list"
-              aria-label={recentSessions.length > 0 ? "Recent conversations and starter examples" : "Starter examples"}
-            >
+          {recentSessions.length > 0 && (
+            <div className="welcome-session-list" role="list" aria-label="Recent conversations">
               {recentSessions.map((session) => {
                 const companionName = displayAgentName(session.title);
                 const taskSummary =
@@ -380,65 +465,124 @@ export function HomeWelcomeCard({
                   </button>
                 );
               })}
-              {starterExamples.map((starter) => (
-                <button
-                  key={starter.example.id}
-                  type="button"
-                  className="welcome-session-row welcome-starter-row"
-                  onClick={() => onStartExample?.(starter.companion.id, starter.example)}
-                >
-                  <WelcomeStarterIcon id={starter.example.id} />
-                  <span className="welcome-session-text">
-                    <span className="welcome-session-companion">{starter.label}</span>
-                    <span className="welcome-session-sep" aria-hidden="true">›</span>
-                    <span className="welcome-session-summary">{starter.subtitle}</span>
-                  </span>
-                </button>
-              ))}
             </div>
           )}
 
-          <div className="welcome-callout">
-            <div className="welcome-callout-body">
-              <h3>Work with specialized code companions</h3>
-              <p>
-                Pick a companion tuned for your task.
-              </p>
-              <div className="welcome-team-photo style-medallions" aria-label="The coding companions">
-                {teamMembers.map((companion, idx) => {
-                  const animateThis = idx === animCompanionIdx;
+          {showStarterShowcase && activeStarter ? (
+            <div
+              className="welcome-callout welcome-starter-callout"
+              aria-label="Starter project examples"
+              onPointerEnter={() => setStarterHovered(true)}
+              onPointerLeave={() => setStarterHovered(false)}
+            >
+              <button
+                type="button"
+                className="welcome-callout-dismiss"
+                aria-label="Dismiss starter examples"
+                title="Dismiss starter examples"
+                onClick={dismissStarterExamples}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                  <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                </svg>
+              </button>
+              <div className="welcome-starter-art">
+                <WelcomeStarterIllustration
+                  id={activeStarter.example.id}
+                  assistantName={resolvedAssistantName}
+                />
+              </div>
+              <div className="welcome-callout-body">
+                <h3>{activeStarter.cardHeadline}</h3>
+                <p>{activeStarter.cardDescription}</p>
+                <div className="welcome-callout-actions">
+                  <button
+                    type="button"
+                    className="welcome-btn-primary welcome-starter-cta"
+                    onClick={() => onStartExample?.(activeStarter.companion.id, activeStarter.example)}
+                  >
+                    <img
+                      className="welcome-starter-cta-avatar"
+                      src={activeStarter.companion.artwork.still}
+                      alt=""
+                      aria-hidden="true"
+                    />
+                    <span>{activeStarter.label}</span>
+                  </button>
+                </div>
+              </div>
+              <div className="welcome-feature-dots welcome-starter-dots" role="tablist" aria-label="Starter examples">
+                {starterExamples.map((item, idx) => {
+                  const active = idx === starterIndex % starterExamples.length;
                   return (
-                    <div
-                      key={companion.id}
-                      className={`welcome-team-member member-${companion.id}`}
-                      title={`${companion.name} — ${companion.role}`}
-                      onPointerEnter={() => setAnimCompanionIdx(idx)}
+                    <button
+                      key={item.example.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      aria-label={item.label}
+                      className={`welcome-feature-dot${active ? " active" : ""}${starterHovered ? " paused" : ""}`}
+                      onClick={() => setStarterIndex(idx)}
                     >
-                      <img
-                        className="welcome-team-img-still"
-                        src={companion.artwork.still}
-                        alt={companion.name}
-                      />
-                      {animateThis && (
-                        <img
-                          className="welcome-team-img-anim"
-                          src={companion.artwork.portraitIdle}
-                          alt=""
-                          aria-hidden="true"
-                          loading="lazy"
-                        />
-                      )}
-                    </div>
+                      <span className="welcome-feature-dot-track">
+                        {active && (
+                          <span
+                            key={starterIndex}
+                            className="welcome-feature-dot-fill"
+                            onAnimationEnd={() => {
+                              setStarterIndex((current) => (current + 1) % starterExamples.length);
+                            }}
+                          />
+                        )}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
-              <div className="welcome-callout-actions">
-                <button type="button" className="welcome-btn-primary" onClick={onPickCompanion}>
-                  Pick a companion
-                </button>
+            </div>
+          ) : (
+            <div className="welcome-callout">
+              <div className="welcome-callout-body">
+                <h3>Work with specialized code companions</h3>
+                <p>
+                  Pick a companion tuned for your task.
+                </p>
+                <div className="welcome-team-photo style-medallions" aria-label="The coding companions">
+                  {teamMembers.map((companion, idx) => {
+                    const animateThis = idx === animCompanionIdx;
+                    return (
+                      <div
+                        key={companion.id}
+                        className={`welcome-team-member member-${companion.id}`}
+                        title={`${companion.name} — ${companion.role}`}
+                        onPointerEnter={() => setAnimCompanionIdx(idx)}
+                      >
+                        <img
+                          className="welcome-team-img-still"
+                          src={companion.artwork.still}
+                          alt={companion.name}
+                        />
+                        {animateThis && (
+                          <img
+                            className="welcome-team-img-anim"
+                            src={companion.artwork.portraitIdle}
+                            alt=""
+                            aria-hidden="true"
+                            loading="lazy"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="welcome-callout-actions">
+                  <button type="button" className="welcome-btn-primary" onClick={onPickCompanion}>
+                    Pick a companion
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           <WelcomeSpotifyCard />
         </div>

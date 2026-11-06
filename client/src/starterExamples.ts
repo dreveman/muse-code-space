@@ -8,6 +8,8 @@ export type StarterExampleId = "game" | "trip-overview" | "shopping-list";
 export type StarterExampleDefinition = {
   id: StarterExampleId;
   preferredCompanionId: string;
+  cardHeadline: string;
+  cardDescription: (assistantName: string) => string;
   actionLabel: (companionName: string) => string;
   subtitle: (assistantName: string) => string;
   shortTitle: string;
@@ -43,6 +45,9 @@ export const STARTER_EXAMPLES: readonly StarterExampleDefinition[] = [
   {
     id: "game",
     preferredCompanionId: "nova",
+    cardHeadline: "Create a playable Space game.",
+    cardDescription: (assistantName) =>
+      `Design a jump runner or custom trivia game with ${assistantName}, play it in live preview, and publish it.`,
     actionLabel: (companionName) => `Build a game with ${companionName}`,
     subtitle: (assistantName) => `Trivia with ${assistantName} or a Muse Jump game`,
     shortTitle: "Build a game",
@@ -80,6 +85,9 @@ STEP 3 — DEPLOY & CONNECT WITH ${assistantName.toUpperCase()} (\`mcp__code_spa
   {
     id: "trip-overview",
     preferredCompanionId: "poppy",
+    cardHeadline: "Keep every trip booking in one view.",
+    cardDescription: (assistantName) =>
+      `A clean timeline for flights, hotels, and reservations that ${assistantName} populates from your email inbox.`,
     actionLabel: (companionName) => `Build a trip overview page with ${companionName}`,
     subtitle: () => "Timeline of flights, hotels & bookings from your inbox",
     shortTitle: "Build a trip overview page",
@@ -119,6 +127,9 @@ STEP 3 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space_
   {
     id: "shopping-list",
     preferredCompanionId: "tilly",
+    cardHeadline: "Dynamic shopping list & package tracker.",
+    cardDescription: (assistantName) =>
+      `Organize items to buy and track live deliveries based on your preferences, updated by you and ${assistantName}.`,
     actionLabel: (companionName) => `Build a dynamic shopping list with ${companionName}`,
     subtitle: (assistantName) => `Items to buy & package tracking with ${assistantName}`,
     shortTitle: "Build a dynamic shopping list",
@@ -162,6 +173,8 @@ export type ResolvedStarterExample<T extends StarterCompanionRef = StarterCompan
   companion: T;
   label: string;
   subtitle: string;
+  cardHeadline: string;
+  cardDescription: string;
 };
 
 /**
@@ -197,6 +210,8 @@ export function resolveStarterExamplesForAvailableCompanions<
       companion: preferred,
       label: example.actionLabel(preferred.name),
       subtitle: example.subtitle(resolvedAssistant),
+      cardHeadline: example.cardHeadline,
+      cardDescription: example.cardDescription(resolvedAssistant),
     });
   }
 
