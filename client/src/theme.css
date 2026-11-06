@@ -570,7 +570,8 @@ button { color: inherit; }
 .welcome-feature-dot { flex: 1 1 0; height: 20px; padding: 8px 0; border: 0; background: transparent; cursor: pointer; display: flex; align-items: center; transition: flex-grow 260ms cubic-bezier(0.4, 0, 0.2, 1); }
 .welcome-feature-dot.active { flex: 2 1 0; }
 .welcome-feature-dot-track { position: relative; width: 100%; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 20%, transparent); overflow: hidden; }
-.welcome-feature-dot-fill { position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--text) 72%, transparent); transform-origin: left center; animation: welcome-feature-countdown 7s linear forwards; }
+.welcome-feature-dot-fill { position: absolute; inset: 0; border-radius: inherit; background: color-mix(in srgb, var(--text) 72%, transparent); transform-origin: left center; animation: welcome-feature-countdown 6.4s linear forwards; }
+.welcome-starter-callout:not(.welcome-tips-callout) .welcome-feature-dot-fill { animation-duration: 9.2s; }
 .welcome-feature-dot.paused .welcome-feature-dot-fill { animation-play-state: paused; }
 @keyframes welcome-feature-countdown {
   from { transform: scaleX(0); }
