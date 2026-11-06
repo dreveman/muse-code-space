@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { displayAgentName } from "./agentColor";
 import { agentVisualStatus } from "./agentStatus";
 import { api, type ApiResponse } from "./api";
 import { companions, type Companion } from "./Companions";
+import { ExpandButton } from "./MoreCompanionsButton";
 import { PreviewTabIcon } from "./PreviewPanel";
 import { sessionTaskTitle } from "./sessionList";
 import { SmartLogIcon } from "./SmartLogPanel";
@@ -410,9 +411,30 @@ export function HomeWelcomeCard({
       return false;
     }
   });
+  const [moreOpen, setMoreOpen] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageSize, setStageSize] = useState<{ width: number; height: number }>(() => ({
+    width: typeof window !== "undefined" ? window.innerWidth : 900,
+    height: typeof window !== "undefined" ? window.innerHeight : 700,
+  }));
   const [animCompanionIdx, setAnimCompanionIdx] = useState(1);
 
-  const recentSessions = sessions.filter((session) => !session.archived).slice(0, 5);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setStageSize({ width: Math.round(rect.width), height: Math.round(rect.height) });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const recentSessions = sessions.filter((session) => !session.archived).slice(0, 3);
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
   const resolvedAssistantName = assistantName?.trim() || "Jolly";
@@ -468,123 +490,98 @@ export function HomeWelcomeCard({
   }, []);
 
   return (
-    <div className="welcome-home-stage">
+    <div ref={stageRef} className="welcome-home-stage">
       <section
-        className={`welcome-home-card${tipsDismissed ? " has-no-tips" : ""}`}
+        className="welcome-home-card"
         aria-label="Welcome to Code Space"
       >
         <span className="companion-sr-only">Select a task to see its conversation.</span>
-        <div className="welcome-home-main">
+        <header className="welcome-home-header">
           <span className="welcome-home-eyebrow">{timeOfDayGreeting(userName)}</span>
           <h2 className="welcome-home-headline">
             {recentSessions.length > 0 ? "Pick up where you left off." : "Start a new conversation."}
           </h2>
+        </header>
 
-          {recentSessions.length > 0 && (
-            <div className="welcome-session-list" role="list" aria-label="Recent conversations">
-              {recentSessions.map((session) => {
-                const companionName = displayAgentName(session.title);
-                const taskSummary =
-                  session.session_summary?.trim() ||
-                  session.summary?.trim() ||
-                  sessionTaskTitle(session) ||
-                  "Conversation";
-                const unread = agentVisualStatus(session) === "unread";
-                const relTime = formatTime(session.updated_at);
-                return (
-                  <button
-                    key={session.id}
-                    type="button"
-                    className={`welcome-session-row${unread ? " is-unread" : ""}`}
-                    onClick={() => onSelectSession(session.id)}
-                  >
-                    <WelcomeStatusDot session={session} />
-                    <span className="welcome-session-text">
-                      <span className="welcome-session-companion">{companionName}</span>
-                      <span className="welcome-session-sep" aria-hidden="true">›</span>
-                      <span className="welcome-session-summary">{taskSummary}</span>
-                    </span>
-                    <span className="welcome-session-meta">{relTime}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {showStarterShowcase && activeStarter ? (
-            <div
-              className="welcome-callout welcome-starter-callout"
-              aria-label="Starter project examples"
-              onPointerEnter={() => setStarterHovered(true)}
-              onPointerLeave={() => setStarterHovered(false)}
-            >
-              <button
-                type="button"
-                className="welcome-callout-dismiss"
-                aria-label="Dismiss starter examples"
-                title="Dismiss starter examples"
-                onClick={dismissStarterExamples}
+        {(() => {
+          const starterCardNode =
+            showStarterShowcase && activeStarter ? (
+              <div
+                key="starter"
+                className="welcome-callout welcome-starter-callout"
+                aria-label="Starter project examples"
+                onPointerEnter={() => setStarterHovered(true)}
+                onPointerLeave={() => setStarterHovered(false)}
               >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
-                  <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
-                </svg>
-              </button>
-              <div className="welcome-callout-body">
-                <h3>{activeStarter.cardHeadline}</h3>
-                <p>{activeStarter.cardDescription}</p>
-                <div className="welcome-starter-art">
-                  <WelcomeStarterIllustration
-                    id={activeStarter.example.id}
-                    assistantName={resolvedAssistantName}
-                  />
-                </div>
-                <div className="welcome-callout-actions">
-                  <button
-                    type="button"
-                    className="welcome-btn-primary welcome-starter-cta"
-                    onClick={() => onStartExample?.(activeStarter.companion.id, activeStarter.example)}
-                  >
-                    <img
-                      className="welcome-starter-cta-avatar"
-                      src={activeStarter.companion.artwork.still}
-                      alt=""
-                      aria-hidden="true"
+                <button
+                  type="button"
+                  className="welcome-callout-dismiss"
+                  aria-label="Dismiss starter examples"
+                  title="Dismiss starter examples"
+                  onClick={dismissStarterExamples}
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                  </svg>
+                </button>
+                <div className="welcome-callout-body">
+                  <h3>{activeStarter.cardHeadline}</h3>
+                  <p>{activeStarter.cardDescription}</p>
+                  <div className="welcome-starter-art">
+                    <WelcomeStarterIllustration
+                      id={activeStarter.example.id}
+                      assistantName={resolvedAssistantName}
                     />
-                    <span>{activeStarter.label}</span>
-                  </button>
+                  </div>
+                  <div className="welcome-callout-actions">
+                    <button
+                      type="button"
+                      className="welcome-btn-primary welcome-starter-cta"
+                      onClick={() => onStartExample?.(activeStarter.companion.id, activeStarter.example)}
+                    >
+                      <img
+                        className="welcome-starter-cta-avatar"
+                        src={activeStarter.companion.artwork.still}
+                        alt=""
+                        aria-hidden="true"
+                      />
+                      <span>{activeStarter.label}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="welcome-feature-dots welcome-starter-dots" role="tablist" aria-label="Starter examples">
+                  {starterExamples.map((item, idx) => {
+                    const active = idx === starterIndex % starterExamples.length;
+                    return (
+                      <button
+                        key={item.example.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        aria-label={item.label}
+                        className={`welcome-feature-dot${active ? " active" : ""}${starterHovered ? " paused" : ""}`}
+                        onClick={() => setStarterIndex(idx)}
+                      >
+                        <span className="welcome-feature-dot-track">
+                          {active && (
+                            <span
+                              key={starterIndex}
+                              className="welcome-feature-dot-fill"
+                              onAnimationEnd={() => {
+                                setStarterIndex((current) => (current + 1) % starterExamples.length);
+                              }}
+                            />
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="welcome-feature-dots welcome-starter-dots" role="tablist" aria-label="Starter examples">
-                {starterExamples.map((item, idx) => {
-                  const active = idx === starterIndex % starterExamples.length;
-                  return (
-                    <button
-                      key={item.example.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      aria-label={item.label}
-                      className={`welcome-feature-dot${active ? " active" : ""}${starterHovered ? " paused" : ""}`}
-                      onClick={() => setStarterIndex(idx)}
-                    >
-                      <span className="welcome-feature-dot-track">
-                        {active && (
-                          <span
-                            key={starterIndex}
-                            className="welcome-feature-dot-fill"
-                            onAnimationEnd={() => {
-                              setStarterIndex((current) => (current + 1) % starterExamples.length);
-                            }}
-                          />
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : showCompanionCallout ? (
-            <div className="welcome-callout">
+            ) : null;
+
+          const companionCardNode = showCompanionCallout ? (
+            <div key="companions" className="welcome-callout">
               <button
                 type="button"
                 className="welcome-callout-dismiss"
@@ -598,9 +595,7 @@ export function HomeWelcomeCard({
               </button>
               <div className="welcome-callout-body">
                 <h3>Work with specialized code companions</h3>
-                <p>
-                  Pick a companion tuned for your task.
-                </p>
+                <p>Pick a companion tuned for your task.</p>
                 <div className="welcome-team-photo style-medallions" aria-label="The coding companions">
                   {teamMembers.map((companion, idx) => {
                     const animateThis = idx === animCompanionIdx;
@@ -636,19 +631,20 @@ export function HomeWelcomeCard({
                 </div>
               </div>
             </div>
-          ) : null}
+          ) : null;
 
-          {!spotifyDismissed && <WelcomeSpotifyCard onDismiss={dismissSpotifyCallout} />}
-        </div>
+          const spotifyCardNode = !spotifyDismissed ? (
+            <WelcomeSpotifyCard key="spotify" onDismiss={dismissSpotifyCallout} />
+          ) : null;
 
-        {!tipsDismissed && (
-          <aside
-            className="welcome-home-feature"
-            aria-label="Explore Code Space features"
-            onPointerEnter={() => setHovered(true)}
-            onPointerLeave={() => setHovered(false)}
-          >
-            <div className="welcome-callout welcome-starter-callout welcome-tips-callout">
+          const tipsCardNode = !tipsDismissed ? (
+            <div
+              key="tips"
+              className="welcome-callout welcome-starter-callout welcome-tips-callout"
+              aria-label="Explore Code Space features"
+              onPointerEnter={() => setHovered(true)}
+              onPointerLeave={() => setHovered(false)}
+            >
               <button
                 type="button"
                 className="welcome-callout-dismiss"
@@ -700,8 +696,136 @@ export function HomeWelcomeCard({
                 })}
               </div>
             </div>
-          </aside>
-        )}
+          ) : null;
+
+          type CardEntry = { id: string; height: number; preferredPane: "left" | "right"; node: ReactNode };
+          const entries: CardEntry[] = [];
+          if (starterCardNode) entries.push({ id: "starter", height: 274, preferredPane: "left", node: starterCardNode });
+          if (companionCardNode) entries.push({ id: "companions", height: 186, preferredPane: "left", node: companionCardNode });
+          if (tipsCardNode) entries.push({ id: "tips", height: 238, preferredPane: "right", node: tipsCardNode });
+          if (spotifyCardNode) entries.push({ id: "spotify", height: 132, preferredPane: "left", node: spotifyCardNode });
+
+          const canUseTwoPanes = stageSize.width >= 596 && entries.length >= 2;
+          const recentHeight = recentSessions.length > 0 ? recentSessions.length * 38 + 12 : 0;
+          // Budget below the header that fits inside the stage without scrolling
+          const columnBudget = Math.max(240, stageSize.height - 196);
+
+          const leftVisible: ReactNode[] = [];
+          const rightVisible: ReactNode[] = [];
+          const overflowCards: ReactNode[] = [];
+
+          if (canUseTwoPanes) {
+            let leftUsed = recentHeight;
+            let rightUsed = 0;
+            for (const entry of entries) {
+              const gapLeft = leftUsed > 0 ? 10 : 0;
+              const gapRight = rightUsed > 0 ? 10 : 0;
+              if (entry.preferredPane === "right") {
+                if (rightUsed === 0 || rightUsed + gapRight + entry.height <= columnBudget) {
+                  rightVisible.push(entry.node);
+                  rightUsed += gapRight + entry.height;
+                } else if (leftUsed + gapLeft + entry.height <= columnBudget) {
+                  leftVisible.push(entry.node);
+                  leftUsed += gapLeft + entry.height;
+                } else {
+                  overflowCards.push(entry.node);
+                }
+              } else {
+                if ((leftUsed === 0 && recentSessions.length === 0) || leftUsed + gapLeft + entry.height <= columnBudget) {
+                  leftVisible.push(entry.node);
+                  leftUsed += gapLeft + entry.height;
+                } else if (rightUsed === 0 || rightUsed + gapRight + entry.height <= columnBudget) {
+                  rightVisible.push(entry.node);
+                  rightUsed += gapRight + entry.height;
+                } else {
+                  overflowCards.push(entry.node);
+                }
+              }
+            }
+          } else {
+            let used = recentHeight;
+            for (const entry of entries) {
+              const gap = used > 0 ? 10 : 0;
+              if (leftVisible.length === 0 && recentSessions.length === 0) {
+                leftVisible.push(entry.node);
+                used += gap + entry.height;
+              } else if (used + gap + entry.height <= columnBudget) {
+                leftVisible.push(entry.node);
+                used += gap + entry.height;
+              } else {
+                overflowCards.push(entry.node);
+              }
+            }
+          }
+
+          const hasSecondPane = rightVisible.length > 0;
+
+          return (
+            <>
+              <div className={`welcome-home-columns${hasSecondPane ? " has-two-panes" : ""}`}>
+                <div className="welcome-home-main">
+                  {recentSessions.length > 0 && (
+                    <div className="welcome-session-list" role="list" aria-label="Recent conversations">
+                      {recentSessions.map((session) => {
+                        const companionName = displayAgentName(session.title);
+                        const taskSummary =
+                          session.session_summary?.trim() ||
+                          session.summary?.trim() ||
+                          sessionTaskTitle(session) ||
+                          "Conversation";
+                        const unread = agentVisualStatus(session) === "unread";
+                        const relTime = formatTime(session.updated_at);
+                        return (
+                          <button
+                            key={session.id}
+                            type="button"
+                            className={`welcome-session-row${unread ? " is-unread" : ""}`}
+                            onClick={() => onSelectSession(session.id)}
+                          >
+                            <WelcomeStatusDot session={session} />
+                            <span className="welcome-session-text">
+                              <span className="welcome-session-companion">{companionName}</span>
+                              <span className="welcome-session-sep" aria-hidden="true">›</span>
+                              <span className="welcome-session-summary">{taskSummary}</span>
+                            </span>
+                            <span className="welcome-session-meta">{relTime}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {leftVisible}
+                </div>
+                {hasSecondPane && (
+                  <aside className="welcome-home-feature" aria-label="Explore Code Space features">
+                    {rightVisible}
+                  </aside>
+                )}
+              </div>
+
+              {overflowCards.length > 0 && (
+                <section className="companion-details welcome-more-section">
+                  <ExpandButton
+                    expanded={moreOpen}
+                    controls="welcome-more-cards"
+                    className="companion-more-button"
+                    onToggle={() => setMoreOpen((v) => !v)}
+                  >
+                    {moreOpen ? "Show less" : "More"}
+                  </ExpandButton>
+                  {moreOpen && (
+                    <div
+                      id="welcome-more-cards"
+                      className={`welcome-more-grid${canUseTwoPanes && overflowCards.length > 1 ? " has-two-panes" : ""}`}
+                    >
+                      {overflowCards}
+                    </div>
+                  )}
+                </section>
+              )}
+            </>
+          );
+        })()}
       </section>
     </div>
   );
