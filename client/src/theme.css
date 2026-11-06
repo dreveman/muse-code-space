@@ -404,11 +404,12 @@ button { color: inherit; }
 .welcome-session-spinner { flex: 0 0 auto; width: 11px; height: 11px; border-width: 1.5px; color: #1d74f5; }
 .welcome-session-check { flex: 0 0 auto; width: 13px; height: 13px; display: inline-grid; place-items: center; color: var(--dim); }
 .welcome-session-check svg { width: 12px; height: 12px; }
-.welcome-starter-callout { position: relative; padding-top: 18px; }
+.welcome-starter-callout { position: relative; }
+.welcome-starter-callout .welcome-callout-body h3 { padding-right: 26px; }
 .welcome-callout-dismiss {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 8px;
+  right: 8px;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -423,7 +424,7 @@ button { color: inherit; }
 }
 .welcome-callout-dismiss svg { width: 12px; height: 12px; }
 .welcome-callout-dismiss:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
-.welcome-starter-art { margin: 4px 0 12px; }
+.welcome-starter-art { margin: 10px 0 12px; }
 .welcome-starter-illus-window { height: 106px; background: color-mix(in srgb, var(--surface) 65%, white); }
 :root[data-color-mode="dark"] .welcome-starter-illus-window { background: var(--surface); }
 .welcome-starter-score { font: 600 9.5px/1 var(--mono); color: var(--dim); letter-spacing: .04em; }
