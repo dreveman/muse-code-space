@@ -351,31 +351,29 @@ export function SessionMenu({
               </details>
             </>
           )}
-          <div className="session-menu-separator" role="separator" />
-          <details className="session-menu-section" role="group" aria-label="Dismissed items">
-            <summary className="session-menu-heading">
-              <span>Dismissed items{dismissedItems.length > 0 ? ` (${dismissedItems.length})` : ""}</span>
-              <span className="session-menu-chevron" aria-hidden="true">›</span>
-            </summary>
-            {dismissedItems.length > 0 ? (
-              dismissedItems.map((item) => (
-                <ActionMenuItem
-                  key={`restore-${item.id}`}
-                  action={{
-                    key: `restore-${item.id}`,
-                    label: `Restore ${item.label.toLowerCase()}`,
-                    description: item.description,
-                    onActivate: () => setUiItemDismissed(item.id, false),
-                  }}
-                  onDone={() => {}}
-                />
-              ))
-            ) : (
-              <div className="wire-settings-empty-hint">
-                No dismissed cards or buttons.
-              </div>
-            )}
-          </details>
+          {dismissedItems.length > 0 && (
+            <>
+              <div className="session-menu-separator" role="separator" />
+              <details className="session-menu-section" role="group" aria-label="Dismissed items">
+                <summary className="session-menu-heading">
+                  <span>Dismissed items</span>
+                  <span className="session-menu-chevron" aria-hidden="true">›</span>
+                </summary>
+                {dismissedItems.map((item) => (
+                  <ActionMenuItem
+                    key={`restore-${item.id}`}
+                    action={{
+                      key: `restore-${item.id}`,
+                      label: `Restore ${item.label.toLowerCase()}`,
+                      description: item.description,
+                      onActivate: () => setUiItemDismissed(item.id, false),
+                    }}
+                    onDone={() => {}}
+                  />
+                ))}
+              </details>
+            </>
+          )}
           <div className="session-menu-separator" role="separator" />
           <details className="session-menu-section" role="group" aria-label="Color mode">
             <summary className="session-menu-heading">Color mode<span className="session-menu-chevron" aria-hidden="true">›</span></summary>
