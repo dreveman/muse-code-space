@@ -333,6 +333,15 @@ repository there for `pilot/install.sh`; never transfer pilot state,
    backup printed by `stage-snapshot.sh` over the snapshot's `app.db`
    (whole-file restore only, never row edits), rebuild through the edit
    workflow, reload, and compare again before reporting success.
+
+   **Phone-width hover controls are not a defect.** At phone width, "Open
+   scratchpad", "Open web preview", and "Open terminal" are revealed on
+   hover (opacity 0 until then) by design, and each is also reachable from
+   the menu — do not flag them as unreachable in verification or in an
+   audit follow-up. "Scroll to bottom of conversation" is not hover-gated
+   at all. If a future audit lists any of these, treat it as a false
+   positive; any real change belongs upstream, not as a local snapshot
+   deviation.
 6. The watchdog hook (step 3 in "Code Space watchdog hook" below) automatically
    keeps the artifact's icon in sync with the repo's `icon.webp`. The sidebar
    icon comes from `~/workspace/ts-spaces/<slug>/icon.webp` (checked by
