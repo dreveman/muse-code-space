@@ -486,15 +486,15 @@ export function HomeWelcomeCard({
                   <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
                 </svg>
               </button>
-              <div className="welcome-starter-art">
-                <WelcomeStarterIllustration
-                  id={activeStarter.example.id}
-                  assistantName={resolvedAssistantName}
-                />
-              </div>
               <div className="welcome-callout-body">
                 <h3>{activeStarter.cardHeadline}</h3>
                 <p>{activeStarter.cardDescription}</p>
+                <div className="welcome-starter-art">
+                  <WelcomeStarterIllustration
+                    id={activeStarter.example.id}
+                    assistantName={resolvedAssistantName}
+                  />
+                </div>
                 <div className="welcome-callout-actions">
                   <button
                     type="button"
