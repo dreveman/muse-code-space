@@ -389,6 +389,27 @@ export function HomeWelcomeCard({
       return false;
     }
   });
+  const [companionsDismissed, setCompanionsDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:welcome-companions-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [spotifyDismissed, setSpotifyDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:welcome-spotify-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [tipsDismissed, setTipsDismissed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("muse-code-space:welcome-tips-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [animCompanionIdx, setAnimCompanionIdx] = useState(1);
 
   const recentSessions = sessions.filter((session) => !session.archived).slice(0, 5);
@@ -401,11 +422,30 @@ export function HomeWelcomeCard({
   );
   const activeStarter = starterExamples[starterIndex % Math.max(1, starterExamples.length)] ?? starterExamples[0];
   const showStarterShowcase = !examplesDismissed && Boolean(activeStarter);
+  const showCompanionCallout = !showStarterShowcase && !companionsDismissed;
 
   const dismissStarterExamples = () => {
     setExamplesDismissed(true);
     try {
       window.localStorage.setItem("muse-code-space:welcome-examples-dismissed", "1");
+    } catch { /* ignore */ }
+  };
+  const dismissCompanionCallout = () => {
+    setCompanionsDismissed(true);
+    try {
+      window.localStorage.setItem("muse-code-space:welcome-companions-dismissed", "1");
+    } catch { /* ignore */ }
+  };
+  const dismissSpotifyCallout = () => {
+    setSpotifyDismissed(true);
+    try {
+      window.localStorage.setItem("muse-code-space:welcome-spotify-dismissed", "1");
+    } catch { /* ignore */ }
+  };
+  const dismissTipsCallout = () => {
+    setTipsDismissed(true);
+    try {
+      window.localStorage.setItem("muse-code-space:welcome-tips-dismissed", "1");
     } catch { /* ignore */ }
   };
   const teamMembers = ["nova", "poppy", "tilly", "remy", "sage"]
@@ -429,7 +469,10 @@ export function HomeWelcomeCard({
 
   return (
     <div className="welcome-home-stage">
-      <section className="welcome-home-card" aria-label="Welcome to Code Space">
+      <section
+        className={`welcome-home-card${tipsDismissed ? " has-no-tips" : ""}`}
+        aria-label="Welcome to Code Space"
+      >
         <span className="companion-sr-only">Select a task to see its conversation.</span>
         <div className="welcome-home-main">
           <span className="welcome-home-eyebrow">{timeOfDayGreeting(userName)}</span>
@@ -540,8 +583,19 @@ export function HomeWelcomeCard({
                 })}
               </div>
             </div>
-          ) : (
+          ) : showCompanionCallout ? (
             <div className="welcome-callout">
+              <button
+                type="button"
+                className="welcome-callout-dismiss"
+                aria-label="Dismiss companion card"
+                title="Dismiss companion card"
+                onClick={dismissCompanionCallout}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                  <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                </svg>
+              </button>
               <div className="welcome-callout-body">
                 <h3>Work with specialized code companions</h3>
                 <p>
@@ -582,57 +636,72 @@ export function HomeWelcomeCard({
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
-          <WelcomeSpotifyCard />
+          {!spotifyDismissed && <WelcomeSpotifyCard onDismiss={dismissSpotifyCallout} />}
         </div>
 
-        <aside
-          className="welcome-home-feature"
-          aria-label="Explore Code Space features"
-          onPointerEnter={() => setHovered(true)}
-          onPointerLeave={() => setHovered(false)}
-        >
-          <div className="welcome-feature-art">
-            {feature.id === "mention" ? (
-              <MentionIllustration assistantName={resolvedAssistantName} />
-            ) : (
-              <Illustration />
-            )}
-          </div>
-          <div className="welcome-feature-copy">
-            <h3>{feature.title}</h3>
-            <p>{feature.description}</p>
-          </div>
-          <div className="welcome-feature-dots" role="tablist" aria-label="Feature slides">
-            {FEATURES.map((item, idx) => {
-              const active = idx === featureIndex;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  aria-label={item.title}
-                  className={`welcome-feature-dot${active ? " active" : ""}${hovered ? " paused" : ""}`}
-                  onClick={() => setFeatureIndex(idx)}
-                >
-                  <span className="welcome-feature-dot-track">
-                    {active && (
-                      <span
-                        key={featureIndex}
-                        className="welcome-feature-dot-fill"
-                        onAnimationEnd={() => {
-                          setFeatureIndex((current) => (current + 1) % FEATURES.length);
-                        }}
-                      />
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+        {!tipsDismissed && (
+          <aside
+            className="welcome-home-feature"
+            aria-label="Explore Code Space features"
+            onPointerEnter={() => setHovered(true)}
+            onPointerLeave={() => setHovered(false)}
+          >
+            <div className="welcome-callout welcome-starter-callout welcome-tips-callout">
+              <button
+                type="button"
+                className="welcome-callout-dismiss"
+                aria-label="Dismiss tips"
+                title="Dismiss tips"
+                onClick={dismissTipsCallout}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                  <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                </svg>
+              </button>
+              <div className="welcome-callout-body">
+                <h3>{feature.title}</h3>
+                <p>{feature.description}</p>
+                <div className="welcome-starter-art welcome-tips-art">
+                  {feature.id === "mention" ? (
+                    <MentionIllustration assistantName={resolvedAssistantName} />
+                  ) : (
+                    <Illustration />
+                  )}
+                </div>
+              </div>
+              <div className="welcome-feature-dots welcome-starter-dots" role="tablist" aria-label="Feature slides">
+                {FEATURES.map((item, idx) => {
+                  const active = idx === featureIndex;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      aria-label={item.title}
+                      className={`welcome-feature-dot${active ? " active" : ""}${hovered ? " paused" : ""}`}
+                      onClick={() => setFeatureIndex(idx)}
+                    >
+                      <span className="welcome-feature-dot-track">
+                        {active && (
+                          <span
+                            key={featureIndex}
+                            className="welcome-feature-dot-fill"
+                            onAnimationEnd={() => {
+                              setFeatureIndex((current) => (current + 1) % FEATURES.length);
+                            }}
+                          />
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </aside>
+        )}
       </section>
     </div>
   );
