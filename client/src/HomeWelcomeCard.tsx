@@ -103,7 +103,7 @@ function WelcomeStarterIllustration({
               <path d="M14.25 2.5 7.2 9.55" />
               <path d="m14.25 2.5-4.4 11.75-2.65-4.7-4.7-2.65L14.25 2.5Z" />
             </svg>
-            Tokyo Trip · May 12–18
+            <span>Tokyo Trip</span>
           </span>
           <span className="welcome-illus-live">
             <i /> @{assistantName}
@@ -113,12 +113,17 @@ function WelcomeStarterIllustration({
           <div className="welcome-starter-item-row">
             <span className="welcome-starter-badge">FLIGHT</span>
             <span className="welcome-starter-item-main">SFO → HND · NH 7</span>
-            <span className="welcome-illus-ok">✓ Confirmed</span>
+            <span className="welcome-starter-item-status ok">✓ Confirmed</span>
           </div>
           <div className="welcome-starter-item-row">
             <span className="welcome-starter-badge">HOTEL</span>
-            <span className="welcome-starter-item-main">Shibuya Stream · 5 nights</span>
-            <span className="welcome-illus-ok">✓ Confirmed</span>
+            <span className="welcome-starter-item-main">Shibuya Hotel · 5n</span>
+            <span className="welcome-starter-item-status ok">✓ Confirmed</span>
+          </div>
+          <div className="welcome-starter-item-row">
+            <span className="welcome-starter-badge">TRAIN</span>
+            <span className="welcome-starter-item-main">Narita Express · 15:40</span>
+            <span className="welcome-starter-item-status dim">Seat 8A</span>
           </div>
         </div>
       </div>
@@ -132,7 +137,7 @@ function WelcomeStarterIllustration({
             <path d="M3.25 5.25h9.5l-.75 8.25h-8l-.75-8.25Z" />
             <path d="M5.75 5.25V4a2.25 2.25 0 0 1 4.5 0v1.25" />
           </svg>
-          Shopping &amp; Deliveries
+          <span>Shopping List</span>
         </span>
         <span className="welcome-illus-live">
           <i /> @{assistantName}
@@ -141,13 +146,18 @@ function WelcomeStarterIllustration({
       <div className="welcome-illus-body welcome-starter-list-body">
         <div className="welcome-starter-item-row">
           <span className="welcome-starter-badge">BUY</span>
-          <span className="welcome-starter-item-main">Espresso beans · Whole Foods</span>
-          <span className="welcome-illus-dim">@{assistantName}</span>
+          <span className="welcome-starter-item-main">Espresso beans</span>
+          <span className="welcome-starter-item-status dim">@{assistantName}</span>
         </div>
         <div className="welcome-starter-item-row">
-          <span className="welcome-starter-badge live">SHIPPED</span>
-          <span className="welcome-starter-item-main">Running shoes · Arrives Thu</span>
-          <span className="welcome-illus-ok">● In transit</span>
+          <span className="welcome-starter-badge live">SHIP</span>
+          <span className="welcome-starter-item-main">Running shoes</span>
+          <span className="welcome-starter-item-status ok">● Thu</span>
+        </div>
+        <div className="welcome-starter-item-row">
+          <span className="welcome-starter-badge">BUY</span>
+          <span className="welcome-starter-item-main">Oat milk · 2 cartons</span>
+          <span className="welcome-starter-item-status dim">Weekly</span>
         </div>
       </div>
     </div>
@@ -700,10 +710,11 @@ export function HomeWelcomeCard({
 
           type CardEntry = { id: string; height: number; preferredPane: "left" | "right"; node: ReactNode };
           const entries: CardEntry[] = [];
-          if (starterCardNode) entries.push({ id: "starter", height: 274, preferredPane: "left", node: starterCardNode });
-          if (companionCardNode) entries.push({ id: "companions", height: 186, preferredPane: "left", node: companionCardNode });
-          if (tipsCardNode) entries.push({ id: "tips", height: 238, preferredPane: "right", node: tipsCardNode });
-          if (spotifyCardNode) entries.push({ id: "spotify", height: 132, preferredPane: "left", node: spotifyCardNode });
+          if (starterCardNode) entries.push({ id: "starter", height: 318, preferredPane: "left", node: starterCardNode });
+          if (companionCardNode) entries.push({ id: "companions", height: 190, preferredPane: "left", node: companionCardNode });
+          // Spotify has higher priority than Tips and shows before Tips
+          if (spotifyCardNode) entries.push({ id: "spotify", height: 136, preferredPane: "right", node: spotifyCardNode });
+          if (tipsCardNode) entries.push({ id: "tips", height: 282, preferredPane: "right", node: tipsCardNode });
 
           const canUseTwoPanes = stageSize.width >= 596 && entries.length >= 2;
           const recentHeight = recentSessions.length > 0 ? recentSessions.length * 38 + 12 : 0;
