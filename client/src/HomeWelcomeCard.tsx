@@ -710,16 +710,16 @@ export function HomeWelcomeCard({
 
           type CardEntry = { id: string; height: number; preferredPane: "left" | "right"; node: ReactNode };
           const entries: CardEntry[] = [];
-          if (starterCardNode) entries.push({ id: "starter", height: 318, preferredPane: "left", node: starterCardNode });
-          if (companionCardNode) entries.push({ id: "companions", height: 190, preferredPane: "left", node: companionCardNode });
-          // Spotify has higher priority than Tips and shows before Tips
-          if (spotifyCardNode) entries.push({ id: "spotify", height: 136, preferredPane: "right", node: spotifyCardNode });
-          if (tipsCardNode) entries.push({ id: "tips", height: 282, preferredPane: "right", node: tipsCardNode });
+          if (starterCardNode) entries.push({ id: "starter", height: 308, preferredPane: "left", node: starterCardNode });
+          if (companionCardNode) entries.push({ id: "companions", height: 186, preferredPane: "left", node: companionCardNode });
+          // Spotify has higher priority than Tips and stacks under the Example card on desktop
+          if (spotifyCardNode) entries.push({ id: "spotify", height: 112, preferredPane: "left", node: spotifyCardNode });
+          if (tipsCardNode) entries.push({ id: "tips", height: 280, preferredPane: "right", node: tipsCardNode });
 
           const canUseTwoPanes = stageSize.width >= 596 && entries.length >= 2;
-          const recentHeight = recentSessions.length > 0 ? recentSessions.length * 38 + 12 : 0;
+          const recentHeight = recentSessions.length > 0 ? recentSessions.length * 38 + 10 : 0;
           // Budget below the header that fits inside the stage without scrolling
-          const columnBudget = Math.max(240, stageSize.height - 196);
+          const columnBudget = Math.max(240, stageSize.height - (canUseTwoPanes ? 148 : 186));
 
           const leftVisible: ReactNode[] = [];
           const rightVisible: ReactNode[] = [];
