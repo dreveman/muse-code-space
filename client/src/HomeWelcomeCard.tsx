@@ -9,7 +9,10 @@ import { sessionTaskTitle } from "./sessionList";
 import { SmartLogIcon } from "./SmartLogPanel";
 import { WelcomeSpotifyCard } from "./SpotifyMusic";
 import {
+  DISMISSED_ITEMS_EVENT,
+  isUiItemDismissed,
   resolveStarterExamplesForAvailableCompanions,
+  setUiItemDismissed,
   type StarterExampleDefinition,
   type StarterExampleId,
 } from "./starterExamples";
@@ -393,34 +396,10 @@ export function HomeWelcomeCard({
   const [hovered, setHovered] = useState(false);
   const [starterIndex, setStarterIndex] = useState(0);
   const [starterHovered, setStarterHovered] = useState(false);
-  const [examplesDismissed, setExamplesDismissed] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem("muse-code-space:welcome-examples-dismissed") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [companionsDismissed, setCompanionsDismissed] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem("muse-code-space:welcome-companions-dismissed") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [spotifyDismissed, setSpotifyDismissed] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem("muse-code-space:welcome-spotify-dismissed") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [tipsDismissed, setTipsDismissed] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem("muse-code-space:welcome-tips-dismissed") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [examplesDismissed, setExamplesDismissed] = useState<boolean>(() => isUiItemDismissed("examples"));
+  const [companionsDismissed, setCompanionsDismissed] = useState<boolean>(() => isUiItemDismissed("companions"));
+  const [spotifyDismissed, setSpotifyDismissed] = useState<boolean>(() => isUiItemDismissed("spotify"));
+  const [tipsDismissed, setTipsDismissed] = useState<boolean>(() => isUiItemDismissed("tips"));
   const [moreOpen, setMoreOpen] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const [stageSize, setStageSize] = useState<{ width: number; height: number }>(() => ({
@@ -428,6 +407,17 @@ export function HomeWelcomeCard({
     height: typeof window !== "undefined" ? window.innerHeight : 700,
   }));
   const [animCompanionIdx, setAnimCompanionIdx] = useState(1);
+
+  useEffect(() => {
+    const syncDismissed = () => {
+      setExamplesDismissed(isUiItemDismissed("examples"));
+      setCompanionsDismissed(isUiItemDismissed("companions"));
+      setSpotifyDismissed(isUiItemDismissed("spotify"));
+      setTipsDismissed(isUiItemDismissed("tips"));
+    };
+    window.addEventListener(DISMISSED_ITEMS_EVENT, syncDismissed);
+    return () => window.removeEventListener(DISMISSED_ITEMS_EVENT, syncDismissed);
+  }, []);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -444,7 +434,7 @@ export function HomeWelcomeCard({
     return () => ro.disconnect();
   }, []);
 
-  const recentSessions = sessions.filter((session) => !session.archived).slice(0, 3);
+  const recentSessions = sessions.filter((session) => !session.archived).slice(0, 5);
   const feature = FEATURES[featureIndex] ?? FEATURES[0];
   const Illustration = feature.Illustration;
   const resolvedAssistantName = assistantName?.trim() || "Jolly";
@@ -458,27 +448,19 @@ export function HomeWelcomeCard({
 
   const dismissStarterExamples = () => {
     setExamplesDismissed(true);
-    try {
-      window.localStorage.setItem("muse-code-space:welcome-examples-dismissed", "1");
-    } catch { /* ignore */ }
+    setUiItemDismissed("examples", true);
   };
   const dismissCompanionCallout = () => {
     setCompanionsDismissed(true);
-    try {
-      window.localStorage.setItem("muse-code-space:welcome-companions-dismissed", "1");
-    } catch { /* ignore */ }
+    setUiItemDismissed("companions", true);
   };
   const dismissSpotifyCallout = () => {
     setSpotifyDismissed(true);
-    try {
-      window.localStorage.setItem("muse-code-space:welcome-spotify-dismissed", "1");
-    } catch { /* ignore */ }
+    setUiItemDismissed("spotify", true);
   };
   const dismissTipsCallout = () => {
     setTipsDismissed(true);
-    try {
-      window.localStorage.setItem("muse-code-space:welcome-tips-dismissed", "1");
-    } catch { /* ignore */ }
+    setUiItemDismissed("tips", true);
   };
   const teamMembers = ["nova", "poppy", "tilly", "remy", "sage"]
     .map((id) => companions.find((c) => c.id === id))

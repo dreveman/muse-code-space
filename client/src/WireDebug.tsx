@@ -5,6 +5,12 @@ import { api } from "./api";
 import { applyUiTheme, loadUiTheme, type ColorMode, type UiTheme } from "./colorMode";
 import { loadDeviceQuirksMode, saveDeviceQuirksMode, type DeviceQuirksMode } from "./deviceQuirks";
 import { RelayDebugPanel } from "./RelayDebug";
+import {
+  DISMISSED_ITEMS_EVENT,
+  getDismissedUiItems,
+  setUiItemDismissed,
+  type DismissibleUiItemMeta,
+} from "./starterExamples";
 
 type WireEntry = {
   at: string;
@@ -180,6 +186,7 @@ export function SessionMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [uiTheme, setUiTheme] = useState<UiTheme>(loadUiTheme);
   const [quirksMode, setQuirksMode] = useState<DeviceQuirksMode>(loadDeviceQuirksMode);
+  const [dismissedItems, setDismissedItems] = useState<DismissibleUiItemMeta[]>(getDismissedUiItems);
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({ top: 48, right: 12, width: 560 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -215,11 +222,14 @@ export function SessionMenu({
   useEffect(() => {
     const onThemeChange = () => setUiTheme(loadUiTheme());
     const onQuirksChange = () => setQuirksMode(loadDeviceQuirksMode());
+    const onDismissedChange = () => setDismissedItems(getDismissedUiItems());
     window.addEventListener("muse-code-space:ui-theme", onThemeChange);
     window.addEventListener("muse-code-space:device-quirks", onQuirksChange);
+    window.addEventListener(DISMISSED_ITEMS_EVENT, onDismissedChange);
     return () => {
       window.removeEventListener("muse-code-space:ui-theme", onThemeChange);
       window.removeEventListener("muse-code-space:device-quirks", onQuirksChange);
+      window.removeEventListener(DISMISSED_ITEMS_EVENT, onDismissedChange);
     };
   }, []);
 
@@ -341,6 +351,31 @@ export function SessionMenu({
               </details>
             </>
           )}
+          <div className="session-menu-separator" role="separator" />
+          <details className="session-menu-section" role="group" aria-label="Dismissed items">
+            <summary className="session-menu-heading">
+              <span>Dismissed items{dismissedItems.length > 0 ? ` (${dismissedItems.length})` : ""}</span>
+              <span className="session-menu-chevron" aria-hidden="true">›</span>
+            </summary>
+            {dismissedItems.length > 0 ? (
+              dismissedItems.map((item) => (
+                <ActionMenuItem
+                  key={`restore-${item.id}`}
+                  action={{
+                    key: `restore-${item.id}`,
+                    label: `Restore ${item.label.toLowerCase()}`,
+                    description: item.description,
+                    onActivate: () => setUiItemDismissed(item.id, false),
+                  }}
+                  onDone={() => {}}
+                />
+              ))
+            ) : (
+              <div className="wire-settings-empty-hint">
+                No dismissed cards or buttons.
+              </div>
+            )}
+          </details>
           <div className="session-menu-separator" role="separator" />
           <details className="session-menu-section" role="group" aria-label="Color mode">
             <summary className="session-menu-heading">Color mode<span className="session-menu-chevron" aria-hidden="true">›</span></summary>

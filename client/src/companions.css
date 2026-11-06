@@ -492,7 +492,9 @@
 .companion-create-soul-text { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--dim); font: 11px/1.7 var(--mono); resize: vertical; }
 .companion-soul-preview { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); font: 11px/1.7 var(--mono); }
 .companion-create-actions { margin-top: auto; }
-.create-companion-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 8px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--dim); text-align: left; cursor: pointer; font: inherit; }
+.create-companion-row-wrap { position: relative; width: 100%; }
+.create-companion-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 8px 30px 8px 8px; border: 1px dashed var(--border); border-radius: 10px; background: transparent; color: var(--dim); text-align: left; cursor: pointer; font: inherit; }
+.create-companion-dismiss { top: 6px; right: 6px; }
 .create-companion-row:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
 .create-companion-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .create-companion-row[aria-current] { color: var(--text); border-style: solid; }
