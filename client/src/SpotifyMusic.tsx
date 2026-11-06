@@ -814,7 +814,7 @@ export function CompanionMusicSection({ companion }: { companion: MusicCompanion
   );
 }
 
-export function WelcomeSpotifyCard() {
+export function WelcomeSpotifyCard({ onDismiss }: { onDismiss?: () => void } = {}) {
   const queryClient = useQueryClient();
   const statusQuery = useSpotifyStatus();
   const connected = statusQuery.data?.connected === true;
@@ -867,6 +867,19 @@ export function WelcomeSpotifyCard() {
 
   return (
     <div ref={cardRef} className="welcome-callout welcome-spotify-callout">
+      {onDismiss && (
+        <button
+          type="button"
+          className="welcome-callout-dismiss"
+          aria-label="Dismiss Spotify card"
+          title="Dismiss Spotify card"
+          onClick={onDismiss}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+            <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+          </svg>
+        </button>
+      )}
       <div className="welcome-callout-body">
         <h3>Tune in to your companion’s playlist</h3>
         <p>
