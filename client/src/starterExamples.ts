@@ -3,6 +3,89 @@ export type StarterCompanionRef = {
   name: string;
 };
 
+export type DismissibleUiItemId =
+  | "examples"
+  | "companions"
+  | "spotify"
+  | "tips"
+  | "add-companion";
+
+export type DismissibleUiItemMeta = {
+  id: DismissibleUiItemId;
+  storageKey: string;
+  label: string;
+  description: string;
+};
+
+export const DISMISSIBLE_UI_ITEMS: readonly DismissibleUiItemMeta[] = [
+  {
+    id: "examples",
+    storageKey: "muse-code-space:welcome-examples-dismissed",
+    label: "Starter examples card",
+    description: "Show the starter project examples on the welcome card",
+  },
+  {
+    id: "companions",
+    storageKey: "muse-code-space:welcome-companions-dismissed",
+    label: "Pick a companion card",
+    description: "Show the companion picker card on the welcome card",
+  },
+  {
+    id: "spotify",
+    storageKey: "muse-code-space:welcome-spotify-dismissed",
+    label: "Spotify playlist card",
+    description: "Show the companion playlist card on the welcome card",
+  },
+  {
+    id: "tips",
+    storageKey: "muse-code-space:welcome-tips-dismissed",
+    label: "Feature tips card",
+    description: "Show the Code Space tips card on the welcome card",
+  },
+  {
+    id: "add-companion",
+    storageKey: "muse-code-space:hide-add-companion",
+    label: "Add companion button",
+    description: "Show the Add companion button in the sidebar",
+  },
+] as const;
+
+export const DISMISSED_ITEMS_EVENT = "muse-code-space:dismissed-items";
+
+export function isUiItemDismissed(id: DismissibleUiItemId): boolean {
+  const meta = DISMISSIBLE_UI_ITEMS.find((item) => item.id === id);
+  if (!meta || typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem(meta.storageKey);
+    if (raw !== null) return raw === "1" || raw === "true";
+    if (id === "add-companion") {
+      return window.localStorage.getItem("muse-code-space:show-add-companion") === "false";
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function setUiItemDismissed(id: DismissibleUiItemId, dismissed: boolean): void {
+  const meta = DISMISSIBLE_UI_ITEMS.find((item) => item.id === id);
+  if (!meta || typeof window === "undefined") return;
+  try {
+    if (id === "add-companion") {
+      window.localStorage.setItem(meta.storageKey, String(dismissed));
+    } else {
+      window.localStorage.setItem(meta.storageKey, dismissed ? "1" : "0");
+    }
+  } catch { /* ignore */ }
+  if (typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new Event(DISMISSED_ITEMS_EVENT));
+  }
+}
+
+export function getDismissedUiItems(): DismissibleUiItemMeta[] {
+  return DISMISSIBLE_UI_ITEMS.filter((item) => isUiItemDismissed(item.id));
+}
+
 export type StarterExampleId = "game" | "trip-overview" | "shopping-list";
 
 export type StarterExampleDefinition = {

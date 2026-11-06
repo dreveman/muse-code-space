@@ -10,7 +10,10 @@ import { parseAccomplishmentNotice } from "../../server/src/companionStatistics"
 import { CreateCompanionCard, type CreateCompanionInput } from "./CreateCompanionCard";
 import { HomeWelcomeCard } from "./HomeWelcomeCard";
 import {
+  DISMISSED_ITEMS_EVENT,
   buildStarterPrompt,
+  isUiItemDismissed,
+  setUiItemDismissed,
   stripStarterInstructions,
   type StarterExampleDefinition,
 } from "./starterExamples";
@@ -137,8 +140,6 @@ const SHOW_REASONING_KEY = "muse-code-space:show-reasoning";
 const EXPAND_TOOLS_KEY = "muse-code-space:expand-tools";
 const RAW_TOOL_OUTPUT_KEY = "muse-code-space:raw-tool-output";
 const WORKING_DETAILS_KEY = "muse-code-space:working-details";
-const SHOW_ADD_COMPANION_KEY = "muse-code-space:show-add-companion";
-const HIDE_ADD_COMPANION_KEY = "muse-code-space:hide-add-companion";
 const SORT_MODE_KEY = "muse-code-space:sort-mode";
 // Home folder on the pilot's machine, from the server's getHostConfig
 // (the VM is /home/hatch; a pilot on a Mac is /Users/<you>). Module-level so
@@ -1898,14 +1899,12 @@ export function App() {
   const [showWorkingDetails, setShowWorkingDetails] = useState(() => {
     try { return window.localStorage.getItem(WORKING_DETAILS_KEY) === "true"; } catch { return false; }
   });
-  const [hideAddCompanion, setHideAddCompanion] = useState(() => {
-    try {
-      const hidden = window.localStorage.getItem(HIDE_ADD_COMPANION_KEY);
-      if (hidden !== null) return hidden === "true";
-      // Carry over the earlier show-toggle's choice, inverted.
-      return window.localStorage.getItem(SHOW_ADD_COMPANION_KEY) === "false";
-    } catch { return false; }
-  });
+  const [hideAddCompanion, setHideAddCompanion] = useState(() => isUiItemDismissed("add-companion"));
+  useEffect(() => {
+    const syncDismissed = () => setHideAddCompanion(isUiItemDismissed("add-companion"));
+    window.addEventListener(DISMISSED_ITEMS_EVENT, syncDismissed);
+    return () => window.removeEventListener(DISMISSED_ITEMS_EVENT, syncDismissed);
+  }, []);
   const [colorMode, setColorMode] = useState<ColorMode>(loadColorMode);
   const voiceRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const terminalBodyRef = useRef<HTMLDivElement>(null);
@@ -2095,9 +2094,6 @@ export function App() {
   useEffect(() => {
     try { window.localStorage.setItem(WORKING_DETAILS_KEY, String(showWorkingDetails)); } catch { /* webview storage can be disabled */ }
   }, [showWorkingDetails]);
-  useEffect(() => {
-    try { window.localStorage.setItem(HIDE_ADD_COMPANION_KEY, String(hideAddCompanion)); } catch { /* webview storage can be disabled */ }
-  }, [hideAddCompanion]);
   useEffect(() => {
     try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch { /* webview storage can be disabled */ }
   }, [sortMode]);
@@ -3845,20 +3841,20 @@ export function App() {
   };
 
   const sendDraftPrompt = async (
-    targetDraft: QueuedDraft["draft"],
+    draft: QueuedDraft["draft"],
     prompt: string,
     rawText: string,
     submittedAttachments: readonly ComposerAttachment[],
     fromComposer: boolean,
   ) => {
-    const workspace = resolveWorkspaceRoot(targetDraft.workspaceRoot);
+    const workspace = resolveWorkspaceRoot(draft.workspaceRoot);
     if (!workspace.ok) {
       setCreateError(workspace.error);
       return;
     }
     const queued: QueuedDraft = {
       kind: "draft",
-      draft: targetDraft,
+      draft,
       workspacePath: workspace.path,
       prompt,
       ...(submittedAttachments.length > 0 ? { attachments: [...submittedAttachments] } : {}),
@@ -4159,13 +4155,6 @@ export function App() {
       description: "Show tool previews automatically",
       checked: expandTools,
       onActivate: () => setExpandTools((value) => !value),
-    },
-    {
-      key: "add-companion",
-      label: "Hide add companion button",
-      description: "Hide the button below the companions list",
-      checked: hideAddCompanion,
-      onActivate: () => setHideAddCompanion((hidden) => !hidden),
     },
     {
       key: "working-details",
@@ -5106,11 +5095,27 @@ export function App() {
                       }} />
                   ))}
                   {!sessionQuery.trim() && !hideAddCompanion && customCompanions.length < CUSTOM_COMPANION_LIMIT && (
-                    <button type="button" className="create-companion-row" title="Add companion" aria-current={createCompanionOpen ? "true" : undefined}
-                      disabled={creating || queuedPrompt?.kind === "draft"} onClick={openCreateCompanion}>
-                      <span className="create-companion-plus" aria-hidden="true">+</span>
-                      <span><strong>Add companion</strong><small>Design your own</small></span>
-                    </button>
+                    <div className="create-companion-row-wrap">
+                      <button type="button" className="create-companion-row" title="Add companion" aria-current={createCompanionOpen ? "true" : undefined}
+                        disabled={creating || queuedPrompt?.kind === "draft"} onClick={openCreateCompanion}>
+                        <span className="create-companion-plus" aria-hidden="true">+</span>
+                        <span><strong>Add companion</strong><small>Design your own</small></span>
+                      </button>
+                      <button
+                        type="button"
+                        className="welcome-callout-dismiss create-companion-dismiss"
+                        aria-label="Dismiss add companion button"
+                        title="Dismiss add companion button"
+                        onClick={() => {
+                          setHideAddCompanion(true);
+                          setUiItemDismissed("add-companion", true);
+                        }}
+                      >
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+                          <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                        </svg>
+                      </button>
+                    </div>
                   )}
                   {matchingAvailableCompanions.length === 0 && <p className="filter-empty">
                     {sessionQuery.trim() ? "No matching available companions." : "Everyone is on a task."}

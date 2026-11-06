@@ -353,7 +353,7 @@ button { color: inherit; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 36px 24px 24px;
+  padding: 54px 24px 16px;
   mask-image:
     linear-gradient(
       to bottom,
@@ -2315,6 +2315,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .console-layout.sidebar-collapsed .companion-task-list .session-row-select:has(.companion-task-avatar) > .status-dot { margin-bottom: 2px; margin-right: 2px; }
   .console-layout.sidebar-collapsed .companion-task-list .session-row-select:has(.companion-task-avatar) > .sidebar-task-tuned-badge { margin-top: 2px; margin-right: 2px; }
   .console-layout.sidebar-collapsed .companion-contact { width: 52px; height: 52px; padding: 4px; border-radius: 50%; justify-content: center; }
+  .console-layout.sidebar-collapsed .available-companions .create-companion-row-wrap { width: 52px; height: 52px; }
+  .console-layout.sidebar-collapsed .available-companions .create-companion-dismiss { display: none; }
   .console-layout.sidebar-collapsed .available-companions .create-companion-row { width: 52px; height: 52px; padding: 4px; border-radius: 50%; justify-content: center; }
   .console-layout.sidebar-collapsed .available-companions .create-companion-row > span:last-child { display: none; }
   .detail-pane { min-height: 0; height: 100%; display: flex; flex-direction: column; }

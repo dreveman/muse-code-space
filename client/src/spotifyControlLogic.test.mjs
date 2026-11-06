@@ -117,7 +117,7 @@ test("music section renders genre and playlist, and Tune in needs a playlist and
   assert.ok(music.includes("Spotify didn’t start playing"), "tuneIn surfaces a helpful error if no Spotify device started playing");
 
   const welcome = readFileSync(new URL("./HomeWelcomeCard.tsx", import.meta.url), "utf8");
-  assert.ok(welcome.includes("<WelcomeSpotifyCard />"), "HomeWelcomeCard renders WelcomeSpotifyCard");
+  assert.ok(welcome.includes("<WelcomeSpotifyCard"), "HomeWelcomeCard renders WelcomeSpotifyCard");
   assert.ok(welcome.includes("sessions.filter((session) => !session.archived).slice(0, 5)"), "HomeWelcomeCard only shows active (non-archived) conversations");
 
   const themeCss = readFileSync(new URL("./theme.css", import.meta.url), "utf8");
