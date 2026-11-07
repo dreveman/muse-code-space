@@ -157,15 +157,18 @@ Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\
    - \`"Neon Space"\` — \`"Dark starfield backdrop with glowing neon accents"\`
 3. \`kind: "embed"\`, \`header: "Character"\`, \`question: "Want to sketch your hero character or an obstacle on the Scratchpad? (Optional — skip if you’d like me to design it!)"\`, \`required: false\`, \`embed: { type: "scratchpad" }\`.
 
-STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD, OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`), AND WAIT FOR USER APPROVAL:
 After receiving the user's answers:
 - Build a complete, polished, playable web game in your workspace (with touch + keyboard controls, score & high-score tracking, sound effects via Web Audio API, and smooth animations; if the user drew a sketch on the Scratchpad, incorporate their drawing as the hero sprite or emblem).
 - Structure it as a Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) when persistence (such as high scores or trivia packs in \`app.db\`) is used, or with a local dev server.
 - Start the dev server in the background, verify it responds over HTTP, and call \`mcp__code_space__StartPreview\` so the live **Preview** tab opens automatically for the user to play right inside Code Space.
+- **Do NOT message ${assistantName} to publish the game yet.** Invite the user to play it in the **Preview** tab, offer to make any tweaks they want, and tell them to let you know when they’re ready to publish it to their Muse app.
 
-STEP 4 — DEPLOY & CONNECT WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
-- Once the game is live in Preview, call \`mcp__code_space__SendMessageToMuseAssistant\` to ask ${assistantName} to stage and publish the game as a Hatch Space web artifact from your workspace directory (and if the user chose *Muse Trivia Challenge*, ask ${assistantName} to seed personalized trivia questions into the Space via \`artifact.invoke_action\`).
-- Tell the user their game is ready to play in the **Preview** tab and that you’ve asked ${assistantName} to publish it as a Space for them.
+STEP 4 — PUBLISH WHEN THE USER SAYS IT'S READY (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Only after the user tells you they are happy with the preview and ready to publish:
+1. Call \`mcp__code_space__SendMessageToMuseAssistant\` to ask ${assistantName} to stage and publish the game as a Hatch Space web artifact from your workspace directory (and if the user chose *Muse Trivia Challenge*, ask ${assistantName} to seed personalized trivia questions into the Space via \`artifact.invoke_action\`).
+2. Because ${assistantName} checks companion messages periodically in the background, give the user a short message they can send directly to ${assistantName} in the Muse app to install it immediately (replacing \`<YourName>\` with your companion name):
+   > \`Check your messages from <YourName> who finished my game that is ready to be published.\`
 `,
   },
   {
@@ -200,17 +203,20 @@ Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\
    - \`"Timeline + readiness checklist"\` — \`"Full booking timeline paired with a pre-trip checklist and missing-booking alerts"\`
 3. \`kind: "text"\`, \`header: "Details"\`, \`question: "Any upcoming destination or preference to start with? (Optional — ${assistantName} will also populate bookings automatically from your email inbox.)"\`, \`required: false\`, \`placeholder: "e.g. Tokyo in May, window seats, or leave blank"\`.
 
-STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD, OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`), AND WAIT FOR USER APPROVAL:
 After receiving the user's answers:
 - Build a complete Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) in your workspace.
 - Include durable SQLite tables in \`server/src/schema.ts\` for \`trips\` (destination, start/end dates, cover theme, notes) and \`bookings\` (trip_id, category: flight/hotel/car/train/dining/activity, provider, title, confirmation_code, start_time, end_time, location, status: confirmed/check-in_ready/attention, source_email_subject) and expose clean server actions (\`listTrips\`, \`upsertTrip\`, \`upsertBooking\`, \`deleteBooking\`) in \`server/src/actions.ts\`.
 - Seed realistic sample bookings (or the destination the user mentioned) so the timeline looks rich immediately, start the local dev server, and call \`mcp__code_space__StartPreview\` so the **Preview** tab opens automatically.
+- **Do NOT message ${assistantName} to publish the app yet.** Invite the user to explore the Trip Overview in the **Preview** tab, offer to adjust anything they’d like, and tell them to let you know when it’s ready to publish to their Muse app.
 
-STEP 4 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
-- Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
-  1. The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
-  2. The exact \`artifact.invoke_action\` action names (\`upsertTrip\`, \`upsertBooking\`) and payload fields so ${assistantName} can scan the user's email inbox for flight, hotel, car rental, and reservation confirmations and populate the Trip Overview automatically.
-- Let the user know they can explore the live **Preview** tab right now while ${assistantName} publishes the Space and syncs their travel bookings from their inbox.
+STEP 4 — PUBLISH & SYNC WHEN THE USER SAYS IT'S READY (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Only after the user tells you they are happy with the preview and ready to publish:
+1. Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
+   - The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
+   - The exact \`artifact.invoke_action\` action names (\`upsertTrip\`, \`upsertBooking\`) and payload fields so ${assistantName} can scan the user's email inbox for flight, hotel, car rental, and reservation confirmations and populate the Trip Overview automatically.
+2. Because ${assistantName} checks companion messages periodically in the background, give the user a short message they can send directly to ${assistantName} in the Muse app to install and sync it immediately (replacing \`<YourName>\` with your companion name):
+   > \`Check your messages from <YourName> who finished my trip overview page that is ready to be published.\`
 `,
   },
   {
@@ -245,17 +251,20 @@ Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\
    - \`"Remember brand & store preferences"\` — \`"Keep my preferred brands, sizes, and favorite stores attached to each item"\`
 3. \`kind: "text"\`, \`header: "Preferences"\`, \`question: "Any favorite stores, recurring items, or personal preferences to start with? (Optional)"\`, \`required: false\`, \`placeholder: "e.g. Whole Foods, oat milk, running shoes, or leave blank"\`.
 
-STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD, OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`), AND WAIT FOR USER APPROVAL:
 After receiving the user's answers:
 - Build a complete Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) in your workspace.
 - Include durable SQLite tables in \`server/src/schema.ts\` for \`shopping_items\` (name, category, preferred_store, preferred_brand, notes, priority, status: to_buy/ordered/bought, added_by: user/muse) and \`shipments\` (item_name, merchant, carrier, tracking_number, tracking_url, status: ordered/shipped/out_for_delivery/delivered, estimated_delivery) plus \`preferences\` (key, value), and expose server actions (\`listShoppingData\`, \`upsertShoppingItem\`, \`toggleShoppingItem\`, \`upsertShipment\`, \`upsertPreference\`) in \`server/src/actions.ts\`.
 - Seed initial items (including any stores/items the user mentioned), start the local dev server, and call \`mcp__code_space__StartPreview\` so the **Preview** tab opens automatically.
+- **Do NOT message ${assistantName} to publish the app yet.** Invite the user to try their Dynamic Shopping List in the **Preview** tab, offer to tweak anything they want, and tell them to let you know when it’s ready to publish to their Muse app.
 
-STEP 4 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
-- Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
-  1. The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
-  2. The exact \`artifact.invoke_action\` action names (\`upsertShoppingItem\`, \`upsertShipment\`, \`upsertPreference\`) so ${assistantName} can populate active shipments from order/shipping emails and add/update shopping list items whenever the user asks ${assistantName}.
-- Let the user know they can try their Dynamic Shopping List in the **Preview** tab right now while ${assistantName} publishes the Space and connects their order updates.
+STEP 4 — PUBLISH & SYNC WHEN THE USER SAYS IT'S READY (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Only after the user tells you they are happy with the preview and ready to publish:
+1. Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
+   - The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
+   - The exact \`artifact.invoke_action\` action names (\`upsertShoppingItem\`, \`upsertShipment\`, \`upsertPreference\`) so ${assistantName} can populate active shipments from order/shipping emails and add/update shopping list items whenever the user asks ${assistantName}.
+2. Because ${assistantName} checks companion messages periodically in the background, give the user a short message they can send directly to ${assistantName} in the Muse app to install and connect it immediately (replacing \`<YourName>\` with your companion name):
+   > \`Check your messages from <YourName> who finished my shopping list that is ready to be published.\`
 `,
   },
 ] as const;

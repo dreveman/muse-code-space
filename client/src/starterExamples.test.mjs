@@ -40,6 +40,8 @@ test("buildStarterPrompt injects full playbook while stripStarterInstructions an
     assert.ok(prompt.includes("keep an eye on your session and unblock or give you a kick if you get stuck"));
     assert.ok(prompt.includes("mcp__code_space__AskUserRichForm"));
     assert.ok(prompt.includes("mcp__code_space__StartPreview"));
+    assert.ok(prompt.includes("WAIT FOR USER APPROVAL"));
+    assert.ok(prompt.includes("that is ready to be published."));
     assert.ok(prompt.includes("mcp__code_space__SendMessageToMuseAssistant"));
     assert.equal(stripStarterInstructions(prompt), example.visiblePrompt);
     assert.equal(

@@ -1646,7 +1646,7 @@ async function runTurn(session: Session, text: string) {
           item: {
             kind: "agentMessage",
             status: "completed",
-            text: `Awesome choices! I’ve built your **${title.replace(/^Design your /, "")}** and opened it in the **Preview** tab, and I’ve messaged **@${assistant.name}** to publish it as a Space for you.`,
+            text: `Awesome choices! I’ve built your **${title.replace(/^Design your /, "")}** and opened it in the **Preview** tab. Try it out and let me know if you’d like any changes, or tell me when it’s ready to publish to **@${assistant.name}**!`,
           },
         });
       });
