@@ -142,8 +142,11 @@ CRITICAL COMMUNICATION RULES:
 - Never use programming jargon (do not mention TypeScript, React, Drizzle, SQLite, schemas, ports, bash commands, or file paths) in your messages or questions.
 - Keep your tone warm, encouraging, and focused on game design, fun, and visuals.
 
-STEP 1 — INTERVIEW THE USER FIRST (\`mcp__code_space__AskUserRichForm\`):
-Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
+STEP 1 — NOTIFY ${assistantName.toUpperCase()} FIRST (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Before starting the interview, immediately call \`mcp__code_space__SendMessageToMuseAssistant\` (\`to: "${assistantName}"\`) to let ${assistantName} know you’ve been asked to build a starter Space game for the user, and ask ${assistantName} to keep an eye on your session and unblock or give you a kick if you get stuck.
+
+STEP 2 — INTERVIEW THE USER (\`mcp__code_space__AskUserRichForm\`):
+Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
 1. \`kind: "choice"\`, \`header: "Game"\`, \`question: "What kind of game should we build?"\`:
    - \`"Muse Jump"\` — \`"Fast endless runner (like the Chrome Dino game) where you jump and duck past obstacles"\`
    - \`"Muse Trivia Challenge"\` — \`"Interactive trivia game with custom questions powered by ${assistantName}"\`
@@ -154,13 +157,13 @@ Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` w
    - \`"Neon Space"\` — \`"Dark starfield backdrop with glowing neon accents"\`
 3. \`kind: "embed"\`, \`header: "Character"\`, \`question: "Want to sketch your hero character or an obstacle on the Scratchpad? (Optional — skip if you’d like me to design it!)"\`, \`required: false\`, \`embed: { type: "scratchpad" }\`.
 
-STEP 2 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
 After receiving the user's answers:
 - Build a complete, polished, playable web game in your workspace (with touch + keyboard controls, score & high-score tracking, sound effects via Web Audio API, and smooth animations; if the user drew a sketch on the Scratchpad, incorporate their drawing as the hero sprite or emblem).
 - Structure it as a Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) when persistence (such as high scores or trivia packs in \`app.db\`) is used, or with a local dev server.
 - Start the dev server in the background, verify it responds over HTTP, and call \`mcp__code_space__StartPreview\` so the live **Preview** tab opens automatically for the user to play right inside Code Space.
 
-STEP 3 — DEPLOY & CONNECT WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
+STEP 4 — DEPLOY & CONNECT WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
 - Once the game is live in Preview, call \`mcp__code_space__SendMessageToMuseAssistant\` to ask ${assistantName} to stage and publish the game as a Hatch Space web artifact from your workspace directory (and if the user chose *Muse Trivia Challenge*, ask ${assistantName} to seed personalized trivia questions into the Space via \`artifact.invoke_action\`).
 - Tell the user their game is ready to play in the **Preview** tab and that you’ve asked ${assistantName} to publish it as a Space for them.
 `,
@@ -182,8 +185,11 @@ CRITICAL COMMUNICATION RULES:
 - Never use programming jargon (do not mention TypeScript, React, Drizzle, SQLite, schemas, ports, bash commands, or file paths) in your messages or questions.
 - Keep your tone calm, clear, and focused on helping the user feel confident and organized about their flights, hotels, and bookings.
 
-STEP 1 — INTERVIEW THE USER FIRST (\`mcp__code_space__AskUserRichForm\`):
-Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
+STEP 1 — NOTIFY ${assistantName.toUpperCase()} FIRST (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Before starting the interview, immediately call \`mcp__code_space__SendMessageToMuseAssistant\` (\`to: "${assistantName}"\`) to let ${assistantName} know you’ve been asked to build a starter Trip Overview app for the user, and ask ${assistantName} to keep an eye on your session and unblock or give you a kick if you get stuck.
+
+STEP 2 — INTERVIEW THE USER (\`mcp__code_space__AskUserRichForm\`):
+Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
 1. \`kind: "choice"\`, \`header: "Trips"\`, \`question: "Which trips should your overview highlight first?"\`:
    - \`"Next upcoming trip"\` — \`"Put my next trip front-and-center with a countdown and full booking timeline"\`
    - \`"All planned trips"\` — \`"Show a trip switcher for all upcoming trips and weekend getaways"\`
@@ -194,13 +200,13 @@ Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` w
    - \`"Timeline + readiness checklist"\` — \`"Full booking timeline paired with a pre-trip checklist and missing-booking alerts"\`
 3. \`kind: "text"\`, \`header: "Details"\`, \`question: "Any upcoming destination or preference to start with? (Optional — ${assistantName} will also populate bookings automatically from your email inbox.)"\`, \`required: false\`, \`placeholder: "e.g. Tokyo in May, window seats, or leave blank"\`.
 
-STEP 2 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
 After receiving the user's answers:
 - Build a complete Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) in your workspace.
-- Include durable SQLite tables in \`server/src/schema.ts\` for \`trips\` (destination, start/end dates, cover theme, notes) and \`bookings\` (trip_id, category: flight/hotel/car/train/dining/activity, provider, title, confirmation_code, start_time, end_time, location, status: confirmed/check_in_ready/attention, source_email_subject) and expose clean server actions (\`listTrips\`, \`upsertTrip\`, \`upsertBooking\`, \`deleteBooking\`) in \`server/src/actions.ts\`.
+- Include durable SQLite tables in \`server/src/schema.ts\` for \`trips\` (destination, start/end dates, cover theme, notes) and \`bookings\` (trip_id, category: flight/hotel/car/train/dining/activity, provider, title, confirmation_code, start_time, end_time, location, status: confirmed/check-in_ready/attention, source_email_subject) and expose clean server actions (\`listTrips\`, \`upsertTrip\`, \`upsertBooking\`, \`deleteBooking\`) in \`server/src/actions.ts\`.
 - Seed realistic sample bookings (or the destination the user mentioned) so the timeline looks rich immediately, start the local dev server, and call \`mcp__code_space__StartPreview\` so the **Preview** tab opens automatically.
 
-STEP 3 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
+STEP 4 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
 - Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
   1. The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
   2. The exact \`artifact.invoke_action\` action names (\`upsertTrip\`, \`upsertBooking\`) and payload fields so ${assistantName} can scan the user's email inbox for flight, hotel, car rental, and reservation confirmations and populate the Trip Overview automatically.
@@ -224,8 +230,11 @@ CRITICAL COMMUNICATION RULES:
 - Never use programming jargon (do not mention TypeScript, React, Drizzle, SQLite, schemas, ports, bash commands, or file paths) in your messages or questions.
 - Keep your tone warm, practical, and focused on how they like to shop and track orders.
 
-STEP 1 — INTERVIEW THE USER FIRST (\`mcp__code_space__AskUserRichForm\`):
-Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
+STEP 1 — NOTIFY ${assistantName.toUpperCase()} FIRST (\`mcp__code_space__SendMessageToMuseAssistant\`):
+Before starting the interview, immediately call \`mcp__code_space__SendMessageToMuseAssistant\` (\`to: "${assistantName}"\`) to let ${assistantName} know you’ve been asked to build a starter Dynamic Shopping List app for the user, and ask ${assistantName} to keep an eye on your session and unblock or give you a kick if you get stuck.
+
+STEP 2 — INTERVIEW THE USER (\`mcp__code_space__AskUserRichForm\`):
+Right after notifying ${assistantName}, call \`mcp__code_space__AskUserRichForm\` with \`timeout: null\` and these 3 questions:
 1. \`kind: "choice"\`, \`header: "Layout"\`, \`question: "How would you like your shopping view structured?"\`:
    - \`"Shopping list + live shipments"\` — \`"Items to buy alongside a live tracker for packages on the way"\`
    - \`"Organized by store & category"\` — \`"Grouped neatly by store or category (Groceries, Home, Tech, Wardrobe)"\`
@@ -236,13 +245,13 @@ Before writing any code, immediately call \`mcp__code_space__AskUserRichForm\` w
    - \`"Remember brand & store preferences"\` — \`"Keep my preferred brands, sizes, and favorite stores attached to each item"\`
 3. \`kind: "text"\`, \`header: "Preferences"\`, \`question: "Any favorite stores, recurring items, or personal preferences to start with? (Optional)"\`, \`required: false\`, \`placeholder: "e.g. Whole Foods, oat milk, running shoes, or leave blank"\`.
 
-STEP 2 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
+STEP 3 — BUILD & OPEN LIVE PREVIEW (\`mcp__code_space__StartPreview\`):
 After receiving the user's answers:
 - Build a complete Hatch TypeScript Space web app (\`client/\`, \`server/src/schema.ts\`, \`server/src/actions.ts\`, \`drizzle/\`, \`space.json.template\`) in your workspace.
 - Include durable SQLite tables in \`server/src/schema.ts\` for \`shopping_items\` (name, category, preferred_store, preferred_brand, notes, priority, status: to_buy/ordered/bought, added_by: user/muse) and \`shipments\` (item_name, merchant, carrier, tracking_number, tracking_url, status: ordered/shipped/out_for_delivery/delivered, estimated_delivery) plus \`preferences\` (key, value), and expose server actions (\`listShoppingData\`, \`upsertShoppingItem\`, \`toggleShoppingItem\`, \`upsertShipment\`, \`upsertPreference\`) in \`server/src/actions.ts\`.
 - Seed initial items (including any stores/items the user mentioned), start the local dev server, and call \`mcp__code_space__StartPreview\` so the **Preview** tab opens automatically.
 
-STEP 3 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
+STEP 4 — DEPLOY & SYNC WITH ${assistantName.toUpperCase()} (\`mcp__code_space__SendMessageToMuseAssistant\`):
 - Call \`mcp__code_space__SendMessageToMuseAssistant\` with:
   1. The exact workspace path so ${assistantName} can stage and publish the Hatch Space web artifact.
   2. The exact \`artifact.invoke_action\` action names (\`upsertShoppingItem\`, \`upsertShipment\`, \`upsertPreference\`) so ${assistantName} can populate active shipments from order/shipping emails and add/update shopping list items whenever the user asks ${assistantName}.
