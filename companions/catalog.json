@@ -205,7 +205,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "medium",
-      "soulPath": "pip/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/pip/idle.webp",
         "portraitIdle": "client/src/assets/companions/pip/portrait-idle.webp",
@@ -238,7 +237,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "medium",
-      "soulPath": "juno/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/juno/idle.webp",
         "portraitIdle": "client/src/assets/companions/juno/portrait-idle.webp",
@@ -275,7 +273,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "low",
-      "soulPath": "milo/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/milo/idle.webp",
         "portraitIdle": "client/src/assets/companions/milo/portrait-idle.webp",
@@ -308,7 +305,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "minimal",
-      "soulPath": "ziggy/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/ziggy/idle.webp",
         "portraitIdle": "client/src/assets/companions/ziggy/portrait-idle.webp",
@@ -345,7 +341,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "high",
-      "soulPath": "bea/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/bea/idle.webp",
         "portraitIdle": "client/src/assets/companions/bea/portrait-idle.webp",
@@ -378,7 +373,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "xhigh",
-      "soulPath": "kit/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/kit/idle.webp",
         "portraitIdle": "client/src/assets/companions/kit/portrait-idle.webp",
@@ -411,7 +405,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "xhigh",
-      "soulPath": "luna/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/luna/idle.webp",
         "portraitIdle": "client/src/assets/companions/luna/portrait-idle.webp",
@@ -448,7 +441,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "max",
-      "soulPath": "otto/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/otto/idle.webp",
         "portraitIdle": "client/src/assets/companions/otto/portrait-idle.webp",
@@ -485,7 +477,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "medium",
-      "soulPath": "iris/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/iris/idle.webp",
         "portraitIdle": "client/src/assets/companions/iris/portrait-idle.webp",
@@ -518,7 +509,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "low",
-      "soulPath": "finn/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/finn/idle.webp",
         "portraitIdle": "client/src/assets/companions/finn/portrait-idle.webp",
@@ -555,7 +545,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "xhigh",
-      "soulPath": "echo/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/echo/idle.webp",
         "portraitIdle": "client/src/assets/companions/echo/portrait-idle.webp",
@@ -588,7 +577,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "high",
-      "soulPath": "bo/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/bo/idle.webp",
         "portraitIdle": "client/src/assets/companions/bo/portrait-idle.webp",
@@ -621,7 +609,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "high",
-      "soulPath": "rio/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/rio/idle.webp",
         "portraitIdle": "client/src/assets/companions/rio/portrait-idle.webp",
@@ -654,7 +641,6 @@
         "ifUnavailable": "use-catalog-default"
       },
       "effort": "low",
-      "soulPath": "mochi/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/mochi/idle.webp",
         "portraitIdle": "client/src/assets/companions/mochi/portrait-idle.webp",
@@ -687,7 +673,6 @@
         "ifUnavailable": "upgrade-required"
       },
       "effort": "high",
-      "soulPath": "ember/SOUL.md",
       "animations": {
         "cardIdle": "client/src/assets/companions/ember/idle.webp",
         "portraitIdle": "client/src/assets/companions/ember/portrait-idle.webp",
