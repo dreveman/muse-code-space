@@ -54,7 +54,7 @@ export function RichUserInputCard({
   onClearStepImage,
   onOpenScratchpadForStep,
   onAnswer,
-  onCancel,
+  onCancel: _onCancel,
 }: {
   input: PendingUserInput;
   busy: boolean;
@@ -73,6 +73,7 @@ export function RichUserInputCard({
   const [stepIndex, setStepIndex] = useState(0);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   const [free, setFree] = useState<Record<string, string>>({});
+  const [skipped, setSkipped] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
 
@@ -87,6 +88,7 @@ export function RichUserInputCard({
   }, [stepIndex, totalSteps]);
 
   const toggleOption = (questionId: string, label: string, multiple: boolean) => {
+    setSkipped((current) => ({ ...current, [questionId]: false }));
     setFree((current) => ({ ...current, [questionId]: "" }));
     setPicked((current) => {
       const currentPicked = current[questionId] ?? [];
@@ -102,7 +104,10 @@ export function RichUserInputCard({
     });
   };
 
-  const readiness = userInputReadiness(input.questions, picked, free, stepAttachments);
+  const effectiveQuestions = input.questions.map((q) =>
+    skipped[q.id] ? { ...q, required: false } : q,
+  );
+  const readiness = userInputReadiness(effectiveQuestions, picked, free, stepAttachments);
 
   const handleFile = async (file: File, questionId: string) => {
     const isAllowed =
@@ -136,16 +141,26 @@ export function RichUserInputCard({
     await handleFile(file, questionId);
   };
 
-  const submit = () => {
-    if (!readiness.ready) return;
+  const sendAnswers = (
+    pickedState: Record<string, string[]>,
+    freeState: Record<string, string>,
+    skippedState: Record<string, boolean>,
+  ) => {
     onAnswer(
       input.userInputId,
       input.questions.map((q) => {
+        if (skippedState[q.id]) {
+          return {
+            questionId: q.id,
+            selectedLabels: [],
+            freeText: "",
+          };
+        }
         const att = stepAttachments[q.id];
         return {
           questionId: q.id,
-          selectedLabels: picked[q.id] ?? [],
-          freeText: free[q.id] ?? "",
+          selectedLabels: pickedState[q.id] ?? [],
+          freeText: freeState[q.id] ?? "",
           ...(att
             ? {
                 attachment: {
@@ -158,6 +173,40 @@ export function RichUserInputCard({
         };
       }),
     );
+  };
+
+  const submit = () => {
+    if (!readiness.ready) return;
+    sendAnswers(picked, free, skipped);
+  };
+
+  const skipCurrentStep = () => {
+    if (!question) return;
+    const nextPicked = { ...picked, [question.id]: [] };
+    const nextFree = { ...free, [question.id]: "" };
+    const nextSkipped = { ...skipped, [question.id]: true };
+    setPicked(nextPicked);
+    setFree(nextFree);
+    setSkipped(nextSkipped);
+    onClearStepImage(question.id);
+    if (clampedIndex < totalSteps - 1) {
+      setStepIndex(clampedIndex + 1);
+      return;
+    }
+    const nextEffective = input.questions.map((q) =>
+      nextSkipped[q.id] ? { ...q, required: false } : q,
+    );
+    const nextReadiness = userInputReadiness(
+      nextEffective,
+      nextPicked,
+      nextFree,
+      stepAttachments,
+    );
+    if (nextReadiness.ready) {
+      sendAnswers(nextPicked, nextFree, nextSkipped);
+    } else if (nextReadiness.firstUnanswered >= 0) {
+      setStepIndex(nextReadiness.firstUnanswered);
+    }
   };
 
   if (!question) return null;
@@ -465,7 +514,7 @@ export function RichUserInputCard({
         <button
           type="button"
           className="user-input-skip"
-          onClick={() => onCancel(input.userInputId)}
+          onClick={skipCurrentStep}
           disabled={busy}
         >
           Skip

@@ -2950,20 +2950,9 @@ const server = createServer(async (req, res) => {
         const rich = pendingRichInputs.get(userInputId);
         if (rich.timer) clearTimeout(rich.timer);
         pendingRichInputs.delete(userInputId);
-        rich.resolve({ ok: false, error: "User declined the form — stop and wait for their next message." });
+        rich.resolve({ ok: true, text: JSON.stringify({ answered: false, skipped: true, answers: {} }) });
         broadcast(entry.logId, { type: "user_input_answered", userInputId });
         pollUserInputs();
-        // Declining/cancelling stops the turn so the companion waits for the user's next message.
-        if (connection) {
-          const open = [...openTurns.values()].find(
-            (state) => state && (state.logId === entry.logId || state.logId === entry.session.sessionId),
-          );
-          connection.command("turn/interrupt", {
-            sessionId: entry.session.sessionId,
-            commandId: uuidv7(),
-            ...(open?.turnId ? { turnId: open.turnId } : {}),
-          }).catch(() => {});
-        }
         return json(res, 200, { ok: true, userInputId });
       }
       if (!connection) return json(res, 503, { error: "pilot not connected", code: "pilot_down" });
