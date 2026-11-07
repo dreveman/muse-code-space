@@ -36,6 +36,8 @@ test("buildStarterPrompt injects full playbook while stripStarterInstructions an
   for (const example of STARTER_EXAMPLES) {
     const prompt = buildStarterPrompt(example, "Jolly");
     assert.ok(prompt.includes("<code-space-starter-instructions>"));
+    assert.ok(prompt.includes("STEP 1 — NOTIFY JOLLY FIRST (`mcp__code_space__SendMessageToMuseAssistant`)"));
+    assert.ok(prompt.includes("keep an eye on your session and unblock or give you a kick if you get stuck"));
     assert.ok(prompt.includes("mcp__code_space__AskUserRichForm"));
     assert.ok(prompt.includes("mcp__code_space__StartPreview"));
     assert.ok(prompt.includes("mcp__code_space__SendMessageToMuseAssistant"));
